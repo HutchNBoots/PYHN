@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Play screen, synth</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#ECE9E2}a:hover{color:#FFFFFF}
+</style>
+</helmet>
+<div style="width: 1040px; height: 480px; box-sizing: border-box; background: #121214; color: #ECE9E2; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px">
+
+<div style="height: 48px; display: flex; align-items: center; gap: 14px">
+<nav aria-label="Screens" style="display: flex; gap: 4px">
+<a href="Main.dc.html" aria-current="page" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #ECE9E2; color: #121214; font-weight: 700; font-size: 14px; text-decoration: none">Synth</a>
+<a href="Main.dc.html" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; color: #ECE9E2; font-weight: 500; font-size: 14px; text-decoration: none">Drum</a>
+<a href="Sequencer.dc.html" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; color: #ECE9E2; font-weight: 500; font-size: 14px; text-decoration: none">Seq</a>
+<a href="Tape.dc.html" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; color: #ECE9E2; font-weight: 500; font-size: 14px; text-decoration: none">Tape</a>
+<a href="Main.dc.html" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; color: #ECE9E2; font-weight: 500; font-size: 14px; text-decoration: none">Mixer</a>
+</nav>
+<div role="group" aria-label="Sound slots" style="display: flex; gap: 4px">
+<sc-for list="{{slots}}" as="slot" hint-placeholder-count="8">
+<button aria-label="{{slot.aria}}" style="{{slot.style}}">{{slot.n}}</button>
+</sc-for>
+</div>
+<div style="flex-grow: 1"></div>
+<div style="display: flex; align-items: baseline; gap: 4px; font-family: 'IBM Plex Mono', monospace">
+<span style="font-size: 22px; font-weight: 500">120.0</span>
+<span style="font-size: 12px; color: #A9A69F">BPM</span>
+</div>
+<button aria-label="Play" style="width: 48px; height: 44px; border-radius: 10px; border: 0; background: #1C1C20; display: flex; align-items: center; justify-content: center">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><path d="M4 2.5v13l11-6.5z" fill="none" stroke="#3DD68C" stroke-width="2" stroke-linejoin="round"></path></svg>
+</button>
+<button aria-label="Record" style="width: 48px; height: 44px; border-radius: 10px; border: 0; background: #1C1C20; display: flex; align-items: center; justify-content: center">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="none" stroke="#FF6B57" stroke-width="2"></circle></svg>
+</button>
+<button onClick="{{toggleShift}}" aria-pressed="{{shiftPressed}}" style="{{shiftStyle}}">Shift</button>
+</div>
+
+<div style="height: 220px; display: flex; gap: 10px">
+<div role="img" aria-label="Synth display: saw oscillator into a low-pass filter" style="flex-grow: 1; border-radius: 16px; background: #1C1C20; padding: 14px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: baseline; gap: 10px">
+<span style="font-size: 20px; font-weight: 700">Brook</span>
+<span style="font-size: 13px; color: #A9A69F">subtractive · slot 1 · mono</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #A9A69F">{{layerLabel}}</span>
+</div>
+<svg aria-hidden="true" width="100%" height="120" viewBox="0 0 560 120" preserveAspectRatio="none">
+<path d="M0 104 L70 16 L70 104 L140 16 L140 104 L210 16 L210 104 L280 16 L280 104" fill="none" stroke="#FF6B57" stroke-width="3" stroke-linejoin="round"></path>
+<path d="M300 28 L420 28 C452 28 462 6 474 6 C488 6 500 70 560 112" fill="none" stroke="#FFC23D" stroke-width="3"></path>
+<circle cx="474" cy="6" r="5" fill="#3DD68C"></circle>
+<line x1="290" y1="8" x2="290" y2="112" stroke="#2C2C32" stroke-width="2"></line>
+</svg>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 13px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<div style="display: flex; gap: 6px; align-items: center"><span style="{{s.dotStyle}}"></span><span>{{s.label}} {{s.value}}</span></div>
+</sc-for>
+</div>
+</div>
+<div role="group" aria-label="Colour strips" style="width: 332px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<button aria-label="{{s.aria}}" style="position: relative; overflow: hidden; border: 0; border-radius: 14px; background: #1C1C20; padding: 10px 6px; display: flex; flex-direction: column; justify-content: space-between; align-items: center; font-family: 'Space Grotesk', system-ui, sans-serif">
+<span style="{{s.fillStyle}}"></span>
+<span style="{{s.labelStyle}}">{{s.label}}</span>
+<span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #FFFFFF">{{s.value}}</span>
+</button>
+</sc-for>
+</div>
+</div>
+
+<div role="group" aria-label="Keyboard, two octaves" style="flex-grow: 1; position: relative">
+<sc-for list="{{whiteKeys}}" as="k" hint-placeholder-count="15">
+<button aria-label="{{k.name}}" style="{{k.style}}"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #5C5A55">{{k.label}}</span></button>
+</sc-for>
+<sc-for list="{{blackKeys}}" as="k" hint-placeholder-count="10">
+<button aria-label="{{k.name}}" style="{{k.style}}"></button>
+</sc-for>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1040,"height":480}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { shift: false };
+  }
+  renderVals() {
+    const shift = this.state.shift;
+    const colours = ['#FF6B57', '#FFC23D', '#3DD68C', '#4F8BFF'];
+    const base = [
+      { label: 'Wave', value: 'Saw', pct: 35 },
+      { label: 'Cutoff', value: '2.4k', pct: 62 },
+      { label: 'Reso', value: '0.32', pct: 32 },
+      { label: 'Env', value: '+48', pct: 74 }
+    ];
+    const second = [
+      { label: 'Sub', value: '40%', pct: 40 },
+      { label: 'Noise', value: '8%', pct: 8 },
+      { label: 'LFO', value: '3.1Hz', pct: 46 },
+      { label: 'Depth', value: '22%', pct: 22 }
+    ];
+    const strips = (shift ? second : base).map((s, i) => ({
+      ...s,
+      aria: s.label + ' ' + s.value + ', drag up or down',
+      dotStyle: 'width: 10px; height: 10px; border-radius: 3px; background: ' + colours[i],
+      labelStyle: 'position: relative; font-size: 14px; font-weight: 700; color: ' + colours[i],
+      fillStyle: 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + s.pct + '%; background: ' + colours[i] + '38; border-top: 3px solid ' + colours[i]
+    }));
+
+    const slots = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
+      n,
+      aria: 'Sound slot ' + n + (n === 1 ? ', selected' : ''),
+      style: 'width: 40px; height: 44px; border-radius: 10px; border: 0; font-family: IBM Plex Mono, monospace; font-size: 14px; ' +
+        (n === 1 ? 'background: #FF6B57; color: #121214; font-weight: 500' : 'background: #1C1C20; color: #A9A69F')
+    }));
+
+    const names = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+    const blackNames = { 0: 'C sharp', 1: 'D sharp', 3: 'F sharp', 4: 'G sharp', 5: 'A sharp' };
+    const count = 15;
+    const w = 100 / count;
+    const lit = 2;
+    const whiteKeys = [];
+    const blackKeys = [];
+    for (let i = 0; i < count; i++) {
+      const octave = 3 + Math.floor(i / 7);
+      const name = names[i % 7] + octave;
+      whiteKeys.push({
+        name,
+        label: i % 7 === 0 ? name : '',
+        style: 'position: absolute; top: 0; bottom: 0; left: calc(' + (i * w) + '% + 2px); width: calc(' + w + '% - 4px); border: 0; border-radius: 0 0 10px 10px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px; background: ' + (i === lit ? '#FFC23D' : '#ECE9E2')
+      });
+      if (i < count - 1 && blackNames[i % 7]) {
+        blackKeys.push({
+          name: blackNames[i % 7] + ' ' + octave,
+          style: 'position: absolute; top: 0; height: 58%; left: ' + ((i + 0.7) * w) + '%; width: ' + (0.6 * w) + '%; border: 0; border-radius: 0 0 8px 8px; background: #2A2A30'
+        });
+      }
+    }
+
+    return {
+      strips,
+      slots,
+      whiteKeys,
+      blackKeys,
+      layerLabel: shift ? 'SHIFT LAYER · sub / noise / lfo' : 'MAIN LAYER · osc / filter / env',
+      shiftPressed: shift ? 'true' : 'false',
+      toggleShift: () => this.setState({ shift: !this.state.shift }),
+      shiftStyle: 'min-width: 72px; height: 44px; border-radius: 10px; border: 0; font-family: Space Grotesk, system-ui, sans-serif; font-weight: 700; font-size: 14px; ' +
+        (shift ? 'background: #FFC23D; color: #121214' : 'background: #1C1C20; color: #ECE9E2')
+    };
+  }
+}
+</script>
+</body>
+</html>

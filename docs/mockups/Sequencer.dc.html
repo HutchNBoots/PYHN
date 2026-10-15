@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sequencer screen</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#ECE9E2}a:hover{color:#FFFFFF}
+</style>
+</helmet>
+<div style="width: 1040px; height: 480px; box-sizing: border-box; background: #121214; color: #ECE9E2; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px">
+
+<div style="height: 48px; display: flex; align-items: center; gap: 14px">
+<nav aria-label="Screens" style="display: flex; gap: 4px">
+<a href="Main.dc.html" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; color: #ECE9E2; font-weight: 500; font-size: 14px; text-decoration: none">Synth</a>
+<a href="Main.dc.html" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; color: #ECE9E2; font-weight: 500; font-size: 14px; text-decoration: none">Drum</a>
+<a href="Sequencer.dc.html" aria-current="page" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #ECE9E2; color: #121214; font-weight: 700; font-size: 14px; text-decoration: none">Seq</a>
+<a href="Tape.dc.html" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; color: #ECE9E2; font-weight: 500; font-size: 14px; text-decoration: none">Tape</a>
+<a href="Main.dc.html" style="min-width: 64px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; color: #ECE9E2; font-weight: 500; font-size: 14px; text-decoration: none">Mixer</a>
+</nav>
+<div role="group" aria-label="Pattern pages" style="display: flex; gap: 4px">
+<sc-for list="{{pages}}" as="p" hint-placeholder-count="4">
+<button onClick="{{p.pick}}" aria-label="{{p.aria}}" aria-pressed="{{p.pressed}}" style="{{p.style}}">{{p.label}}</button>
+</sc-for>
+</div>
+<div style="flex-grow: 1"></div>
+<div style="display: flex; align-items: baseline; gap: 4px; font-family: 'IBM Plex Mono', monospace">
+<span style="font-size: 22px; font-weight: 500">120.0</span>
+<span style="font-size: 12px; color: #A9A69F">BPM</span>
+</div>
+<button aria-label="Stop" style="width: 48px; height: 44px; border-radius: 10px; border: 0; background: #3DD68C; display: flex; align-items: center; justify-content: center">
+<svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="2" fill="#121214"></rect></svg>
+</button>
+<button aria-label="Record motion" style="width: 48px; height: 44px; border-radius: 10px; border: 0; background: #1C1C20; display: flex; align-items: center; justify-content: center">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="none" stroke="#FF6B57" stroke-width="2"></circle></svg>
+</button>
+<button onClick="{{toggleShift}}" aria-pressed="{{shiftPressed}}" style="{{shiftStyle}}">Shift</button>
+</div>
+
+<div style="height: 220px; display: flex; gap: 10px">
+<div role="img" aria-label="Pattern overview: 64 steps in four pages, playhead on step 5" style="flex-grow: 1; border-radius: 16px; background: #1C1C20; padding: 14px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: baseline; gap: 10px">
+<span style="font-size: 20px; font-weight: 700">Pattern A3</span>
+<span style="font-size: 13px; color: #A9A69F">slot 1 · Brook · loop 1–32</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #A9A69F">{{layerLabel}}</span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<sc-for list="{{rows}}" as="row" hint-placeholder-count="4">
+<div style="display: flex; gap: 4px; align-items: center">
+<span style="{{row.labelStyle}}">{{row.label}}</span>
+<sc-for list="{{row.cells}}" as="c" hint-placeholder-count="16">
+<span style="{{c.style}}"></span>
+</sc-for>
+</div>
+</sc-for>
+</div>
+<div style="display: flex; gap: 18px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #A9A69F">
+<span>step 5 · E3 · vel 96 · prob 70%</span>
+<span style="color: #FF6B57">motion: cutoff</span>
+</div>
+</div>
+<div role="group" aria-label="Colour strips" style="width: 332px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<button aria-label="{{s.aria}}" style="position: relative; overflow: hidden; border: 0; border-radius: 14px; background: #1C1C20; padding: 10px 6px; display: flex; flex-direction: column; justify-content: space-between; align-items: center; font-family: 'Space Grotesk', system-ui, sans-serif">
+<span style="{{s.fillStyle}}"></span>
+<span style="{{s.labelStyle}}">{{s.label}}</span>
+<span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #FFFFFF">{{s.value}}</span>
+</button>
+</sc-for>
+</div>
+</div>
+
+<div role="group" aria-label="Step pads, 16 steps of the current page" style="flex-grow: 1; display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 5px">
+<sc-for list="{{pads}}" as="pad" hint-placeholder-count="16">
+<button onClick="{{pad.toggle}}" aria-label="{{pad.aria}}" aria-pressed="{{pad.pressed}}" style="{{pad.style}}">
+<span style="{{pad.numStyle}}">{{pad.num}}</span>
+<span style="{{pad.probStyle}}"></span>
+</button>
+</sc-for>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1040,"height":480}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    const on = [0, 4, 6, 8, 11, 12, 14, 16, 20, 22, 24, 27, 28, 30, 32, 36, 40, 44, 46, 48, 52, 56, 59, 60];
+    const steps = [];
+    for (let i = 0; i < 64; i++) steps.push(on.indexOf(i) !== -1);
+    this.state = { shift: false, page: 0, steps };
+  }
+  renderVals() {
+    const { shift, page, steps } = this.state;
+    const colours = ['#FF6B57', '#FFC23D', '#3DD68C', '#4F8BFF'];
+    const playhead = 4;
+    const selected = 4;
+    const loopEnd = 32;
+    const prob = { 4: 70, 11: 40, 27: 50, 59: 30 };
+
+    const base = [
+      { label: 'Shuffle', value: '12%', pct: 12 },
+      { label: 'Loop', value: '32', pct: 50 },
+      { label: 'Gate', value: '60%', pct: 60 },
+      { label: 'Rate', value: '1/16', pct: 50 }
+    ];
+    const second = [
+      { label: 'Note', value: 'E3', pct: 45 },
+      { label: 'Velo', value: '96', pct: 76 },
+      { label: 'Prob', value: '70%', pct: 70 },
+      { label: 'Motion', value: 'cut', pct: 58 }
+    ];
+    const strips = (shift ? second : base).map((s, i) => ({
+      ...s,
+      aria: s.label + ' ' + s.value + ', drag up or down',
+      labelStyle: 'position: relative; font-size: 14px; font-weight: 700; color: ' + colours[i],
+      fillStyle: 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + s.pct + '%; background: ' + colours[i] + '38; border-top: 3px solid ' + colours[i]
+    }));
+
+    const pages = [0, 1, 2, 3].map((p) => ({
+      label: String(p + 1),
+      aria: 'Page ' + (p + 1) + ', steps ' + (p * 16 + 1) + ' to ' + (p * 16 + 16),
+      pressed: p === page ? 'true' : 'false',
+      pick: () => this.setState({ page: p }),
+      style: 'width: 44px; height: 44px; border-radius: 10px; border: 0; font-family: IBM Plex Mono, monospace; font-size: 15px; ' +
+        (p === page ? 'background: #ECE9E2; color: #121214; font-weight: 500' : 'background: #1C1C20; color: #A9A69F')
+    }));
+
+    const rows = [0, 1, 2, 3].map((r) => ({
+      label: String(r + 1),
+      labelStyle: 'width: 14px; font-family: IBM Plex Mono, monospace; font-size: 11px; color: ' + (r === page ? '#ECE9E2' : '#5C5A55'),
+      cells: Array.from({ length: 16 }, (_, c) => {
+        const i = r * 16 + c;
+        const looped = i < loopEnd;
+        let bg = steps[i] ? (looped ? '#ECE9E2' : '#5C5A55') : (looped ? '#2C2C32' : '#1F1F24');
+        if (i === playhead) bg = '#3DD68C';
+        const ring = r === page ? 'outline: 1px solid #45454D; ' : '';
+        return { style: 'flex: 1; height: 18px; border-radius: 4px; ' + ring + 'background: ' + bg };
+      })
+    }));
+
+    const pads = Array.from({ length: 16 }, (_, c) => {
+      const i = page * 16 + c;
+      const active = steps[i];
+      const isPlay = i === playhead;
+      const isSel = shift && i === selected;
+      const p = prob[i];
+      let bg = active ? '#ECE9E2' : '#1C1C20';
+      if (isPlay) bg = '#3DD68C';
+      const border = isSel ? '3px solid #FFC23D' : (c % 4 === 0 ? '1px solid #3A3A42' : '1px solid #26262C');
+      return {
+        num: i + 1,
+        pressed: active ? 'true' : 'false',
+        aria: 'Step ' + (i + 1) + (active ? ', on' : ', off') + (p ? ', probability ' + p + '%' : ''),
+        toggle: () => {
+          const next = this.state.steps.slice();
+          next[i] = !next[i];
+          this.setState({ steps: next });
+        },
+        style: 'position: relative; border-radius: 12px; border: ' + border + '; background: ' + bg + '; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; padding: 8px; box-sizing: border-box',
+        numStyle: 'font-family: IBM Plex Mono, monospace; font-size: 12px; color: ' + (active || isPlay ? '#121214' : '#7A7872'),
+        probStyle: p && active ? 'width: ' + p + '%; height: 4px; border-radius: 2px; background: #4F8BFF' : 'height: 4px'
+      };
+    });
+
+    return {
+      strips,
+      pages,
+      rows,
+      pads,
+      layerLabel: shift ? 'SHIFT · editing step 5' : 'MAIN · pattern',
+      shiftPressed: shift ? 'true' : 'false',
+      toggleShift: () => this.setState({ shift: !this.state.shift }),
+      shiftStyle: 'min-width: 72px; height: 44px; border-radius: 10px; border: 0; font-family: Space Grotesk, system-ui, sans-serif; font-weight: 700; font-size: 14px; ' +
+        (shift ? 'background: #FFC23D; color: #121214' : 'background: #1C1C20; color: #ECE9E2')
+    };
+  }
+}
+</script>
+</body>
+</html>

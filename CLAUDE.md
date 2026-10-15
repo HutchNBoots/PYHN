@@ -5,7 +5,7 @@ The product spec is `docs/vision-cx-spec.md`. Read it before planning any featur
 
 ## Status
 
-- Phase: **screen mockups** (spec next step 2). The week-1 latency spike passed: about 16 ms tap-to-tone on the S25+ (`docs/adr/0001-week1-latency-go.md`).
+- Phase: **feature spec** (spec next step 3): `docs/feature-spec.md` is the acceptance contract for every module. Latency spike passed, about 16 ms (`docs/adr/0001-week1-latency-go.md`); mockups approved (`docs/adr/0002-screen-layout.md`, sources in `docs/mockups/`).
 - Reference device: **Samsung Galaxy S25+**. It is the only v1 target.
 - Owner tests builds only and does not review code. Claude writes and reviews all code, so reviews must be strict.
 
