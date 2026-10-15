@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original placeholder mark: four colour strips. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#FF5A4F" android:pathData="M30,36h10v36h-10z" />
+    <path android:fillColor="#FFC23D" android:pathData="M43,44h10v28h-10z" />
+    <path android:fillColor="#3DD68C" android:pathData="M56,30h10v42h-10z" />
+    <path android:fillColor="#4FA3FF" android:pathData="M69,40h10v32h-10z" />
+</vector>

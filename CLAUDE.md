@@ -18,12 +18,16 @@ The product spec is `docs/vision-cx-spec.md`. Read it before planning any featur
 
 ## Commands
 
-Fill these in once the project is scaffolded:
+The owner installs the **release** build (optimised, signed with the committed dev key in `keystore/`).
+CI (`.github/workflows/build.yml`) runs every check below on each push and publishes the APK as a GitHub Release (`build-N`), which the owner installs from the phone.
 
-- Build debug APK: `./gradlew assembleDebug`
-- Install on device: `./gradlew installDebug`
+- Build APK: `./gradlew assembleRelease` (output `app/build/outputs/apk/release/app-release.apk`)
+- Install on device (with adb): `./gradlew installRelease`
 - Kotlin tests: `./gradlew test`
-- C++ tests: `TODO`
+- C++ tests (host): `cmake -S engine -B build/engine-host -DGROOVE_BUILD_TESTS=ON && cmake --build build/engine-host && ctest --test-dir build/engine-host --output-on-failure`
+- C++ tests with sanitizers: add `-DGROOVE_SANITIZE=address,undefined` or `-DGROOVE_SANITIZE=thread` (use GCC; this container's clang has no sanitizer runtimes)
+
+Cloud sessions can't download the Android SDK, NDK or Google Maven (`dl.google.com` is blocked), so Android builds only run in CI. The host C++ tests do run in the cloud session.
 
 ## Audio thread rules (non-negotiable)
 
@@ -57,10 +61,13 @@ Use the Superpowers plugin for all non-trivial work:
 - Primary persona: the Noodler. No onboarding or tutorial in v1.
 - MIDI and tilt control are v1.1. MIDI gear for testing is still an open question.
 
-## Repo layout (planned)
+## Repo layout
 
 ```
 app/            Kotlin + Compose UI
-engine/         C++ audio engine (Oboe), with engine/tests/
+engine/core/    platform-independent C++ DSP (host-testable, no Android/Oboe)
+engine/android/ Oboe stream + JNI bridge
+engine/tests/   GoogleTest suite for engine/core
 docs/           spec, plans, architecture decisions (docs/adr/)
+keystore/       public dev signing key (not for the Play Store)
 ```

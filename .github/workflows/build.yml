@@ -1,0 +1,74 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # publish the APK as a GitHub Release
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine-tests:
+    name: Engine tests (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: plain
+            sanitize: ""
+          - name: asan+ubsan
+            sanitize: address,undefined
+          - name: tsan
+            sanitize: thread
+    steps:
+      - uses: actions/checkout@v4
+      - name: Allow TSan on high-entropy ASLR kernels
+        if: matrix.sanitize == 'thread'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure
+        run: >
+          cmake -S engine -B build/engine
+          -DGROOVE_BUILD_TESTS=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=g++
+          -DGROOVE_SANITIZE="${{ matrix.sanitize }}"
+      - name: Build
+        run: cmake --build build/engine --parallel
+      - name: Test
+        run: ctest --test-dir build/engine --output-on-failure
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Kotlin tests and release APK
+        run: ./gradlew --no-daemon test assembleRelease
+      - name: Name APK
+        run: cp app/build/outputs/apk/release/app-release.apk "groovebox-spike-${{ github.run_number }}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: groovebox-spike-${{ github.run_number }}
+          path: groovebox-spike-${{ github.run_number }}.apk
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" \
+            "groovebox-spike-${{ github.run_number }}.apk" \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            --title "Build ${{ github.run_number }} (${{ github.ref_name }})" \
+            --notes "Commit ${{ github.sha }} on ${{ github.ref_name }}. On the S25+, tap the .apk below to download and install it. It upgrades any earlier build in place."
