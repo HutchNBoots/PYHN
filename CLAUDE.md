@@ -5,7 +5,7 @@ The product spec is `docs/vision-cx-spec.md`. Read it before planning any featur
 
 ## Status
 
-- Phase: **week-1 spike** — prove low-latency audio on the reference device before any feature work.
+- Phase: **screen mockups** (spec next step 2). The week-1 latency spike passed: about 16 ms tap-to-tone on the S25+ (`docs/adr/0001-week1-latency-go.md`).
 - Reference device: **Samsung Galaxy S25+**. It is the only v1 target.
 - Owner tests builds only and does not review code. Claude writes and reviews all code, so reviews must be strict.
 
