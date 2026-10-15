@@ -2,11 +2,12 @@
 
 #include <oboe/Oboe.h>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 
-#include "groove/SynthCore.h"
+#include "groove/AudioGraph.h"
 
 namespace groove {
 
@@ -24,24 +25,28 @@ struct EngineStats {
     int32_t xRunCount = -1;
     double outputLatencyMs = -1.0;  // Oboe's estimate; -1 if unavailable
     int32_t deviceId = 0;
+    double callbackLoadAvgPct = 0.0;  // mean render time, % of the callback's buffer duration
+    double callbackLoadMaxPct = 0.0;  // worst callback over the last 1-2 s
 };
 
-// Owns the Oboe output stream and the synth.
+// Owns the Oboe output stream and the audio graph (synth + master bus).
 //
 // Threading:
-//  - onAudioReady runs on the audio thread and only calls SynthCore::render().
-//    It never takes mutex_.
+//  - onAudioReady runs on the audio thread: it calls AudioGraph::render() and times it
+//    with clock_gettime(CLOCK_MONOTONIC) (vDSO, no syscall or lock). The load figures
+//    go out through relaxed atomics. It never takes mutex_, allocates or logs.
 //  - Every other method runs on the app's main thread, except onErrorAfterClose,
 //    which Oboe calls on its own thread. Both take mutex_ before touching stream_.
-//  - SynthCore's control side (note events, render records) is used only from the
-//    main thread, apart from reopen, which runs while no callback can be running.
+//  - The synth's control side (note events, parameters, presets, render records) is
+//    used only from the main thread, apart from reopen, which runs while no callback
+//    can be running.
 class AudioEngine : public oboe::AudioStreamDataCallback,
                     public oboe::AudioStreamErrorCallback {
 public:
     bool start();
     void stop();
 
-    SynthCore& synth() { return synth_; }
+    SynthEngine& synth() { return graph_.synth(); }
 
     EngineStats stats();
     void setBufferBursts(int32_t bursts);
@@ -57,10 +62,25 @@ public:
 private:
     bool openAndStartLocked();
     void closeLocked();
+    // Audio thread only.
+    void recordCallbackLoad(int64_t renderNs, int32_t numFrames);
 
     std::mutex mutex_;
     std::shared_ptr<oboe::AudioStream> stream_;
-    SynthCore synth_;
+    AudioGraph graph_;
+
+    // Callback load. Written by the audio thread, reset by openAndStartLocked() before the
+    // stream starts (no callback can run then).
+    static_assert(std::atomic<float>::is_always_lock_free, "audio thread needs lock-free floats");
+    std::atomic<float> loadAvgPct_{0.0f};
+    std::atomic<float> loadMaxPct_{0.0f};
+    double nsPerFrame_ = 1.0e9 / 48000.0;
+    int32_t windowFrames_ = 48000;  // 1 s
+    float loadAvg_ = 0.0f;          // fraction of the buffer duration
+    bool haveLoad_ = false;
+    float windowMax_ = 0.0f;
+    float previousWindowMax_ = 0.0f;
+    int32_t framesInWindow_ = 0;
     int32_t bufferBursts_ = 2;
     bool wantRunning_ = false;
 };

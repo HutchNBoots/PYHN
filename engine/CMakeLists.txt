@@ -17,11 +17,19 @@ endif()
 set(GROOVE_WARNINGS -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Werror)
 
 # Platform-independent DSP core. No Android, Oboe or JNI here: it must build and test on the host.
-add_library(groovecore STATIC
+set(GROOVE_CORE_SOURCES
+    core/src/Adsr.cpp
+    core/src/AudioGraph.cpp
+    core/src/Filters.cpp
+    core/src/Lfo.cpp
+    core/src/MasterBus.cpp
     core/src/Oscillator.cpp
-    core/src/Envelope.cpp
-    core/src/SynthCore.cpp
+    core/src/Presets.cpp
+    core/src/SynthEngine.cpp
+    core/src/Voice.cpp
 )
+list(TRANSFORM GROOVE_CORE_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+add_library(groovecore STATIC ${GROOVE_CORE_SOURCES})
 target_include_directories(groovecore PUBLIC core/include)
 target_compile_options(groovecore PRIVATE ${GROOVE_WARNINGS})
 

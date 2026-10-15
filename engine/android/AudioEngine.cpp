@@ -3,6 +3,8 @@
 #include <android/log.h>
 #include <oboe/OboeExtensions.h>
 
+#include <time.h>
+
 #include <algorithm>
 #include <ctime>
 
@@ -11,6 +13,13 @@ namespace groove {
 namespace {
 constexpr const char* kTag = "GrooveEngine";
 constexpr int32_t kMaxBufferBursts = 8;
+
+// CLOCK_MONOTONIC via the vDSO: no syscall, no lock, safe on the audio thread.
+int64_t monotonicNs() {
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + static_cast<int64_t>(ts.tv_nsec);
+}
 }  // namespace
 
 bool AudioEngine::start() {
@@ -46,12 +55,21 @@ bool AudioEngine::openAndStartLocked() {
         return false;
     }
 
-    // No callback can run yet, so the synth's audio-side state is safe to reset.
+    // No callback can run yet, so the graph's audio-side state is safe to reset.
     // Stale records from a previous stream would map to the wrong frame clock.
-    synth_.prepare(static_cast<float>(stream->getSampleRate()));
+    const int32_t sampleRate = std::max(stream->getSampleRate(), 1);
+    graph_.prepare(static_cast<float>(sampleRate));
     NoteOnRender stale;
-    while (synth_.popNoteOnRender(stale)) {
+    while (graph_.synth().popNoteOnRender(stale)) {
     }
+    nsPerFrame_ = 1.0e9 / static_cast<double>(sampleRate);
+    windowFrames_ = sampleRate;
+    loadAvg_ = 0.0f;
+    haveLoad_ = false;
+    windowMax_ = previousWindowMax_ = 0.0f;
+    framesInWindow_ = 0;
+    loadAvgPct_.store(0.0f, std::memory_order_relaxed);
+    loadMaxPct_.store(0.0f, std::memory_order_relaxed);
 
     stream->setBufferSizeInFrames(stream->getFramesPerBurst() * bufferBursts_);
 
@@ -90,6 +108,8 @@ EngineStats AudioEngine::stats() {
     s.deviceId = stream_->getDeviceId();
     if (auto xruns = stream_->getXRunCount()) s.xRunCount = xruns.value();
     if (auto latency = stream_->calculateLatencyMillis()) s.outputLatencyMs = latency.value();
+    s.callbackLoadAvgPct = static_cast<double>(loadAvgPct_.load(std::memory_order_relaxed));
+    s.callbackLoadMaxPct = static_cast<double>(loadMaxPct_.load(std::memory_order_relaxed));
     return s;
 }
 
@@ -113,7 +133,7 @@ int32_t AudioEngine::pollTapToToneNs(int64_t* out, int32_t maxCount) {
 
     int32_t count = 0;
     NoteOnRender rec;
-    while (count < maxCount && synth_.popNoteOnRender(rec)) {
+    while (count < maxCount && graph_.synth().popNoteOnRender(rec)) {
         const double presentedNs =
             static_cast<double>(refTimeNs) + static_cast<double>(rec.frameIndex - refFrame) * nsPerFrame;
         out[count++] = static_cast<int64_t>(presentedNs) - rec.tapTimeNs;
@@ -123,10 +143,39 @@ int32_t AudioEngine::pollTapToToneNs(int64_t* out, int32_t maxCount) {
 
 oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream, void* audioData,
                                                    int32_t numFrames) {
-    // Audio thread: no locks, allocation, logging or JNI. render() is checked on the
-    // host by SynthCoreTest.RenderNeverAllocates.
-    synth_.render(static_cast<float*>(audioData), numFrames, stream->getChannelCount());
+    // Audio thread: no locks, allocation, logging or JNI. AudioGraph::render() is checked
+    // on the host by RealtimeSafety.AudioGraphRenderNeverAllocates.
+    const int64_t start = monotonicNs();
+    graph_.render(static_cast<float*>(audioData), numFrames, stream->getChannelCount());
+    recordCallbackLoad(monotonicNs() - start, numFrames);
     return oboe::DataCallbackResult::Continue;
+}
+
+void AudioEngine::recordCallbackLoad(int64_t renderNs, int32_t numFrames) {
+    if (numFrames <= 0) return;
+    const double bufferNs = static_cast<double>(numFrames) * nsPerFrame_;
+    const float load = static_cast<float>(static_cast<double>(renderNs) / bufferNs);
+
+    // Running mean: exponential, with a time constant of about 1 s of audio.
+    if (!haveLoad_) {
+        loadAvg_ = load;
+        haveLoad_ = true;
+    } else {
+        const float alpha = std::min(1.0f, static_cast<float>(numFrames) / static_cast<float>(windowFrames_));
+        loadAvg_ += (load - loadAvg_) * alpha;
+    }
+
+    // Max over the current and the previous 1 s window, so it covers the last 1-2 s.
+    windowMax_ = std::max(windowMax_, load);
+    framesInWindow_ += numFrames;
+    if (framesInWindow_ >= windowFrames_) {
+        previousWindowMax_ = windowMax_;
+        windowMax_ = 0.0f;
+        framesInWindow_ = 0;
+    }
+
+    loadAvgPct_.store(100.0f * loadAvg_, std::memory_order_relaxed);
+    loadMaxPct_.store(100.0f * std::max(windowMax_, previousWindowMax_), std::memory_order_relaxed);
 }
 
 void AudioEngine::onErrorAfterClose(oboe::AudioStream* stream, oboe::Result error) {

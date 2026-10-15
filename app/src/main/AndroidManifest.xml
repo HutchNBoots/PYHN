@@ -15,7 +15,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Groovebox">
         <activity
-            android:name=".spike.MainActivity"
+            android:name=".ui.MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode"
             android:exported="true"
             android:screenOrientation="sensorLandscape">

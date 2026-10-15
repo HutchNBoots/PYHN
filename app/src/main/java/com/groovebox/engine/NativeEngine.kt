@@ -1,12 +1,6 @@
 package com.groovebox.engine
 
-enum class Waveform(val id: Int, val label: String) {
-    Sine(0, "Sine"),
-    Saw(1, "Saw"),
-    Square(2, "Square"),
-}
-
-/** Snapshot of the output stream's configuration. */
+/** Snapshot of the output stream's configuration and audio-callback load. */
 data class EngineStats(
     val running: Boolean,
     val audioApi: String,
@@ -21,13 +15,17 @@ data class EngineStats(
     val xRunCount: Int,
     val outputLatencyMs: Double,
     val deviceId: Int,
+    /** Mean render time as a percentage of the buffer's duration (F0.4). */
+    val callbackLoadAvgPct: Double,
+    /** Worst render time over the last ~2 s, as a percentage of the buffer's duration. */
+    val callbackLoadMaxPct: Double,
 ) {
     val bufferMs: Double
         get() = if (sampleRate > 0) bufferSizeFrames * 1000.0 / sampleRate else 0.0
 
     internal companion object {
         // Index layout shared with engine/android/JniBridge.cpp.
-        const val SIZE = 13
+        const val SIZE = 15
 
         fun from(v: DoubleArray) = EngineStats(
             running = v[0] != 0.0,
@@ -45,6 +43,8 @@ data class EngineStats(
             xRunCount = v[10].toInt(),
             outputLatencyMs = v[11],
             deviceId = v[12].toInt(),
+            callbackLoadAvgPct = v[13],
+            callbackLoadMaxPct = v[14],
         )
     }
 }
@@ -64,12 +64,38 @@ object NativeEngine {
     fun start(): Boolean = nativeStart()
     fun stop() = nativeStop()
 
-    /** tapTimeNs is the CLOCK_MONOTONIC time of the touch, or 0 to skip measuring. */
-    fun noteOn(note: Int, tapTimeNs: Long): Boolean = nativeNoteOn(note, tapTimeNs)
+    /** velocity 0..1. tapTimeNs is the CLOCK_MONOTONIC time of the touch, or 0 to skip measuring. */
+    fun noteOn(note: Int, velocity: Float, tapTimeNs: Long): Boolean = nativeNoteOn(note, velocity, tapTimeNs)
     fun noteOff(note: Int): Boolean = nativeNoteOff(note)
     fun allNotesOff() = nativeAllNotesOff()
 
-    fun setWaveform(waveform: Waveform) = nativeSetWaveform(waveform.id)
+    /** Parameter table read from the engine (SynthParams.def), in ID order. */
+    val params: List<ParamSpec> by lazy {
+        val info = DoubleArray(4)
+        List(nativeParamCount()) { id ->
+            nativeParamInfo(id, info)
+            ParamSpec(
+                id = id,
+                key = nativeParamKey(id),
+                label = nativeParamLabel(id),
+                min = info[0],
+                max = info[1],
+                default = info[2],
+                curve = Curve.entries[info[3].toInt()],
+                unit = nativeParamUnit(id),
+            )
+        }
+    }
+
+    /** value in the parameter's real units; the engine clamps it to [min, max]. */
+    fun setParam(id: Int, value: Double) = nativeSetParam(id, value.toFloat())
+    fun getParam(id: Int): Double = nativeGetParam(id).toDouble()
+
+    val presetNames: List<String> by lazy { List(nativePresetCount()) { nativePresetName(it) } }
+
+    /** Sets every parameter from the preset; read them back with getParam(). */
+    fun loadPreset(index: Int) = nativeLoadPreset(index)
+
     fun setBufferBursts(bursts: Int) = nativeSetBufferBursts(bursts)
 
     fun stats(): EngineStats {
@@ -85,10 +111,20 @@ object NativeEngine {
 
     private external fun nativeStart(): Boolean
     private external fun nativeStop()
-    private external fun nativeNoteOn(note: Int, tapTimeNs: Long): Boolean
+    private external fun nativeNoteOn(note: Int, velocity: Float, tapTimeNs: Long): Boolean
     private external fun nativeNoteOff(note: Int): Boolean
     private external fun nativeAllNotesOff()
-    private external fun nativeSetWaveform(waveform: Int)
+    private external fun nativeParamCount(): Int
+    private external fun nativeParamKey(id: Int): String
+    private external fun nativeParamLabel(id: Int): String
+    private external fun nativeParamUnit(id: Int): String
+    /** out = [min, max, default, curve ordinal] */
+    private external fun nativeParamInfo(id: Int, out: DoubleArray)
+    private external fun nativeSetParam(id: Int, value: Float)
+    private external fun nativeGetParam(id: Int): Float
+    private external fun nativePresetCount(): Int
+    private external fun nativePresetName(index: Int): String
+    private external fun nativeLoadPreset(index: Int)
     private external fun nativeSetBufferBursts(bursts: Int)
     private external fun nativeGetStats(out: DoubleArray)
     private external fun nativePollTapToTone(out: LongArray): Int
