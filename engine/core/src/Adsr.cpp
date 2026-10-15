@@ -56,6 +56,8 @@ float Adsr::process(const AdsrShape& shape) {
         }
         case Stage::Sustain:
             level_ += (shape.sustain - level_) * shape.sustainFollow;
+            // Land exactly, so a sustain of 0 never decays into denormals.
+            if (std::fabs(level_ - shape.sustain) < 1e-9) level_ = shape.sustain;
             break;
         case Stage::Release: {
             constexpr double target = -kDecayUndershoot;

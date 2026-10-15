@@ -229,13 +229,25 @@ void SynthEngine::notePoly(int note, float velocity, int64_t tapTimeNs, int64_t 
     bool steal = false;
 
     // 1. The same note still sounding (held or releasing): retrigger it in place.
+    //    A voice already fading out to start this same note just takes the new velocity.
     for (Voice& v : voices_) {
         if (!v.isIdle() && !v.isFading() && v.note() == note) chosen = &v;
+        if (v.isFading() && v.hasPending() && v.pendingNote() == note) chosen = &v;
     }
     // 2. A free voice.
     if (!chosen) {
         for (Voice& v : voices_) {
             if (v.isIdle()) {
+                chosen = &v;
+                break;
+            }
+        }
+    }
+    // 2b. A voice fading out to nothing (its note was cancelled or the mode changed):
+    //     it is about to be free anyway, so reuse it before stealing a sounding one.
+    if (!chosen) {
+        for (Voice& v : voices_) {
+            if (v.isFading() && !v.hasPending()) {
                 chosen = &v;
                 break;
             }

@@ -50,6 +50,8 @@ public:
     // Same order as the osc.voiceMode options in SynthParams.def.
     enum class VoiceMode : int32_t { Poly = 0, Mono = 1, Unison = 2 };
 
+    static_assert(std::atomic<int64_t>::is_always_lock_free, "frame counter must be lock-free");
+
     SynthEngine();
 
     // Not real-time safe with respect to render; call with the stream stopped.

@@ -44,7 +44,7 @@ void MasterBus::process(float* left, float* right, int32_t numFrames) {
         left[i] = std::fmax(-ceiling_, std::fmin(ceiling_, l * gain));
         right[i] = std::fmax(-ceiling_, std::fmin(ceiling_, r * gain));
     }
-    follower_ = follower;
+    follower_ = follower < 1e-12f ? 0.0f : follower;  // no denormals in silence
     lastGain_ = gain;
 }
 

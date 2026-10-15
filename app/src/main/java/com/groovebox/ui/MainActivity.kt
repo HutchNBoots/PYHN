@@ -31,8 +31,9 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // Sound first: the stream opens before anything else can ask a question.
         audioStarted = NativeEngine.start()
-        // The strips show the engine's values, whatever state it kept or started with.
-        controller.refreshFromEngine()
+        // First launch plays the default preset; later starts keep what the player had.
+        // Either way the strips end up showing the engine's values.
+        if (controller.presetIndex < 0) controller.loadPreset(0) else controller.refreshFromEngine()
     }
 
     override fun onStop() {

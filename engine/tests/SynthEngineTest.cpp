@@ -605,3 +605,32 @@ TEST_F(SynthEngineTest, ControlAndAudioThreadsRunConcurrently) {
     while (synth.popNoteOnRender(rec)) ++records;
     EXPECT_GT(records, 0);
 }
+
+TEST_F(SynthEngineTest, RepeatedNoteDuringAStealUsesOneVoice) {
+    for (int n : {48, 52, 55, 59}) {
+        synth.noteOn(n, 1.0f, 0);
+        render(kBlock);
+    }
+    synth.noteOn(72, 1.0f, 0);
+    synth.noteOff(72);
+    synth.noteOn(72, 1.0f, 0);  // pressed again while its voice is still fading in
+    render(4 * kBlock);
+    int count = 0;
+    for (int i = 0; i < SynthEngine::kVoiceCount; ++i) count += synth.voiceInfo(i).note == 72 ? 1 : 0;
+    EXPECT_EQ(count, 1);
+    EXPECT_GE(voiceWithNote(synth, 52), 0);  // only one voice was stolen
+}
+
+TEST_F(SynthEngineTest, HeldZeroSustainSettlesToExactSilence) {
+    synth.setParam(ParamId::AmpDecay, 0.01f);
+    synth.setParam(ParamId::AmpSustain, 0.0f);
+    synth.prepare(kRate);
+    synth.noteOn(60, 1.0f, 0);
+    render(4800);
+    synth.setParam(ParamId::AmpSustain, 0.5f);
+    render(4800);
+    synth.setParam(ParamId::AmpSustain, 0.0f);
+    auto x = render(48000);
+    EXPECT_EQ(synth.voiceInfo(0).ampLevel, 0.0f);
+    EXPECT_EQ(peakAbs(x, 24000), 0.0f);
+}
