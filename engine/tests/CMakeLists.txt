@@ -8,21 +8,9 @@ FetchContent_Declare(
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-add_executable(engine_tests
-    AllocationCounter.cpp
-    AdsrTest.cpp
-    DspMathTest.cpp
-    FiltersTest.cpp
-    LfoTest.cpp
-    MasterBusTest.cpp
-    MonoNoteStackTest.cpp
-    OscillatorTest.cpp
-    PresetsTest.cpp
-    RealtimeSafetyTest.cpp
-    SpscQueueTest.cpp
-    SynthEngineTest.cpp
-    SynthParamsTest.cpp
-)
+# Every *Test.cpp here is part of the suite, so new test files need no edit here.
+file(GLOB GROOVE_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*Test.cpp")
+add_executable(engine_tests AllocationCounter.cpp ${GROOVE_TEST_SOURCES})
 target_link_libraries(engine_tests PRIVATE groovecore GTest::gtest_main)
 
 include(GoogleTest)

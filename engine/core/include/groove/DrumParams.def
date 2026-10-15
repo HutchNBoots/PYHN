@@ -1,0 +1,17 @@
+// Drum kit per-key parameter table (docs/feature-spec.md F2.2). Same format and rules
+// as SynthParams.def, one GROOVE_DRUM_PARAM(...) per line; each of the 16 keys has its own
+// value of every parameter. Order is the parameter ID. Append only.
+//
+//   GROOVE_DRUM_PARAM(Id, "key", "Label", min, max, default, Curve, "unit")
+//
+// The defaults here are the "neutral" values; DrumMachine starts some keys elsewhere
+// (for example the hats start in choke group A).
+
+GROOVE_DRUM_PARAM(Pitch,   "drum.pitch",   "Pitch",  -12.0, 12.0,    0.0,     Linear, "st")
+GROOVE_DRUM_PARAM(Decay,   "drum.decay",   "Decay",  0.0,   1.0,     1.0,     Linear, "%")
+GROOVE_DRUM_PARAM(Tone,    "drum.tone",    "Tone",   200.0, 20000.0, 20000.0, Exp,    "Hz")
+GROOVE_DRUM_PARAM(Level,   "drum.level",   "Level",  0.0,   1.0,     0.8,     Linear, "%")
+GROOVE_DRUM_PARAM(Pan,     "drum.pan",     "Pan",    -1.0,  1.0,     0.0,     Linear, "%")
+GROOVE_DRUM_PARAM(Start,   "drum.start",   "Start",  0.0,   0.5,     0.0,     Linear, "%")
+GROOVE_DRUM_PARAM(Reverse, "drum.reverse", "Rev",    0.0,   1.0,     0.0,     Enum,   "off|on")
+GROOVE_DRUM_PARAM(Choke,   "drum.choke",   "Choke",  0.0,   2.0,     0.0,     Enum,   "none|A|B")
