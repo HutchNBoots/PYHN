@@ -1,6 +1,6 @@
 # MVP feature spec
 
-Date: 15 Oct 2026 · Status: draft for owner approval
+Date: 15 Oct 2026 · Status: approved by the owner
 
 This is the contract every module is built and tested against (spec next step 3).
 It refines `docs/vision-cx-spec.md` and never overrides it. Where the vision spec was silent,
@@ -167,11 +167,11 @@ All tape memory is allocated before playback starts.
 Tilt, USB-MIDI and clock sync, oscillator draw, the playful sequencers (endless, random,
 arp), a second synth engine, sampling, and project sharing.
 
-## Open questions for the owner
+## Owner decisions (15 Oct 2026, defaults accepted)
 
-1. **Presets:** how should you pick a preset? Proposal: long-press a slot to show a thin preset strip over the keys, with no dialog.
-2. **Sessions:** is one autosaved session plus WAV exports enough for v1, or do you want a sketchbook of several saved sessions? The Noodler persona hints at the second; it adds a small browser screen.
-3. **MIDI gear:** still open from the vision spec. It only matters for v1.1.
+1. **Presets:** long-press a slot to show a thin preset strip over the keys. No dialog.
+2. **Sessions:** v1 keeps one autosaved session plus WAV exports. A sketchbook of saved sessions is v1.1.
+3. **MIDI gear:** still open; only matters for v1.1.
 
 ## Build order (milestones, each ending in an installable build)
 

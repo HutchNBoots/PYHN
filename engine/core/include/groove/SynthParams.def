@@ -1,0 +1,42 @@
+// Brook synth parameter table: the single source of truth for parameter IDs, ranges
+// and defaults (docs/feature-spec.md F1). Included by C++ as an X-macro and parsed by
+// a Kotlin unit test, so keep exactly one GROOVE_PARAM(...) per line, in this format:
+//
+//   GROOVE_PARAM(Id, "key", "Label", min, max, default, Curve, "unit")
+//
+// Curve: Linear | Exp (geometric, min > 0) | Pow3 (cubic, allows min 0) | Int | Enum.
+// For Enum, unit holds the option labels separated by '|', and the value is the index.
+// Values cross the JNI boundary in real units (Hz, seconds, ...), never normalised.
+// Append new parameters at the end: the order is the parameter ID.
+
+GROOVE_PARAM(OscWave,      "osc.wave",      "Wave",   0.0,    3.0,     0.0,    Linear, "saw|square|tri|sine")
+GROOVE_PARAM(OscPulseWidth,"osc.pw",        "PW",     0.05,   0.95,    0.5,    Linear, "%")
+GROOVE_PARAM(OscSub,       "osc.sub",       "Sub",    0.0,    1.0,     0.0,    Linear, "%")
+GROOVE_PARAM(OscNoise,     "osc.noise",     "Noise",  0.0,    1.0,     0.0,    Linear, "%")
+GROOVE_PARAM(OscOctave,    "osc.octave",    "Octave", -2.0,   2.0,     0.0,    Int,    "oct")
+GROOVE_PARAM(OscFine,      "osc.fine",      "Fine",   -50.0,  50.0,    0.0,    Linear, "c")
+GROOVE_PARAM(OscGlide,     "osc.glide",     "Glide",  0.0,    2.0,     0.0,    Pow3,   "s")
+GROOVE_PARAM(OscVoiceMode, "osc.voiceMode", "Mode",   0.0,    2.0,     0.0,    Enum,   "poly|mono|unison")
+GROOVE_PARAM(FltCutoff,    "flt.cutoff",    "Cutoff", 20.0,   18000.0, 2400.0, Exp,    "Hz")
+GROOVE_PARAM(FltReso,      "flt.reso",      "Reso",   0.0,    1.0,     0.2,    Linear, "%")
+GROOVE_PARAM(FltEnvAmount, "flt.envAmt",    "Env",    -1.0,   1.0,     0.4,    Linear, "%")
+GROOVE_PARAM(FltKeyTrack,  "flt.keyTrack",  "Key",    0.0,    1.0,     0.5,    Linear, "%")
+GROOVE_PARAM(FltDrive,     "flt.drive",     "Drive",  0.0,    24.0,    0.0,    Linear, "dB")
+GROOVE_PARAM(FltHighPass,  "flt.hpf",       "HPF",    20.0,   2000.0,  20.0,   Exp,    "Hz")
+GROOVE_PARAM(FltVelocity,  "flt.velAmt",    "Vel",    0.0,    1.0,     0.3,    Linear, "%")
+GROOVE_PARAM(FltLfoAmount, "flt.lfoAmt",    "LFO",    0.0,    1.0,     0.0,    Linear, "%")
+GROOVE_PARAM(AmpAttack,    "amp.attack",    "Attack", 0.001,  10.0,    0.002,  Exp,    "s")
+GROOVE_PARAM(AmpDecay,     "amp.decay",     "Decay",  0.001,  10.0,    0.3,    Exp,    "s")
+GROOVE_PARAM(AmpSustain,   "amp.sustain",   "Sustain",0.0,    1.0,     0.8,    Linear, "%")
+GROOVE_PARAM(AmpRelease,   "amp.release",   "Release",0.001,  10.0,    0.25,   Exp,    "s")
+GROOVE_PARAM(FenvAttack,   "fenv.attack",   "F.Att",  0.001,  10.0,    0.005,  Exp,    "s")
+GROOVE_PARAM(FenvDecay,    "fenv.decay",    "F.Dec",  0.001,  10.0,    0.4,    Exp,    "s")
+GROOVE_PARAM(FenvSustain,  "fenv.sustain",  "F.Sus",  0.0,    1.0,     0.3,    Linear, "%")
+GROOVE_PARAM(FenvRelease,  "fenv.release",  "F.Rel",  0.001,  10.0,    0.3,    Exp,    "s")
+GROOVE_PARAM(LfoRate,      "lfo.rate",      "Rate",   0.05,   30.0,    2.0,    Exp,    "Hz")
+GROOVE_PARAM(LfoDepth,     "lfo.depth",     "Depth",  0.0,    1.0,     0.0,    Linear, "%")
+GROOVE_PARAM(LfoWave,      "lfo.wave",      "Shape",  0.0,    3.0,     0.0,    Enum,   "sine|tri|square|s&h")
+GROOVE_PARAM(LfoDest,      "lfo.dest",      "Dest",   0.0,    3.0,     1.0,    Enum,   "pitch|cutoff|pw|amp")
+GROOVE_PARAM(LfoSync,      "lfo.sync",      "Sync",   0.0,    1.0,     0.0,    Enum,   "free|tempo")
+GROOVE_PARAM(LfoDelay,     "lfo.delay",     "Delay",  0.0,    5.0,     0.0,    Pow3,   "s")
+GROOVE_PARAM(LfoRetrigger, "lfo.retrig",    "Retrig", 0.0,    1.0,     1.0,    Enum,   "off|on")
