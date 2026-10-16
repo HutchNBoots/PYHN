@@ -5,7 +5,7 @@ The product spec is `docs/vision-cx-spec.md`. Read it before planning any featur
 
 ## Status
 
-- Phase: **M2 Sequencer + drums** (`docs/plans/2026-10-16-m2-sequencer-drums.md`); M1 synth shipped (build-5), built against `docs/feature-spec.md`. Latency spike passed, about 16 ms (`docs/adr/0001-week1-latency-go.md`); mockups approved (`docs/adr/0002-screen-layout.md`, sources in `docs/mockups/`).
+- Phase: **M3 Tape, mixer, FX** (`docs/plans/2026-10-16-m3-tape-mixer-fx.md`); M1 synth (build-5) and M2 sequencer + drums (build-6) shipped, built against `docs/feature-spec.md`. Latency spike passed, about 16 ms (`docs/adr/0001-week1-latency-go.md`); mockups approved (`docs/adr/0002-screen-layout.md`, sources in `docs/mockups/`).
 - Reference device: **Samsung Galaxy S25+**. It is the only v1 target.
 - Owner tests builds only and does not review code. Claude writes and reviews all code, so reviews must be strict.
 

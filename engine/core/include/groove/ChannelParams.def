@@ -1,0 +1,11 @@
+// Per-channel mixer parameters (docs/feature-spec.md F6.4). Each of the 12 mixer channels
+// (0..7 = sound slots, 8..11 = tape tracks 1..4) has its own value of every parameter.
+// Same format and rules as SynthParams.def. Sends are ignored on tape channels.
+//
+//   GROOVE_CHANNEL_PARAM(Id, "key", "Label", min, max, default, Curve, "unit")
+
+GROOVE_CHANNEL_PARAM(Volume,     "ch.volume",  "Volume", -60.0, 6.0, 0.0, Linear, "dB")
+GROOVE_CHANNEL_PARAM(Pan,        "ch.pan",     "Pan",    -1.0,  1.0, 0.0, Linear, "%")
+GROOVE_CHANNEL_PARAM(Mute,       "ch.mute",    "Mute",   0.0,   1.0, 0.0, Enum,   "off|on")
+GROOVE_CHANNEL_PARAM(DelaySend,  "ch.dlySend", "Delay",  0.0,   1.0, 0.0, Linear, "%")
+GROOVE_CHANNEL_PARAM(ReverbSend, "ch.revSend", "Reverb", 0.0,   1.0, 0.0, Linear, "%")

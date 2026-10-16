@@ -1,0 +1,24 @@
+// Global mixer, FX and tape parameters (docs/feature-spec.md F5, F6). Same format and rules
+// as SynthParams.def: one GROOVE_MIX_PARAM(...) per line, the order is the ID, append only.
+//
+//   GROOVE_MIX_PARAM(Id, "key", "Label", min, max, default, Curve, "unit")
+//
+// dB parameters: the minimum (-60) means silence (-inf).
+
+GROOVE_MIX_PARAM(DelayTime,      "dly.time",       "Time",    0.01,  2.0,     0.375,  Exp,    "s")
+GROOVE_MIX_PARAM(DelaySync,      "dly.sync",       "Sync",    0.0,   1.0,     1.0,    Enum,   "free|tempo")
+GROOVE_MIX_PARAM(DelayDivision,  "dly.div",        "Div",     0.0,   10.0,    5.0,    Enum,   "1/16T|1/16|1/16D|1/8T|1/8|1/8D|1/4T|1/4|1/4D|1/2T|1/2")
+GROOVE_MIX_PARAM(DelayFeedback,  "dly.fb",         "Fdbk",    0.0,   0.95,    0.4,    Linear, "%")
+GROOVE_MIX_PARAM(DelayLowCut,    "dly.lowCut",     "LoCut",   20.0,  2000.0,  120.0,  Exp,    "Hz")
+GROOVE_MIX_PARAM(DelayHighCut,   "dly.highCut",    "HiCut",   1000.0,20000.0, 6000.0, Exp,    "Hz")
+GROOVE_MIX_PARAM(DelayReturn,    "dly.return",     "Return",  0.0,   1.0,     0.8,    Linear, "%")
+GROOVE_MIX_PARAM(ReverbSize,     "rev.size",       "Size",    0.0,   1.0,     0.6,    Linear, "%")
+GROOVE_MIX_PARAM(ReverbDecay,    "rev.decay",      "Decay",   0.2,   20.0,    2.5,    Exp,    "s")
+GROOVE_MIX_PARAM(ReverbDamping,  "rev.damp",       "Damp",    0.0,   1.0,     0.4,    Linear, "%")
+GROOVE_MIX_PARAM(ReverbReturn,   "rev.return",     "Return",  0.0,   1.0,     0.8,    Linear, "%")
+GROOVE_MIX_PARAM(MasterVolume,   "mst.volume",     "Master",  -60.0, 6.0,     0.0,    Linear, "dB")
+GROOVE_MIX_PARAM(TapeLoopStart,  "tape.loopStart", "Start",   0.0,   63.0,    0.0,    Int,    "bar")
+GROOVE_MIX_PARAM(TapeLoopLength, "tape.loopLen",   "Loop",    0.0,   64.0,    0.0,    Int,    "bars")
+GROOVE_MIX_PARAM(TapeSpeed,      "tape.speed",     "Speed",   0.0,   2.0,     1.0,    Enum,   "0.5x|1x|2x")
+GROOVE_MIX_PARAM(TapeReverse,    "tape.reverse",   "Rev",     0.0,   1.0,     0.0,    Enum,   "off|on")
+GROOVE_MIX_PARAM(TapeDub,        "tape.dub",       "Dub",     0.0,   1.0,     1.0,    Linear, "%")

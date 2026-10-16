@@ -97,6 +97,42 @@ data class RecordedEvent(
     enum class Kind { Note, Motion }
 }
 
+/** Tape readout (F5), polled by the UI. */
+data class TapeState(
+    /** Tape length in frames (0 = empty tape), and in bars at the tempo of the first take. */
+    val lengthFrames: Long,
+    val lengthBars: Int,
+    /** Frames per bar of the tape (fixed by the first take; 0 when empty). */
+    val barFrames: Long,
+    /** Current tape head, in frames from the tape start. */
+    val headFrame: Long,
+    /** Track being recorded, or -1. */
+    val recordingTrack: Int,
+    /** Track armed and waiting for the next bar line (or Play), or -1. */
+    val armedTrack: Int,
+    val canUndo: Boolean,
+    val canRedo: Boolean,
+    val trackHasAudio: BooleanArray,
+) {
+    internal companion object {
+        // Layout shared with engine/android/JniBridge.cpp:
+        // [lengthFrames, lengthBars, barFrames, headFrame, recordingTrack, armedTrack, canUndo, canRedo, hasAudio x4]
+        const val SIZE = 8 + NativeEngine.TAPE_TRACK_COUNT
+
+        fun from(v: DoubleArray) = TapeState(
+            lengthFrames = v[0].toLong(),
+            lengthBars = v[1].toInt(),
+            barFrames = v[2].toLong(),
+            headFrame = v[3].toLong(),
+            recordingTrack = v[4].toInt(),
+            armedTrack = v[5].toInt(),
+            canUndo = v[6] != 0.0,
+            canRedo = v[7] != 0.0,
+            trackHasAudio = BooleanArray(NativeEngine.TAPE_TRACK_COUNT) { v[8 + it] != 0.0 },
+        )
+    }
+}
+
 /**
  * Kotlin face of the C++ engine. Call only from the main thread: every UI-to-audio queue
  * allows exactly one producer.
@@ -128,6 +164,7 @@ object NativeEngine {
     private val transportBuffer = DoubleArray(TransportState.SIZE)
     private val latencyBuffer = LongArray(64)
     private val recordedBuffer = DoubleArray(6 * 64)
+    private val tapeBuffer = DoubleArray(TapeState.SIZE)
 
     fun start(): Boolean = nativeStart()
     fun stop() = nativeStop()
@@ -245,6 +282,59 @@ object NativeEngine {
         }
     }
 
+    // --- mixer, FX and tape settings (M3) ---
+
+    /** Global mixer/FX/tape parameter table (MixParams.def), in ID order. */
+    val mixParams: List<ParamSpec> by lazy {
+        readTable(nativeMixParamCount(), ::nativeMixParamKey, ::nativeMixParamLabel, ::nativeMixParamUnit, ::nativeMixParamInfo)
+    }
+    fun setMixParam(id: Int, value: Double) = nativeSetMixParam(id, value.toFloat())
+    fun getMixParam(id: Int): Double = nativeGetMixParam(id).toDouble()
+
+    /** Mixer channels: 0..7 = sound slots, 8..11 = tape tracks 1..4. */
+    const val MIXER_CHANNEL_COUNT = 12
+    const val FIRST_TAPE_CHANNEL = 8
+
+    /** Per-channel parameter table (ChannelParams.def), in ID order; sends are ignored on tape channels. */
+    val channelParams: List<ParamSpec> by lazy {
+        readTable(
+            nativeChannelParamCount(), ::nativeChannelParamKey, ::nativeChannelParamLabel, ::nativeChannelParamUnit,
+            ::nativeChannelParamInfo,
+        )
+    }
+    fun setChannelParam(channel: Int, id: Int, value: Double) = nativeSetChannelParam(channel, id, value.toFloat())
+    fun getChannelParam(channel: Int, id: Int): Double = nativeGetChannelParam(channel, id).toDouble()
+
+    // --- tape (F5) ---
+
+    const val TAPE_TRACK_COUNT = 4
+    const val TAPE_OVERVIEW_BINS = 256
+
+    /** Arms recording onto [track]. It starts at the next bar line while playing (or at Play),
+     *  and keeps looping over the loop region until [tapeStopRecord]. Ignored unless the tape
+     *  speed is 1x and reverse is off. The first take on an empty tape sets the tape length. */
+    fun tapeArmRecord(track: Int) = nativeTapeArmRecord(track)
+    /** Stops recording at the next bar line (or cancels an arm that has not started). */
+    fun tapeStopRecord() = nativeTapeStopRecord()
+    /** Commit loop (F5.6): records exactly one pass of a pattern onto [track] while playing.
+     *  sourceSlot 0..7: that slot's channel only (post-fader, dry), for exactly its current
+     *  pattern's length, starting at that slot's next pattern boundary. sourceSlot -1: the full
+     *  mix with FX, for the longest current pattern among the slots (rounded up to whole bars),
+     *  starting at that slot's next pattern boundary. On an empty tape the take sets the tape
+     *  length; otherwise it writes over the loop region from the head, like a record pass. */
+    fun tapeCommit(track: Int, sourceSlot: Int) = nativeTapeCommit(track, sourceSlot)
+    fun tapeClearTrack(track: Int) = nativeTapeClearTrack(track)
+    fun tapeUndo() = nativeTapeUndo()
+    fun tapeRedo() = nativeTapeRedo()
+
+    fun tapeState(): TapeState {
+        nativeGetTapeState(tapeBuffer)
+        return TapeState.from(tapeBuffer)
+    }
+
+    /** Peak overview of one track, 0..255 per bin across the whole tape length (all zeros when empty). */
+    fun tapeOverview(track: Int, out: ByteArray) = nativeTapeOverview(track, out)
+
     // --- diagnostics ---
 
     fun setBufferBursts(bursts: Int) = nativeSetBufferBursts(bursts)
@@ -330,4 +420,27 @@ object NativeEngine {
     private external fun nativeSetBufferBursts(bursts: Int)
     private external fun nativeGetStats(out: DoubleArray)
     private external fun nativePollTapToTone(out: LongArray): Int
+    private external fun nativeMixParamCount(): Int
+    private external fun nativeMixParamKey(id: Int): String
+    private external fun nativeMixParamLabel(id: Int): String
+    private external fun nativeMixParamUnit(id: Int): String
+    private external fun nativeMixParamInfo(id: Int, out: DoubleArray)
+    private external fun nativeSetMixParam(id: Int, value: Float)
+    private external fun nativeGetMixParam(id: Int): Float
+    private external fun nativeChannelParamCount(): Int
+    private external fun nativeChannelParamKey(id: Int): String
+    private external fun nativeChannelParamLabel(id: Int): String
+    private external fun nativeChannelParamUnit(id: Int): String
+    private external fun nativeChannelParamInfo(id: Int, out: DoubleArray)
+    private external fun nativeSetChannelParam(channel: Int, id: Int, value: Float)
+    private external fun nativeGetChannelParam(channel: Int, id: Int): Float
+    private external fun nativeTapeArmRecord(track: Int)
+    private external fun nativeTapeStopRecord()
+    private external fun nativeTapeCommit(track: Int, sourceSlot: Int)
+    private external fun nativeTapeClearTrack(track: Int)
+    private external fun nativeTapeUndo()
+    private external fun nativeTapeRedo()
+    /** out = TapeState layout */
+    private external fun nativeGetTapeState(out: DoubleArray)
+    private external fun nativeTapeOverview(track: Int, out: ByteArray)
 }
