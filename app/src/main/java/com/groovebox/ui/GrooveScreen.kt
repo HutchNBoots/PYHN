@@ -51,7 +51,7 @@ private class OverlayBounds {
 
 /**
  * The whole app (ADR 0002): the top bar, then the selected screen's middle row (display and
- * strips) and bottom zone (keys, or step pads on the Sequencer). Laid out in the mockups'
+ * strips) and bottom zone (keys; step pads on the Sequencer; channel pads on the Mixer). Laid out in the mockups'
  * 1040 × 480 design units, scaled to fit the screen. Polls the transport every display frame.
  */
 @Composable
@@ -65,10 +65,13 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
     var presetSlot by remember { mutableStateOf(-1) }
     val overlay = remember { OverlayBounds() }
 
-    // Every frame: playheads, pattern switches and recorded writes (F3.10: read only).
+    // Every frame: playheads, pattern switches, recorded writes and the tape head (F3.10: read only).
     LaunchedEffect(state) {
         while (isActive) {
-            withFrameNanos { now -> state.frame(NativeEngine.transport(), NativeEngine.pollRecorded(), now) }
+            withFrameNanos { now ->
+                state.frame(NativeEngine.transport(), NativeEngine.pollRecorded(), now)
+                state.tapeFrame(NativeEngine.tapeState())
+            }
         }
     }
 
@@ -150,6 +153,8 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                         Screen.Synth -> SynthMiddleRow(state.selectedSynth, audioStarted, debug, middle)
                         Screen.Drum -> DrumMiddleRow(state.drum, audioStarted, debug, middle)
                         Screen.Seq -> SeqMiddleRow(state, audioStarted, debug, middle)
+                        Screen.Tape -> TapeMiddleRow(state, audioStarted, debug, middle)
+                        Screen.Mixer -> MixerMiddleRow(state, audioStarted, debug, middle)
                     }
                     Box(Modifier.fillMaxWidth().weight(1f)) {
                         when (state.screen) {
@@ -162,6 +167,18 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                                 dimmed = DRUMLESS_NOTES,
                             )
                             Screen.Seq -> SeqBottom(state, keyboardLayout, Modifier.fillMaxSize())
+                            // The keys play the selected slot over the tape.
+                            Screen.Tape -> {
+                                val drum = state.isDrum(state.selectedSlot)
+                                Keyboard(
+                                    keyboardLayout,
+                                    state,
+                                    Modifier.fillMaxSize(),
+                                    keyLabels = if (drum) state.drum.keyLabels else null,
+                                    dimmed = if (drum) DRUMLESS_NOTES else emptySet(),
+                                )
+                            }
+                            Screen.Mixer -> MixerPads(state, Modifier.fillMaxSize())
                         }
                         if (presetSlot >= 0) {
                             PresetStrip(

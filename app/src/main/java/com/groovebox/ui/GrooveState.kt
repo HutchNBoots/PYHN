@@ -10,9 +10,13 @@ import androidx.compose.runtime.setValue
 import com.groovebox.engine.NativeEngine
 import com.groovebox.engine.ParamSpec
 import com.groovebox.engine.RecordedEvent
+import com.groovebox.engine.TapeState
 import com.groovebox.engine.TransportState
 import com.groovebox.ui.model.DemoContent
 import com.groovebox.ui.model.DrumLayout
+import com.groovebox.ui.model.MixKeys
+import com.groovebox.ui.model.MixLimits
+import com.groovebox.ui.model.MixerPad
 import com.groovebox.ui.model.MotionLane
 import com.groovebox.ui.model.NoteMemory
 import com.groovebox.ui.model.PadAction
@@ -23,9 +27,14 @@ import com.groovebox.ui.model.RecordButton
 import com.groovebox.ui.model.SeqLimits
 import com.groovebox.ui.model.Step
 import com.groovebox.ui.model.StepPads
+import com.groovebox.ui.model.TapeOverview
+import com.groovebox.ui.model.TapeRecordAction
+import com.groovebox.ui.model.TapeRecordStatus
+import com.groovebox.ui.model.TapeView
+import kotlin.math.roundToInt
 
-/** The screens with something to show in M2 (Tape and Mixer arrive in M3). */
-enum class Screen { Synth, Drum, Seq }
+/** The five screens of the top bar's tabs. */
+enum class Screen { Synth, Drum, Seq, Tape, Mixer }
 
 /** Sends the pattern store's edits to the engine. */
 private object NativePatternSink : PatternSink {
@@ -46,8 +55,9 @@ private object NativePatternSink : PatternSink {
 
 /**
  * Everything the screens share: slots, the selected slot and screen, the pattern mirror,
- * transport, the Record and Shift buttons, and where key and pad touches go. The engine's
- * transport is polled once per display frame ([frame]); the UI never drives timing (F3.10).
+ * transport, the Record and Shift buttons, the tape and mixer, and where key and pad touches
+ * go. The engine's transport and tape are polled once per display frame ([frame],
+ * [tapeFrame]); the UI never drives timing (F3.10).
  * Main thread only (NativeEngine's rule).
  */
 @Stable
@@ -63,6 +73,9 @@ class GrooveState : KeyListener {
     private val noteMemory = NoteMemory { slot -> if (slot == NativeEngine.DRUM_SLOT) DrumLayout.LOWEST_NOTE else DEFAULT_SYNTH_NOTE }
     private val pads = StepPads()
     val seq = SeqController(this)
+    val mix = MixValues()
+    val tape = TapeController(this, mix)
+    val mixer = MixerController(this, mix)
 
     /** Bumped on every change to the pattern mirror; read it to recompose on pattern edits. */
     var revision by mutableLongStateOf(0L)
@@ -101,6 +114,36 @@ class GrooveState : KeyListener {
     private val currentStep = List(SeqLimits.SLOTS) { mutableIntStateOf(-1) }
     private val currentPattern = List(SeqLimits.SLOTS) { mutableIntStateOf(0) }
     private val queuedPattern = List(SeqLimits.SLOTS) { mutableIntStateOf(-1) }
+
+    // --- tape readout (F5), from NativeEngine.tapeState() every frame ---
+
+    /** The track the Tape screen records onto and whose Level/Pan the strips show. */
+    var tapeTrack by mutableIntStateOf(0)
+        private set
+    var tapeBars by mutableIntStateOf(0)
+        private set
+    var tapeLengthFrames by mutableLongStateOf(0L)
+        private set
+
+    /** Read it in a draw phase only: it changes every frame while playing. */
+    var tapeHeadFrame by mutableLongStateOf(0L)
+        private set
+    var tapeArmedTrack by mutableIntStateOf(-1)
+        private set
+    var tapeRecordingTrack by mutableIntStateOf(-1)
+        private set
+    var canUndo by mutableStateOf(false)
+        private set
+    var canRedo by mutableStateOf(false)
+        private set
+    private val trackHasAudio = List(MixLimits.TRACKS) { mutableStateOf(false) }
+
+    /** Peak overviews of the four tracks; [overviewRevision] changes when they do. */
+    val overview = TapeOverview()
+    var overviewRevision by mutableLongStateOf(0L)
+        private set
+    private val overviewBuffer = ByteArray(MixLimits.OVERVIEW_BINS)
+    private var framesSinceOverview = OVERVIEW_IDLE_FRAMES
 
     private val heldNoteSlot = HashMap<Int, Int>()
     private var seeded = false
@@ -168,13 +211,20 @@ class GrooveState : KeyListener {
 
     // --- slots and screens ---
 
-    /** A slot button: selects the slot and shows its instrument (or its sequencer, from Seq). */
+    /**
+     * A slot button: selects the slot and shows its instrument (or, from Seq, its sequencer;
+     * from the Mixer, its channel).
+     */
     fun selectSlot(slot: Int) {
         if (slot !in 0 until SeqLimits.SLOTS) return
         if (slot != selectedSlot) leaveStepEditing()
         selectedSlot = slot
         if (!isDrum(slot)) lastSynthSlot = slot
-        if (screen != Screen.Seq) screen = if (isDrum(slot)) Screen.Drum else Screen.Synth
+        when (screen) {
+            Screen.Seq -> Unit
+            Screen.Mixer -> mixer.select(MixerPad.Slot(slot))
+            else -> screen = if (isDrum(slot)) Screen.Drum else Screen.Synth
+        }
     }
 
     fun showSynth() {
@@ -190,6 +240,18 @@ class GrooveState : KeyListener {
     fun showSeq() {
         screen = Screen.Seq
     }
+
+    fun showTape() {
+        if (screen != Screen.Tape) framesSinceOverview = OVERVIEW_IDLE_FRAMES // fresh lanes at once
+        screen = Screen.Tape
+    }
+
+    fun showMixer() {
+        screen = Screen.Mixer
+    }
+
+    /** The name a slot shows: "Kit", or the synth's preset. */
+    fun instrumentName(slot: Int): String = if (isDrum(slot)) "Kit" else synth(slot).presetName
 
     private fun leaveStepEditing() {
         deselectStep()
@@ -325,6 +387,80 @@ class GrooveState : KeyListener {
         blinkOn = (frameTimeNanos / BLINK_NS) % 2 == 0L
     }
 
+    // --- tape (F5) ---
+
+    fun selectTrack(track: Int) {
+        if (track in 0 until MixLimits.TRACKS) tapeTrack = track
+    }
+
+    fun trackHasAudio(track: Int): Boolean = trackHasAudio.getOrNull(track)?.value == true
+
+    val tapeStatus: TapeRecordStatus
+        get() = TapeView.status(tapeArmedTrack, tapeRecordingTrack)
+
+    /** The engine ignores an arm unless the tape runs at 1x forward. */
+    val tapeCanRecord: Boolean
+        get() = TapeView.canRecord(mix.mix(MixKeys.SPEED).roundToInt(), mix.mix(MixKeys.REVERSE) >= 0.5)
+
+    /** Record on the Tape screen: arms the selected track, or stops (or cancels an arm). */
+    fun tapeRecordPress() {
+        when (val action = TapeView.recordPress(tapeStatus, tapeTrack, tapeCanRecord)) {
+            is TapeRecordAction.Arm -> NativeEngine.tapeArmRecord(action.track)
+            TapeRecordAction.Stop -> NativeEngine.tapeStopRecord()
+            TapeRecordAction.None -> Unit
+        }
+    }
+
+    /** The top bar's Undo button: undo, or redo with Shift. */
+    fun tapeUndoPress() {
+        if (shift.shifted) NativeEngine.tapeRedo() else NativeEngine.tapeUndo()
+    }
+
+    /**
+     * Commit loop (F5.6) onto the selected track: the selected slot's current pattern, or
+     * with [allSlots] the full mix. A commit records while playing, so it starts the
+     * transport when stopped; it begins at the slot's next pattern boundary.
+     */
+    fun commit(allSlots: Boolean) {
+        if (!playing) NativeEngine.play()
+        NativeEngine.tapeCommit(tapeTrack, if (allSlots) -1 else selectedSlot)
+    }
+
+    /** Clears one track (undoable, so no confirmation). */
+    fun clearTrack(track: Int) {
+        if (track !in 0 until MixLimits.TRACKS) return
+        NativeEngine.tapeClearTrack(track)
+        framesSinceOverview = OVERVIEW_IDLE_FRAMES
+    }
+
+    /**
+     * Once per display frame: the tape readout, and on the Tape screen the lane overviews
+     * (every frame while recording, otherwise a few times a second and on any change).
+     */
+    fun tapeFrame(t: TapeState) {
+        val changed = t.lengthFrames != tapeLengthFrames || t.canUndo != canUndo || t.canRedo != canRedo ||
+            t.recordingTrack != tapeRecordingTrack
+        tapeBars = t.lengthBars
+        tapeLengthFrames = t.lengthFrames
+        tapeHeadFrame = t.headFrame
+        tapeArmedTrack = t.armedTrack
+        tapeRecordingTrack = t.recordingTrack
+        canUndo = t.canUndo
+        canRedo = t.canRedo
+        for (i in 0 until MixLimits.TRACKS) trackHasAudio[i].value = t.trackHasAudio.getOrElse(i) { false }
+
+        if (screen != Screen.Tape) return
+        framesSinceOverview++
+        if (changed || t.recordingTrack >= 0 || framesSinceOverview >= OVERVIEW_IDLE_FRAMES) {
+            framesSinceOverview = 0
+            for (track in 0 until MixLimits.TRACKS) {
+                NativeEngine.tapeOverview(track, overviewBuffer)
+                overview.update(track, overviewBuffer)
+            }
+            overviewRevision = overview.revision
+        }
+    }
+
     // --- lifecycle ---
 
     /** After the stream starts: the first time, the launch presets and demo; later, re-read the sounds. */
@@ -334,11 +470,14 @@ class GrooveState : KeyListener {
             val presets = DemoContent.presetIndexes(synths.first().presetNames)
             synths.forEachIndexed { i, s -> presets.getOrNull(i)?.let(s::loadPreset) ?: s.refreshFromEngine() }
             drum.refreshFromEngine()
+            mix.refreshFromEngine()
+            mix.seedSends(::instrumentName)
             DemoContent.write(store)
             tempoBpm = store.tempo
         } else {
             synths.forEach { it.refreshFromEngine() }
             drum.refreshFromEngine()
+            mix.refreshFromEngine()
         }
     }
 
@@ -355,5 +494,8 @@ class GrooveState : KeyListener {
         const val PADS = 16
         const val DEFAULT_SYNTH_NOTE = 60
         const val BLINK_NS = 300_000_000L
+
+        /** Overview refresh when nothing is recording: about 6 times a second at 60 Hz. */
+        const val OVERVIEW_IDLE_FRAMES = 10
     }
 }

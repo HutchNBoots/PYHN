@@ -3,7 +3,8 @@ package com.groovebox.ui.model
 /**
  * What a fresh launch starts with (no persistence until M4): slots 2–8 on different presets,
  * and pattern 1 of the drum kit and of slot 2 holding a beat and a bassline at 120 BPM, so
- * Play makes music at once (M2 plan). Pure Kotlin.
+ * Play makes music at once (M2 plan); the synth slots also start with FX sends to suit
+ * their sound (M3). Pure Kotlin.
  */
 object DemoContent {
     /** Preferred presets for engine slots 1..7 (bass, lead, pad, pluck, ...), by name. */
@@ -21,6 +22,28 @@ object DemoContent {
             idx ?: (names.indices.firstOrNull { it !in used } ?: 0).also { used.add(it) }
         }
     }
+
+    /** A slot's FX sends at first launch (ChannelParams.def ch.dlySend / ch.revSend, 0..1). */
+    data class Sends(val delay: Double, val reverb: Double)
+
+    /** The kit gets a touch of room. */
+    val DRUM_SENDS = Sends(delay = 0.0, reverb = 0.08)
+
+    /** By preset name: the bass stays dry, pads get the most reverb, leads and plucks some delay. */
+    val SENDS: Map<String, Sends> = mapOf(
+        "Rubber Floor" to Sends(0.0, 0.0), // bass
+        "Glass Wire" to Sends(0.15, 0.15), // lead
+        "Slow Tide" to Sends(0.0, 0.4), // pad
+        "Rain Glass" to Sends(0.2, 0.25), // pluck
+        "Thumb Piano" to Sends(0.1, 0.2),
+        "Northern Hall" to Sends(0.0, 0.35),
+        "Laser Drip" to Sends(0.3, 0.2), // fx
+    )
+
+    /** A preset without its own entry gets a modest reverb send. */
+    val DEFAULT_SENDS = Sends(0.0, 0.15)
+
+    fun sendsFor(presetName: String): Sends = SENDS[presetName] ?: DEFAULT_SENDS
 
     const val TEMPO = 120.0
 

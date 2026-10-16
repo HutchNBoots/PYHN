@@ -31,8 +31,10 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -44,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.max
 import com.groovebox.ui.model.SeqLimits
+import com.groovebox.ui.model.TapeRecordStatus
 import com.groovebox.ui.theme.Design
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
@@ -51,7 +54,8 @@ import java.util.Locale
 
 /**
  * The top bar on every screen (ADR 0002): screen tabs, the 8 sound slots, the tempo
- * readout, Play/Stop, Record and Shift.
+ * readout, Play/Stop, Record and Shift. On the Tape screen, Undo and Export WAV take the
+ * slots' place (ADR 0002's exception) and Record records tape onto the selected track.
  */
 @Composable
 fun TopBar(
@@ -75,11 +79,11 @@ fun TopBar(
             Tab("Synth", state.screen == Screen.Synth, buttonHeight) { state.showSynth() }
             Tab("Drum", state.screen == Screen.Drum, buttonHeight) { state.showDrum() }
             Tab("Seq", state.screen == Screen.Seq, buttonHeight) { state.showSeq() }
-            Tab("Tape", false, buttonHeight, onSelect = null)
-            Tab("Mixer", false, buttonHeight, onSelect = null)
+            Tab("Tape", state.screen == Screen.Tape, buttonHeight) { state.showTape() }
+            Tab("Mixer", state.screen == Screen.Mixer, buttonHeight) { state.showMixer() }
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(d.dp(4))) {
+        if (state.screen == Screen.Tape) TapeButtons(state, buttonHeight) else Row(horizontalArrangement = Arrangement.spacedBy(d.dp(4))) {
             for (slot in 0 until SeqLimits.SLOTS) {
                 val active = slot == state.selectedSlot
                 val drum = state.isDrum(slot)
@@ -148,29 +152,38 @@ fun TopBar(
             TransportIcon(if (playing) Icon.Stop else Icon.Play, Modifier.size(d.dp(18)))
         }
 
-        val armed = state.armed
-        val motion = state.motionHeld
-        BarButton(
-            d.dp(48),
-            buttonHeight,
-            if (motion) GrooveColors.Strips[0].copy(alpha = 0.3f) else GrooveColors.Panel,
-            Modifier
-                .semantics {
+        val recordGesture = Modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown()
+                if (state.screen == Screen.Tape) {
+                    // Tape: one action on touch-down; the engine snaps it to a bar line (F5.1).
+                    state.tapeRecordPress()
+                    waitForUpOrCancellation()
+                } else {
+                    state.recordPress(down.uptimeMillis)
+                    // Null when the finger slides off or the touch is cancelled.
+                    val up = waitForUpOrCancellation()
+                    if (up != null) state.recordRelease(up.uptimeMillis) else state.recordCancel()
+                }
+            }
+        }
+        if (state.screen == Screen.Tape) {
+            TapeRecordButton(state, buttonHeight, recordGesture)
+        } else {
+            val armed = state.armed
+            val motion = state.motionHeld
+            BarButton(
+                d.dp(48),
+                buttonHeight,
+                if (motion) GrooveColors.Strips[0].copy(alpha = 0.3f) else GrooveColors.Panel,
+                recordGesture.semantics {
                     contentDescription = "Record" + (if (armed) ", armed" else "") +
                         (if (motion) ", recording motion" else "") + ". Tap to arm, hold and move a strip to record motion"
                     selected = armed
-                }
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown()
-                        state.recordPress(down.uptimeMillis)
-                        // Null when the finger slides off or the touch is cancelled.
-                        val up = waitForUpOrCancellation()
-                        if (up != null) state.recordRelease(up.uptimeMillis) else state.recordCancel()
-                    }
                 },
-        ) {
-            TransportIcon(if (armed || motion) Icon.RecordOn else Icon.Record, Modifier.size(d.dp(18)))
+            ) {
+                TransportIcon(if (armed || motion) Icon.RecordOn else Icon.Record, Modifier.size(d.dp(18)))
+            }
         }
 
         val shifted = state.shift.shifted
@@ -198,6 +211,132 @@ fun TopBar(
                 style = d.label(14f, if (shifted) GrooveColors.Ground else GrooveColors.Text, FontWeight.Bold),
             )
         }
+    }
+}
+
+/**
+ * The Tape screen's Undo and Export WAV (ADR 0002). Undo undoes the last tape action; with
+ * Shift it reads Redo and redoes. Export is M4: shown, dimmed and inert.
+ */
+@Composable
+private fun TapeButtons(state: GrooveState, height: Dp) {
+    val d = LocalDesign.current
+    val redo = state.shift.shifted
+    val enabled = if (redo) state.canRedo else state.canUndo
+    Row(horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
+        BarButton(
+            width = d.dp(88),
+            height = height,
+            background = GrooveColors.Panel,
+            modifier = Modifier
+                .alpha(if (enabled) 1f else GrooveColors.INERT_ALPHA)
+                .semantics {
+                    contentDescription = if (redo) "Redo tape" else "Undo tape. With Shift, redo"
+                    if (!enabled) disabled()
+                }
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown()
+                        state.tapeUndoPress()
+                    }
+                },
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
+                UndoIcon(redo, GrooveColors.Text, Modifier.size(d.dp(16)))
+                BasicText(if (redo) "Redo" else "Undo", style = d.label(14f, GrooveColors.Text, FontWeight.Medium))
+            }
+        }
+        BarButton(
+            width = d.dp(128),
+            height = height,
+            background = GrooveColors.Strips[3],
+            modifier = Modifier.inert("Export WAV, not available yet"),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
+                ExportIcon(GrooveColors.Ground, Modifier.size(d.dp(16)))
+                BasicText("Export WAV", style = d.label(14f, GrooveColors.Ground, FontWeight.Bold), maxLines = 1)
+            }
+        }
+    }
+}
+
+/**
+ * Record on the Tape screen: an outlined dot when idle, a blinking dot while armed (waiting
+ * for the next bar line or Play), and solid coral while recording (the mockup's look).
+ * Dimmed when the tape can't record (not 1x forward).
+ */
+@Composable
+private fun TapeRecordButton(state: GrooveState, height: Dp, gesture: Modifier) {
+    val d = LocalDesign.current
+    val status = state.tapeStatus
+    val track = when (status) {
+        TapeRecordStatus.Recording -> state.tapeRecordingTrack
+        TapeRecordStatus.Armed -> state.tapeArmedTrack
+        TapeRecordStatus.Idle -> state.tapeTrack
+    }
+    val canRecord = state.tapeCanRecord || status != TapeRecordStatus.Idle
+    val icon = when (status) {
+        TapeRecordStatus.Recording -> Icon.RecordOnTape
+        TapeRecordStatus.Armed -> if (state.blinkOn) Icon.RecordOn else Icon.Record
+        TapeRecordStatus.Idle -> Icon.Record
+    }
+    BarButton(
+        d.dp(48),
+        height,
+        if (status == TapeRecordStatus.Recording) GrooveColors.Strips[0] else GrooveColors.Panel,
+        gesture
+            .alpha(if (canRecord) 1f else GrooveColors.INERT_ALPHA)
+            .semantics {
+                contentDescription = when (status) {
+                    TapeRecordStatus.Recording -> "Recording onto track ${track + 1}. Tap to stop at the next bar"
+                    TapeRecordStatus.Armed -> "Track ${track + 1} armed. Tap to cancel"
+                    TapeRecordStatus.Idle -> if (canRecord) "Record onto track ${track + 1}" else "Record needs speed 1x and reverse off"
+                }
+                selected = status != TapeRecordStatus.Idle
+            },
+    ) {
+        TransportIcon(icon, Modifier.size(d.dp(18)))
+    }
+}
+
+/** The mockup's undo arrow (16 × 16); mirrored for redo. */
+@Composable
+private fun UndoIcon(redo: Boolean, colour: Color, modifier: Modifier) {
+    val d = LocalDesign.current
+    val stroke = d.px(1.8f)
+    Canvas(modifier) {
+        val s = size.width / 16f
+        val path = Path().apply {
+            moveTo(5f * s, 4f * s)
+            lineTo(2f * s, 7f * s)
+            lineTo(5f * s, 10f * s)
+            moveTo(2f * s, 7f * s)
+            lineTo(10f * s, 7f * s)
+            arcTo(Rect(6f * s, 7f * s, 14f * s, 15f * s), -90f, 180f, false)
+            lineTo(8f * s, 15f * s)
+        }
+        val style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        if (redo) scale(-1f, 1f) { drawPath(path, colour, style = style) } else drawPath(path, colour, style = style)
+    }
+}
+
+/** The mockup's download arrow (16 × 16). */
+@Composable
+private fun ExportIcon(colour: Color, modifier: Modifier) {
+    val d = LocalDesign.current
+    val stroke = d.px(1.8f)
+    Canvas(modifier) {
+        val s = size.width / 16f
+        val path = Path().apply {
+            moveTo(8f * s, 2f * s)
+            lineTo(8f * s, 10f * s)
+            moveTo(4.5f * s, 6.5f * s)
+            lineTo(8f * s, 10f * s)
+            lineTo(11.5f * s, 6.5f * s)
+            moveTo(3f * s, 13f * s)
+            lineTo(13f * s, 13f * s)
+        }
+        drawPath(path, colour, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 
@@ -264,7 +403,7 @@ fun Modifier.inert(description: String? = null): Modifier =
         disabled()
     }
 
-private enum class Icon { Play, Stop, Record, RecordOn }
+private enum class Icon { Play, Stop, Record, RecordOn, RecordOnTape }
 
 @Composable
 private fun TransportIcon(icon: Icon, modifier: Modifier) {
@@ -291,6 +430,8 @@ private fun TransportIcon(icon: Icon, modifier: Modifier) {
             )
             Icon.Record -> drawCircle(GrooveColors.Strips[0], radius = 6f * s, center = Offset(9f * s, 9f * s), style = Stroke(stroke))
             Icon.RecordOn -> drawCircle(GrooveColors.Strips[0], radius = 6.5f * s, center = Offset(9f * s, 9f * s))
+            // The Tape mockup's Record: a dark dot on the coral button.
+            Icon.RecordOnTape -> drawCircle(GrooveColors.Ground, radius = 6f * s, center = Offset(9f * s, 9f * s))
         }
     }
 }

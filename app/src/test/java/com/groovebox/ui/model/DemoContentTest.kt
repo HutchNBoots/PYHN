@@ -64,4 +64,17 @@ class DemoContentTest {
         // Nothing else is touched.
         for (slot in 2 until 8) assertTrue((0 until 64).none { store.step(slot, 0, it).on })
     }
+    @Test
+    fun padsGetTheMostReverbAndTheBassStaysDry() {
+        val bass = DemoContent.sendsFor("Rubber Floor")
+        assertEquals(0.0, bass.delay, 0.0)
+        assertEquals(0.0, bass.reverb, 0.0)
+        val pad = DemoContent.sendsFor("Slow Tide")
+        for (name in DemoContent.PRESETS) assertTrue(name, DemoContent.sendsFor(name).reverb <= pad.reverb)
+        // Every launch preset has its own entry; anything else gets the modest default.
+        for (name in DemoContent.PRESETS) assertTrue(name, name in DemoContent.SENDS)
+        assertEquals(DemoContent.DEFAULT_SENDS, DemoContent.sendsFor("Unknown"))
+        assertTrue(DemoContent.DEFAULT_SENDS.reverb in 0.05..0.3)
+        assertTrue(DemoContent.DRUM_SENDS.reverb < pad.reverb)
+    }
 }
