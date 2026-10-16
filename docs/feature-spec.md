@@ -164,8 +164,8 @@ All tape memory is allocated before playback starts.
 
 ## F8. Key and scale (next increment, after v1)
 
-Status: draft, refined from the owner's request (16 Oct 2026). **Decision** marks a proposed
-default awaiting the owner's answer to the questions at the end of this section.
+Status: approved (16 Oct 2026). The owner took every default marked **Decision**: dead keys,
+one global key, existing notes left alone, and the scale list as written.
 
 Pick a key (root note) and a scale. The keyboard then only plays notes in that key, and every
 way of choosing a note in the sequencer only offers notes in that key, so a Noodler can't
@@ -211,7 +211,7 @@ play a wrong note.
 | F8.7 | The drum slot keyboard and drum steps are unaffected by any setting. | ui | [K] |
 | F8.8 | No engine or audio-thread change is needed: the rules live in the UI before notes reach the engine. | review | — |
 
-**Questions for the owner**
+**Questions put to the owner (all answered with the defaults)**
 1. **Dead keys or folded keys?** Dead keys (the default above) keep the piano layout, with
    out-of-key keys switched off. Folded keys remap every pad to an in-key note, so there are
    no dead pads but the layout no longer looks like a piano.
