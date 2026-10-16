@@ -138,6 +138,7 @@ public:
         int64_t units = 0;          // one pass of the pattern, in position units
     };
     bool isPlaying() const { return playing_; }
+    float tempoBpm() const { return static_cast<float>(tempoTenths_) * 0.1f; }
     // Increments on every Play that starts the transport (stop + play in one chunk included).
     uint32_t playCount() const { return playCount_; }
     int64_t playFrame() const { return playFrame_; }

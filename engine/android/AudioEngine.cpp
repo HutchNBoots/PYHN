@@ -111,8 +111,13 @@ TransportState AudioEngine::transport() {
     return graph_.sequencer().transport();
 }
 
+TapeState AudioEngine::tapeState() {
+    applyCommandsIfStopped();  // e.g. a clear sent while the stream is closed
+    return graph_.tape().state();
+}
+
 void AudioEngine::logDropped() {
-    __android_log_print(ANDROID_LOG_ERROR, kTag, "sequencer command queue full: command dropped");
+    __android_log_print(ANDROID_LOG_ERROR, kTag, "sequencer/tape command queue full: command dropped");
 }
 
 EngineStats AudioEngine::stats() {
@@ -168,7 +173,8 @@ int32_t AudioEngine::pollTapToToneNs(int64_t* out, int32_t maxCount) {
 oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream, void* audioData,
                                                    int32_t numFrames) {
     // Audio thread: no locks, allocation, logging or JNI. AudioGraph::render() (sequencer,
-    // all 8 slots, master bus) is checked on the host by RealtimeSafety.*NeverAllocates.
+    // all 8 slots, mixer, FX, tape, master bus) is checked on the host by
+    // RealtimeSafety.*NeverAllocates.
     const int64_t start = monotonicNs();
     graph_.render(static_cast<float*>(audioData), numFrames, stream->getChannelCount());
     recordCallbackLoad(monotonicNs() - start, numFrames);

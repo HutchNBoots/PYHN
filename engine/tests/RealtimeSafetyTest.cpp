@@ -1,9 +1,10 @@
-// F0.5: the whole render path (sequencer, all 8 slots, every DSP block, the master bus)
-// never allocates, under note, parameter, preset, voice-mode, pattern, transport and
+// F0.5: the whole render path (sequencer, all 8 slots, every DSP block, the mixer, FX, tape
+// and the master bus) never allocates, under note, parameter, preset, voice-mode, pattern, transport and
 // recording traffic.
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -137,4 +138,85 @@ TEST(RealtimeSafety, FullGraphWithSequencerTrafficNeverAllocates) {
         (void)seq.transport();
     }
     EXPECT_EQ(scope.count(), 0u);
+}
+
+// F0.5, M3: the full graph (sequencer, 8 slots, 12 channel strips, delay, reverb, the tape and
+// the master bus) under tape recording, overdub, commits, undo/redo, clears, speed, reverse and
+// loop changes, and mixer and FX parameter traffic, never allocates.
+TEST(RealtimeSafety, FullM3GraphWithTapeAndMixerTrafficNeverAllocates) {
+    auto owned = std::make_unique<AudioGraph>();
+    AudioGraph& g = *owned;
+    g.prepare(48000.0f);
+    Sequencer& seq = g.sequencer();
+    Tape& tape = g.tape();
+    MixParamStore& mix = g.mixParams();
+    ChannelParamStore& ch = g.channelParams();
+    seq.setTempo(240.0f);  // short bars: many takes, wraps and passes
+    for (int s = 0; s < kSlotCount; ++s) {
+        seq.setPatternSettings(s, 0, 4 + 4 * (s % 3), 1, 0.2f, 0.6f);
+        for (int i = 0; i < 16; ++i) {
+            const int note = s == 0 ? 48 + i : 48 + i + s;
+            seq.setStep(s, 0, i, true, &note, 1, 0.8f, -1.0f, 1.0f);
+        }
+        ch.set(s, ChannelParamId::DelaySend, 0.3f);
+        ch.set(s, ChannelParamId::ReverbSend, 0.3f);
+    }
+    std::vector<float> out(4096 * 2);
+    g.render(out.data(), 256, 2);
+    seq.play();
+    g.render(out.data(), 256, 2);
+
+    groove::test::AllocationScope scope;
+    std::array<uint8_t, Tape::kOverviewBins> ov{};
+    for (int i = 0; i < 3000; ++i) {
+        const int slot = i % kSlotCount;
+        switch (i % 50) {
+            case 0: tape.armRecord((i / 50) % 4); break;
+            case 20: tape.stopRecord(); break;
+            case 30: tape.commit((i / 50) % 4, (i / 50) % 9 - 1); break;
+            case 40: if (i % 150 == 40) tape.undo(); break;
+            case 45: if (i % 300 == 45) tape.redo(); break;
+            case 47: if (i % 700 == 47) tape.clearTrack((i / 700) % 4); break;
+            default: break;
+        }
+        if (i % 400 == 199) seq.stop();
+        if (i % 400 == 200) seq.play();
+        if (i % 90 == 0) mix.set(MixParamId::TapeSpeed, static_cast<float>((i / 90) % 3));
+        if (i % 90 == 60) mix.set(MixParamId::TapeSpeed, 1.0f);
+        if (i % 130 == 0) mix.set(MixParamId::TapeReverse, static_cast<float>((i / 130) % 2));
+        if (i % 77 == 0) mix.set(MixParamId::TapeLoopStart, static_cast<float>((i / 77) % 4));
+        if (i % 61 == 0) mix.set(MixParamId::TapeLoopLength, static_cast<float>((i / 61) % 3));
+        if (i % 29 == 0) mix.set(MixParamId::TapeDub, static_cast<float>(i % 11) / 10.0f);
+        if (i % 13 == 0) {
+            const auto id = static_cast<MixParamId>(i % static_cast<int>(kMixParamCount));
+            const ParamInfo& p = mixParamInfo(id);
+            if (id != MixParamId::TapeSpeed && id != MixParamId::TapeReverse) {
+                mix.set(id, p.min + (p.max - p.min) * static_cast<float>(i % 7) / 6.0f);
+            }
+        }
+        if (i % 3 == 0) {
+            const auto id = static_cast<ChannelParamId>(i % static_cast<int>(kChannelParamCount));
+            const ParamInfo& p = channelParamInfo(id);
+            ch.set(i % kMixerChannelCount, id, p.min + (p.max - p.min) * static_cast<float>(i % 5) / 4.0f);
+        }
+        if (i % 9 == 0) ch.set(slot, ChannelParamId::Volume, 0.0f);
+        if (i % 11 == 0) ch.set(slot, ChannelParamId::Mute, 0.0f);
+        if (i % 5 == 0) g.noteOn(slot, slot == 0 ? 48 + i % 16 : 48 + i % 24, 0.8f, i + 1);
+        if (i % 5 == 3) g.noteOff(slot, slot == 0 ? 48 + (i - 3) % 16 : 48 + (i - 3) % 24);
+        if (i % 37 == 0) seq.setTempo(200.0f + static_cast<float>(i % 40));
+        const int32_t frames = (i % 9 == 0) ? 4096 : 64 + i % 200;
+        g.render(out.data(), frames, 2);
+
+        NoteOnRender rec;
+        while (g.drums().popNoteOnRender(rec)) {
+        }
+        for (int s = 1; s < kSlotCount; ++s) {
+            while (g.synth(s).popNoteOnRender(rec)) {
+            }
+        }
+        (void)tape.state();
+        tape.overview(i % 4, ov.data());
+    }
+    EXPECT_EQ(scope.count(), 0u);
+    EXPECT_GT(tape.state().lengthFrames, 0);  // the traffic really recorded
 }

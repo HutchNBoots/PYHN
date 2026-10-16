@@ -49,8 +49,8 @@ struct TapeState {
 // downbeat keeps its attack.
 //
 // Speed 0.5x/1x/2x and reverse: the head moves in exact half frames; half-frame positions
-// read through a 16-tap windowed-sinc interpolator and 2x reads through a half-band
-// anti-alias filter. Play/Stop, speed and loop jumps crossfade the head (kVoiceFadeSeconds).
+// read through a 16-tap windowed-sinc interpolator and 2x reads through a 32-tap low-pass
+// at 0.21 of the tape rate (anti-alias for the 2:1 decimation). Play/Stop, speed and loop jumps crossfade the head (kVoiceFadeSeconds).
 // Recording runs only at 1x forward: speed, reverse and the loop region are latched while a
 // take runs and take effect when it ends.
 //
@@ -118,7 +118,8 @@ public:
         int32_t bars = 0;
     };
 
-    explicit Tape(Limits limits = {});
+    Tape();
+    explicit Tape(Limits limits);
     ~Tape();
     Tape(const Tape&) = delete;
     Tape& operator=(const Tape&) = delete;
@@ -289,8 +290,8 @@ private:
     int64_t historySize_ = 0;           // power of two
     int64_t historyEnd_ = 0;            // frames written so far (ring position)
     std::unique_ptr<float[]> scratch_;  // lead-in input, 2 x xfade_
-    std::array<float, 16 * 2> interpHalf_{};  // phase-0.5 interpolator, then phase 0 (unused)
-    std::array<float, 16 * 2> lowpass_{};     // half-band, phase 0 then phase 0.5
+    std::array<float, 16> interpHalf_{};  // half-frame interpolator (16 taps)
+    std::array<float, 32 * 2> lowpass_{};  // 2x anti-alias low-pass, phase 0 then phase 0.5
 
     // --- audio-thread state ---
     int64_t frame_ = 0;  // stream frame of the next piece

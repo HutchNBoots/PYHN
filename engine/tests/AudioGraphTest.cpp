@@ -110,7 +110,20 @@ TEST(AudioGraph, SlotsHaveTheirInstrumentsAndAllRenderEveryFrame) {
     for (int s = 1; s < 8; ++s) EXPECT_EQ(g->synth(s).framesRendered(), total);
 }
 
-// Each slot is summed at the same fixed gain.
+// Left-channel gain of a channel strip at its default settings (0 dB, centre pan), measured.
+static double defaultStripGain() {
+    ChannelStrip strip;
+    strip.prepare(kRate);
+    std::vector<float> in(256, 0.5f), outL(256), outR(256);
+    for (int i = 0; i < 40; ++i) {
+        std::fill(outL.begin(), outL.end(), 0.0f);
+        std::fill(outR.begin(), outR.end(), 0.0f);
+        strip.process(in.data(), in.data(), 256, outL.data(), outR.data(), nullptr, nullptr, nullptr, nullptr);
+    }
+    return outL[255] / 0.5;
+}
+
+// Each slot is summed at the same fixed gain, through its channel strip at default settings.
 TEST(AudioGraph, SlotsAreSummedAtEqualGain) {
     std::vector<double> levels;
     for (int s = 1; s < 8; s += 3) {
@@ -126,7 +139,7 @@ TEST(AudioGraph, SlotsAreSummedAtEqualGain) {
     solo->prepare(kRate);
     solo->noteOn(57, 0.5f, 0);
     const double direct = rms(renderLeft(*solo, 9600), 4800);
-    for (double l : levels) EXPECT_NEAR(l, AudioGraph::kSlotGain * direct, 1e-4);
+    for (double l : levels) EXPECT_NEAR(l, AudioGraph::kSlotGain * defaultStripGain() * direct, 1e-4);
 }
 
 // A note from the keys is applied at the start of the next chunk, and live recording uses

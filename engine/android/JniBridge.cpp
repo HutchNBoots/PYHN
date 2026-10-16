@@ -2,9 +2,9 @@
 // function receives the singleton instance as `thiz`).
 // Every function here is called from the app's main thread only (see AudioEngine.h):
 // every UI-to-audio queue and parameter store allows exactly one control-thread writer.
-// Every slot, pattern, step, key, id, target and index coming from Kotlin is validated
-// here; out-of-range calls are ignored (string getters return "", value getters return 0,
-// note calls return false). Synth-only calls ignore slot 0 (the drum kit).
+// Every slot, pattern, step, key, id, target, channel, track and index coming from Kotlin is
+// validated here; out-of-range calls are ignored (string getters return "", value getters
+// return 0, note calls return false). Synth-only calls ignore slot 0 (the drum kit).
 
 #include <jni.h>
 
@@ -15,10 +15,12 @@
 #include "AudioEngine.h"
 #include "groove/DrumMachine.h"
 #include "groove/DrumParams.h"
+#include "groove/MixParams.h"
 #include "groove/Pattern.h"
 #include "groove/Presets.h"
 #include "groove/Sequencer.h"
 #include "groove/SynthParams.h"
+#include "groove/Tape.h"
 
 namespace {
 
@@ -29,6 +31,7 @@ groove::AudioEngine& engine() {
 }
 
 groove::Sequencer& seq() { return engine().graph().sequencer(); }
+groove::Tape& tape() { return engine().graph().tape(); }
 
 // Layout shared with NativeEngine.kt (EngineStats.SIZE and EngineStats.from()).
 constexpr jsize kStatsSize = 15;
@@ -39,6 +42,10 @@ constexpr jsize kTransportSize = 3 + 3 * groove::kSlotCount;
 // RecordedEvent records: [kind (0 note, 1 motion), slot, pattern, step, note or target, value].
 constexpr jsize kRecordSize = 6;
 constexpr int kMaxRecordsPerPoll = 64;
+// TapeState.SIZE: [lengthFrames, lengthBars, barFrames, headFrame, recordingTrack, armedTrack,
+// canUndo, canRedo, hasAudio x4].
+constexpr jsize kTapeStateSize = 8 + groove::Tape::kTracks;
+constexpr jsize kOverviewBins = groove::Tape::kOverviewBins;
 
 bool validParam(jint id) { return id >= 0 && id < static_cast<jint>(groove::kParamCount); }
 bool validDrumParam(jint id) { return id >= 0 && id < static_cast<jint>(groove::kDrumParamCount); }
@@ -48,6 +55,19 @@ bool validSlot(jint slot) { return slot >= 0 && slot < groove::kSlotCount; }
 bool validPattern(jint pattern) { return pattern >= 0 && pattern < groove::kPatternCount; }
 bool validStep(jint step) { return step >= 0 && step < groove::kMaxSteps; }
 bool synthSlot(jint slot) { return groove::AudioGraph::isSynthSlot(slot); }
+
+bool validMixParam(jint id) { return id >= 0 && id < static_cast<jint>(groove::kMixParamCount); }
+bool validChannelParam(jint id) { return id >= 0 && id < static_cast<jint>(groove::kChannelParamCount); }
+bool validChannel(jint channel) { return channel >= 0 && channel < groove::kMixerChannelCount; }
+bool validTrack(jint track) { return track >= 0 && track < groove::Tape::kTracks; }
+
+const groove::ParamInfo* mixParamInfo(jint id) {
+    return validMixParam(id) ? &groove::mixParamInfo(static_cast<groove::MixParamId>(id)) : nullptr;
+}
+
+const groove::ParamInfo* channelParamInfo(jint id) {
+    return validChannelParam(id) ? &groove::channelParamInfo(static_cast<groove::ChannelParamId>(id)) : nullptr;
+}
 
 const groove::ParamInfo* paramInfo(jint id) {
     return validParam(id) ? &groove::paramInfo(static_cast<groove::ParamId>(id)) : nullptr;
@@ -332,6 +352,143 @@ JNIEXPORT jint JNICALL Java_com_groovebox_engine_NativeEngine_nativePollRecorded
     }
     if (count > 0) env->SetDoubleArrayRegion(out, 0, count * kRecordSize, buffer.data());
     return static_cast<jint>(count);
+}
+
+// --- mixer, FX and tape settings (M3) ---
+
+JNIEXPORT jint JNICALL Java_com_groovebox_engine_NativeEngine_nativeMixParamCount(JNIEnv*, jobject) {
+    return static_cast<jint>(groove::kMixParamCount);
+}
+
+JNIEXPORT jstring JNICALL Java_com_groovebox_engine_NativeEngine_nativeMixParamKey(JNIEnv* env, jobject, jint id) {
+    const groove::ParamInfo* p = mixParamInfo(id);
+    return env->NewStringUTF(p ? p->key : "");
+}
+
+JNIEXPORT jstring JNICALL Java_com_groovebox_engine_NativeEngine_nativeMixParamLabel(JNIEnv* env, jobject, jint id) {
+    const groove::ParamInfo* p = mixParamInfo(id);
+    return env->NewStringUTF(p ? p->label : "");
+}
+
+JNIEXPORT jstring JNICALL Java_com_groovebox_engine_NativeEngine_nativeMixParamUnit(JNIEnv* env, jobject, jint id) {
+    const groove::ParamInfo* p = mixParamInfo(id);
+    return env->NewStringUTF(p ? p->unit : "");
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeMixParamInfo(JNIEnv* env, jobject, jint id,
+                                                                                 jdoubleArray out) {
+    writeInfo(env, mixParamInfo(id), out);
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeSetMixParam(JNIEnv*, jobject, jint id,
+                                                                                jfloat value) {
+    if (!validMixParam(id)) return;
+    // The store clamps, rounds Int/Enum values and maps NaN to the default; lock-free.
+    engine().graph().mixParams().set(static_cast<groove::MixParamId>(id), value);
+}
+
+JNIEXPORT jfloat JNICALL Java_com_groovebox_engine_NativeEngine_nativeGetMixParam(JNIEnv*, jobject, jint id) {
+    if (!validMixParam(id)) return 0.0f;
+    return engine().graph().mixParams().get(static_cast<groove::MixParamId>(id));
+}
+
+JNIEXPORT jint JNICALL Java_com_groovebox_engine_NativeEngine_nativeChannelParamCount(JNIEnv*, jobject) {
+    return static_cast<jint>(groove::kChannelParamCount);
+}
+
+JNIEXPORT jstring JNICALL Java_com_groovebox_engine_NativeEngine_nativeChannelParamKey(JNIEnv* env, jobject,
+                                                                                       jint id) {
+    const groove::ParamInfo* p = channelParamInfo(id);
+    return env->NewStringUTF(p ? p->key : "");
+}
+
+JNIEXPORT jstring JNICALL Java_com_groovebox_engine_NativeEngine_nativeChannelParamLabel(JNIEnv* env, jobject,
+                                                                                         jint id) {
+    const groove::ParamInfo* p = channelParamInfo(id);
+    return env->NewStringUTF(p ? p->label : "");
+}
+
+JNIEXPORT jstring JNICALL Java_com_groovebox_engine_NativeEngine_nativeChannelParamUnit(JNIEnv* env, jobject,
+                                                                                        jint id) {
+    const groove::ParamInfo* p = channelParamInfo(id);
+    return env->NewStringUTF(p ? p->unit : "");
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeChannelParamInfo(JNIEnv* env, jobject, jint id,
+                                                                                     jdoubleArray out) {
+    writeInfo(env, channelParamInfo(id), out);
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeSetChannelParam(JNIEnv*, jobject, jint channel,
+                                                                                    jint id, jfloat value) {
+    if (!validChannel(channel) || !validChannelParam(id)) return;
+    engine().graph().channelParams().set(channel, static_cast<groove::ChannelParamId>(id), value);
+}
+
+JNIEXPORT jfloat JNICALL Java_com_groovebox_engine_NativeEngine_nativeGetChannelParam(JNIEnv*, jobject,
+                                                                                      jint channel, jint id) {
+    if (!validChannel(channel) || !validChannelParam(id)) return 0.0f;
+    return engine().graph().channelParams().get(channel, static_cast<groove::ChannelParamId>(id));
+}
+
+// --- tape (F5) ---
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeTapeArmRecord(JNIEnv*, jobject, jint track) {
+    if (!validTrack(track)) return;
+    engine().submit([&] { return tape().armRecord(track); });
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeTapeStopRecord(JNIEnv*, jobject) {
+    engine().submit([] { return tape().stopRecord(); });
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeTapeCommit(JNIEnv*, jobject, jint track,
+                                                                               jint sourceSlot) {
+    if (!validTrack(track) || sourceSlot < -1 || sourceSlot >= groove::kSlotCount) return;
+    engine().submit([&] { return tape().commit(track, sourceSlot); });
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeTapeClearTrack(JNIEnv*, jobject, jint track) {
+    if (!validTrack(track)) return;
+    engine().submit([&] { return tape().clearTrack(track); });
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeTapeUndo(JNIEnv*, jobject) {
+    engine().submit([] { return tape().undo(); });
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeTapeRedo(JNIEnv*, jobject) {
+    engine().submit([] { return tape().redo(); });
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeGetTapeState(JNIEnv* env, jobject,
+                                                                                 jdoubleArray out) {
+    if (out == nullptr || env->GetArrayLength(out) < kTapeStateSize) return;
+    const groove::TapeState t = engine().tapeState();
+    std::array<jdouble, kTapeStateSize> values{};
+    values[0] = static_cast<jdouble>(t.lengthFrames);
+    values[1] = static_cast<jdouble>(t.lengthBars);
+    values[2] = static_cast<jdouble>(t.barFrames);
+    values[3] = static_cast<jdouble>(t.headFrame);
+    values[4] = static_cast<jdouble>(t.recordingTrack);
+    values[5] = static_cast<jdouble>(t.armedTrack);
+    values[6] = t.canUndo ? 1.0 : 0.0;
+    values[7] = t.canRedo ? 1.0 : 0.0;
+    for (std::size_t i = 0; i < static_cast<std::size_t>(groove::Tape::kTracks); ++i) {
+        values[8 + i] = t.hasAudio[i] ? 1.0 : 0.0;
+    }
+    env->SetDoubleArrayRegion(out, 0, kTapeStateSize, values.data());
+}
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeTapeOverview(JNIEnv* env, jobject, jint track,
+                                                                                 jbyteArray out) {
+    if (out == nullptr || !validTrack(track)) return;
+    std::array<uint8_t, kOverviewBins> bins{};
+    tape().overview(track, bins.data());
+    std::array<jbyte, kOverviewBins> bytes{};
+    for (std::size_t i = 0; i < bins.size(); ++i) bytes[i] = static_cast<jbyte>(bins[i]);  // 0..255 as unsigned bytes
+    const jsize count = std::min<jsize>(env->GetArrayLength(out), kOverviewBins);
+    if (count > 0) env->SetByteArrayRegion(out, 0, count, bytes.data());
 }
 
 // --- diagnostics ---

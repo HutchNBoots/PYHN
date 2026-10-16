@@ -12,8 +12,11 @@ namespace {
 constexpr float kToTape = 32767.0f / Tape::kHeadroom;
 constexpr float kFromTape = Tape::kHeadroom / 32767.0f;
 constexpr double kPi = 3.14159265358979323846;
-constexpr int kTaps = 16;
-constexpr int kTapCentre = 7;  // taps cover p - 7 .. p + 8
+constexpr int kTaps = 16;       // half-frame interpolator: taps cover p - 7 .. p + 8
+constexpr int kTapCentre = 7;
+constexpr int kLpTaps = 32;     // 2x anti-alias low-pass: taps cover p - 15 .. p + 16
+constexpr int kLpCentre = 15;
+constexpr double kLpCutoff = 0.21;  // of the tape rate: below the 2x output's Nyquist (0.25)
 constexpr int64_t kLengthTolerance = 2;  // frames: a pass that long over whole bars stays whole
 
 int16_t toTape(float x) {
@@ -35,31 +38,33 @@ double blackman(double t, double half) {
     return 0.42 + 0.5 * std::cos(kPi * t / half) + 0.08 * std::cos(2.0 * kPi * t / half);
 }
 
-// taps[k] for k = 0..15 at offsets (k - 7) - frac; cutoff fc in cycles per sample.
-void designTaps(float* taps, double frac, double fc) {
+// taps[k] for k = 0..count-1 at offsets (k - centre) - frac; cutoff fc in cycles per sample;
+// Blackman window over +-count/2, normalised to unity gain at DC.
+void designTaps(float* taps, int count, int centre, double frac, double fc) {
     double sum = 0.0;
-    double v[kTaps];
-    for (int k = 0; k < kTaps; ++k) {
-        const double t = static_cast<double>(k - kTapCentre) - frac;
-        v[k] = 2.0 * fc * sinc(2.0 * fc * t) * blackman(t, 8.0);
+    double v[kLpTaps];
+    for (int k = 0; k < count; ++k) {
+        const double t = static_cast<double>(k - centre) - frac;
+        v[k] = 2.0 * fc * sinc(2.0 * fc * t) * blackman(t, static_cast<double>(count) / 2.0);
         sum += v[k];
     }
-    for (int k = 0; k < kTaps; ++k) taps[k] = static_cast<float>(v[k] / sum);
+    for (int k = 0; k < count; ++k) taps[k] = static_cast<float>(v[k] / sum);
 }
 
 bool validTrack(int track) { return track >= 0 && track < Tape::kTracks; }
 
 }  // namespace
 
+Tape::Tape() : Tape(Limits{}) {}
+
 Tape::Tape(Limits limits) : limits_(limits) {
     for (auto& a : outHasAudio_) a.store(false, std::memory_order_relaxed);
     for (auto& t : bins_) {
         for (auto& b : t) b.store(0, std::memory_order_relaxed);
     }
-    designTaps(interpHalf_.data(), 0.5, 0.5);
-    designTaps(interpHalf_.data() + kTaps, 0.0, 0.5);
-    designTaps(lowpass_.data(), 0.0, 0.25);
-    designTaps(lowpass_.data() + kTaps, 0.5, 0.25);
+    designTaps(interpHalf_.data(), kTaps, kTapCentre, 0.5, 0.5);
+    designTaps(lowpass_.data(), kLpTaps, kLpCentre, 0.0, kLpCutoff);
+    designTaps(lowpass_.data() + kLpTaps, kLpTaps, kLpCentre, 0.5, kLpCutoff);
 }
 
 Tape::~Tape() = default;
@@ -827,17 +832,19 @@ void Tape::readFrame(const int16_t* base, int64_t head2, int32_t absStep2, float
         r = fromTape(base[2 * s + 1]);
         return;
     }
-    const float* taps = absStep2 == 4 ? lowpass_.data() + (half ? kTaps : 0) : interpHalf_.data();
-    const int64_t s0 = offset_ + p - kTapCentre;
+    const bool lp = absStep2 == 4;
+    const float* taps = lp ? lowpass_.data() + (half ? kLpTaps : 0) : interpHalf_.data();
+    const int count = lp ? kLpTaps : kTaps;
+    const int64_t s0 = offset_ + p - (lp ? kLpCentre : kTapCentre);
     float al = 0.0f, ar = 0.0f;
-    if (s0 >= 0 && s0 + kTaps <= trackFrames_) {
+    if (s0 >= 0 && s0 + count <= trackFrames_) {
         const int16_t* x = base + 2 * s0;
-        for (int k = 0; k < kTaps; ++k) {
+        for (int k = 0; k < count; ++k) {
             al += taps[k] * static_cast<float>(x[2 * k]);
             ar += taps[k] * static_cast<float>(x[2 * k + 1]);
         }
     } else {
-        for (int k = 0; k < kTaps; ++k) {
+        for (int k = 0; k < count; ++k) {
             const int64_t s = s0 + k;
             if (s < 0 || s >= trackFrames_) continue;
             al += taps[k] * static_cast<float>(base[2 * s]);
@@ -1082,7 +1089,10 @@ void Tape::publish() {
     outLength_.store(length_, std::memory_order_relaxed);
     outLengthBars_.store(bar_ > 0 ? static_cast<int32_t>(length_ / bar_) : 0, std::memory_order_relaxed);
     outBar_.store(bar_, std::memory_order_relaxed);
-    outHead_.store(std::max<int64_t>(0, floorDiv2(main_.head2)), std::memory_order_relaxed);
+    int64_t head = floorDiv2(main_.head2);
+    if (length_ > 0 && head >= loopE_) head -= loopE_ - loopS_;  // wraps at the next frame
+    if (length_ > 0 && head < loopS_) head += loopE_ - loopS_;
+    outHead_.store(std::max<int64_t>(0, head), std::memory_order_relaxed);
     outRecording_.store(take_ == TakeState::Recording ? takeTrack_ : -1, std::memory_order_relaxed);
     outArmed_.store(take_ == TakeState::Armed || take_ == TakeState::CommitPending ? takeTrack_ : -1,
                     std::memory_order_relaxed);

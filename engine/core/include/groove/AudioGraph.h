@@ -99,7 +99,6 @@ public:
     struct Buses {
         const float* delaySendL;
         const float* reverbSendL;
-        const float* tapeInL;   // slot mix incl. FX returns
         const float* slotPostL[kSlotCount];
         const float* trackL[Tape::kTracks];
     };
