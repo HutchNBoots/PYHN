@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "groove/Presets.h"
 
@@ -21,7 +22,10 @@ constexpr std::array<float, SynthEngine::kVoiceCount> kUnisonPhase = {0.0f, 0.37
 
 }  // namespace
 
-SynthEngine::SynthEngine() { prepare(48000.0f); }
+SynthEngine::SynthEngine() {
+    motion_.fill(std::numeric_limits<float>::quiet_NaN());
+    prepare(48000.0f);
+}
 
 void SynthEngine::prepare(float sampleRate) {
     sampleRate_ = sampleRate;
@@ -37,7 +41,11 @@ void SynthEngine::prepare(float sampleRate) {
     stamp_ = 0;
     ampTimes_.fill(-1.0f);
     filterTimes_.fill(-1.0f);
-    hpfCached_ = driveCached_ = lfoRateCached_ = lfoDelayCached_ = -1.0f;
+    hpfCached_ = driveCached_ = lfoRateCached_ = lfoDelayCached_ = lfoTempoCached_ = -1.0f;
+    motion_.fill(std::numeric_limits<float>::quiet_NaN());
+    noteSources_.fill(0);
+    seqEventCount_ = 0;
+    subBlockPos_ = 0;
 
     snapSmoothing_ = true;
     readTargets();
@@ -70,6 +78,10 @@ bool SynthEngine::loadPreset(int index) {
 
 void SynthEngine::readTargets() {
     params_.snapshot(raw_);
+    // Motion overrides sit on top of the strips' values and are smoothed like them.
+    for (std::size_t i = 0; i < kParamCount; ++i) {
+        if (!std::isnan(motion_[i])) raw_[i] = motion_[i];
+    }
     for (std::size_t i = 0; i < kParamCount; ++i) {
         target_[i] = kParamInfo[i].curve == Curve::Exp ? std::log2(raw_[i]) : raw_[i];
     }
@@ -82,6 +94,7 @@ void SynthEngine::readTargets() {
 void SynthEngine::setMode(VoiceMode mode) {
     for (Voice& v : voices_) v.fadeOut();
     held_.clear();
+    noteSources_.fill(0);
     mode_ = mode;
     for (std::size_t i = 0; i < voices_.size(); ++i) {
         const bool unison = mode == VoiceMode::Unison;
@@ -133,9 +146,10 @@ void SynthEngine::advanceControls() {
 
     const float rateLog2 = smoothed(ParamId::LfoRate);
     const bool synced = smoothed(ParamId::LfoSync) >= 0.5f;
-    if (synced && rateLog2 != lfoRateCached_) {
+    if (synced && (rateLog2 != lfoRateCached_ || tempoBpm_ != lfoTempoCached_)) {
         lfoRateCached_ = rateLog2;
-        lfoSyncedHz_ = Lfo::divisionHz(Lfo::nearestDivision(std::exp2(rateLog2), kTempoBpm), kTempoBpm);
+        lfoTempoCached_ = tempoBpm_;
+        lfoSyncedHz_ = Lfo::divisionHz(Lfo::nearestDivision(std::exp2(rateLog2), tempoBpm_), tempoBpm_);
     }
     c.lfoHz = synced ? lfoSyncedHz_ : std::exp2(rateLog2);
     c.lfoShape = static_cast<Lfo::Shape>(static_cast<int32_t>(smoothed(ParamId::LfoWave)));
@@ -166,9 +180,10 @@ void SynthEngine::advanceControls() {
     }
 }
 
-void SynthEngine::handle(const NoteEvent& e, int64_t blockStartFrame) {
+void SynthEngine::handle(const NoteEvent& e, int64_t blockStartFrame, uint8_t source) {
     switch (e.type) {
         case NoteEvent::Type::NoteOn: {
+            noteSources_[static_cast<std::size_t>(e.note)] |= source;
             if (mode_ == VoiceMode::Poly) {
                 notePoly(e.note, e.velocity, e.tapTimeNs, blockStartFrame);
                 break;
@@ -192,29 +207,23 @@ void SynthEngine::handle(const NoteEvent& e, int64_t blockStartFrame) {
             break;
         }
         case NoteEvent::Type::NoteOff: {
-            if (mode_ == VoiceMode::Poly) {
-                noteOffPoly(e.note);
-                break;
-            }
-            const bool wasTop = held_.top() == e.note;
-            held_.remove(e.note);
-            const std::size_t count = mode_ == VoiceMode::Mono ? 1 : voices_.size();
-            for (std::size_t i = 0; i < count; ++i) {
-                Voice& v = voices_[i];
-                if (held_.empty()) {
-                    if (v.isFading()) {
-                        v.cancelPending();
-                    } else {
-                        v.release();
-                    }
-                } else if (wasTop) {
-                    // Back to the previous held note, legato (last-note priority).
-                    v.trigger(held_.top(), heldVelocity_, false, control_);
-                }
-            }
+            uint8_t& held = noteSources_[static_cast<std::size_t>(e.note)];
+            if ((held & source) == 0) break;  // this source isn't holding it
+            held = static_cast<uint8_t>(held & ~source);
+            if (held == 0) releaseNote(e.note);  // nobody else is holding it either
             break;
         }
         case NoteEvent::Type::AllNotesOff:
+            if (source == kSequencer) {
+                for (std::size_t n = 0; n < noteSources_.size(); ++n) {
+                    if ((noteSources_[n] & kSequencer) == 0) continue;
+                    noteSources_[n] = static_cast<uint8_t>(noteSources_[n] & ~kSequencer);
+                    if (noteSources_[n] == 0) releaseNote(static_cast<int>(n));
+                }
+                break;
+            }
+            // From the keys: a panic, everything stops.
+            noteSources_.fill(0);
             held_.clear();
             for (Voice& v : voices_) {
                 v.cancelPending();
@@ -222,6 +231,64 @@ void SynthEngine::handle(const NoteEvent& e, int64_t blockStartFrame) {
             }
             break;
     }
+}
+
+void SynthEngine::releaseNote(int note) {
+    if (mode_ == VoiceMode::Poly) {
+        noteOffPoly(note);
+        return;
+    }
+    const bool wasTop = held_.top() == note;
+    held_.remove(note);
+    const std::size_t count = mode_ == VoiceMode::Mono ? 1 : voices_.size();
+    for (std::size_t i = 0; i < count; ++i) {
+        Voice& v = voices_[i];
+        if (held_.empty()) {
+            if (v.isFading()) {
+                v.cancelPending();
+            } else {
+                v.release();
+            }
+        } else if (wasTop) {
+            // Back to the previous held note, legato (last-note priority).
+            v.trigger(held_.top(), heldVelocity_, false, control_);
+        }
+    }
+}
+
+void SynthEngine::pushSeqEvent(const NoteEvent& e) {
+    if (seqEventCount_ < kSeqEventCapacity) {
+        seqEvents_[static_cast<std::size_t>(seqEventCount_++)] = e;
+        return;
+    }
+    // Never expected (the graph renders after every event frame); apply rather than drop.
+    handle(e, framesRendered_.load(std::memory_order_relaxed), kSequencer);
+}
+
+void SynthEngine::seqNoteOn(int note, float velocity) {
+    if (note < 0 || note > 127) return;
+    if (std::isnan(velocity)) velocity = 1.0f;
+    pushSeqEvent({NoteEvent::Type::NoteOn, note, std::clamp(velocity, 0.0f, 1.0f), 0});
+}
+
+void SynthEngine::seqNoteOff(int note) {
+    if (note < 0 || note > 127) return;
+    pushSeqEvent({NoteEvent::Type::NoteOff, note, 0.0f, 0});
+}
+
+void SynthEngine::seqAllNotesOff() { pushSeqEvent({NoteEvent::Type::AllNotesOff, 0, 0.0f, 0}); }
+
+void SynthEngine::setMotion(int target, float value) {
+    if (target < 0 || target >= static_cast<int>(kParamCount)) return;
+    const auto id = static_cast<ParamId>(target);
+    motion_[index(id)] = std::isnan(value) ? value : sanitizeParam(id, value);
+}
+
+void SynthEngine::clearAllMotion() { motion_.fill(std::numeric_limits<float>::quiet_NaN()); }
+
+void SynthEngine::setTempo(float bpm) {
+    if (std::isnan(bpm)) return;
+    tempoBpm_ = std::clamp(bpm, 1.0f, 1000.0f);
 }
 
 void SynthEngine::notePoly(int note, float velocity, int64_t tapTimeNs, int64_t blockStartFrame) {
@@ -301,13 +368,18 @@ void SynthEngine::renderStereo(float* left, float* right, int32_t numFrames) {
     const auto mode = static_cast<VoiceMode>(static_cast<int32_t>(raw_[index(ParamId::OscVoiceMode)]));
     if (mode != mode_) setMode(mode);
 
-    // Events apply at the start of the block: UI events carry no frame position.
+    // Events apply at the start of the call: the graph splits its render at sequencer
+    // event frames, and UI events carry no frame position.
     NoteEvent event;
-    while (events_.pop(event)) handle(event, blockStart);
+    while (events_.pop(event)) handle(event, blockStart, kKeys);
+    for (int i = 0; i < seqEventCount_; ++i) handle(seqEvents_[static_cast<std::size_t>(i)], blockStart, kSequencer);
+    seqEventCount_ = 0;
 
-    for (int32_t offset = 0; offset < numFrames; offset += kSubBlock) {
-        const int len = static_cast<int>(std::min<int32_t>(kSubBlock, numFrames - offset));
-        advanceControls();
+    for (int32_t offset = 0; offset < numFrames;) {
+        const bool newSubBlock = subBlockPos_ == 0;
+        if (newSubBlock) advanceControls();
+        const int subLeft = kSubBlock - subBlockPos_;
+        const int len = static_cast<int>(std::min<int32_t>(subLeft, numFrames - offset));
         float* l = left + offset;
         float* r = right + offset;
         std::fill(l, l + len, 0.0f);
@@ -315,7 +387,7 @@ void SynthEngine::renderStereo(float* left, float* right, int32_t numFrames) {
         for (std::size_t i = 0; i < voices_.size(); ++i) {
             Voice& v = voices_[i];
             if (v.isIdle()) continue;
-            v.render(scratch_.data(), len, control_);
+            v.render(scratch_.data(), len, subLeft, newSubBlock, control_);
             const float pl = panLeft_[i];
             const float pr = panRight_[i];
             for (int j = 0; j < len; ++j) {
@@ -324,6 +396,8 @@ void SynthEngine::renderStereo(float* left, float* right, int32_t numFrames) {
                 r[j] += s * pr;
             }
         }
+        subBlockPos_ = (subBlockPos_ + len) % kSubBlock;
+        offset += len;
     }
 
     // Single writer (this thread), so load + store is fine.

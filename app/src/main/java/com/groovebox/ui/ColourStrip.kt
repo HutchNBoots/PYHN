@@ -43,32 +43,46 @@ import com.groovebox.ui.theme.LocalDesign
  * One colour strip (feature spec F4). The fill rises from the bottom to the value with a
  * solid top edge; the label sits at the top in the strip colour and the value at the bottom.
  * Touches go through [StripGesture]; each pointer is tracked on its own, so all four strips
- * and the keys can be used at once. A null [spec] is a reserved slot: a disabled strip.
+ * and the keys can be used at once. A null [spec] is a disabled strip, labelled
+ * [disabledLabel] (and [disabledValue] at the foot, if given).
  */
 @Composable
-fun ColourStrip(position: Int, spec: ParamSpec?, controller: SynthController, modifier: Modifier = Modifier) {
+fun ColourStrip(
+    position: Int,
+    spec: ParamSpec?,
+    host: StripHost,
+    modifier: Modifier = Modifier,
+    disabledLabel: String = "—",
+    disabledValue: String? = null,
+) {
     val d = LocalDesign.current
     val colour = GrooveColors.Strips[position]
     val shape = RoundedCornerShape(d.dp(14))
 
     if (spec == null) {
-        Box(
+        Column(
             modifier
                 .alpha(GrooveColors.INERT_ALPHA)
                 .clip(shape)
                 .background(GrooveColors.Panel)
-                .semantics { contentDescription = "Strip ${position + 1}, unused" },
-            contentAlignment = Alignment.TopCenter,
+                .semantics { contentDescription = "Strip ${position + 1}, ${if (disabledLabel == "—") "unused" else "$disabledLabel, none"}" }
+                .padding(horizontal = d.dp(6), vertical = d.dp(10)),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            BasicText("—", Modifier.padding(top = d.dp(10)), style = d.label(14f, colour, FontWeight.Bold))
+            BasicText(disabledLabel, style = d.label(14f, colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
+            Spacer(Modifier.weight(1f))
+            if (disabledValue != null) BasicText(disabledValue, style = d.value(13f, GrooveColors.White), maxLines = 1)
         }
         return
     }
 
-    val value = controller.value(spec)
+    val value = host.value(spec)
     val normalized = ParamMapping.toNormalized(spec, value)
-    val locked = controller.isLocked(spec)
-    val text = ParamMapping.format(spec, value)
+    val locked = host.isLocked(spec)
+    val text = host.format(spec, value)
+    val pending = host.pending(spec)
+    // Only a pending strip reads the blink phase, so only it recomposes as it blinks.
+    val textAlpha = if (pending && !host.blinkOn) 0.25f else 1f
     val currentNormalized by rememberUpdatedState(normalized)
     val currentLocked by rememberUpdatedState(locked)
     val edge = d.px(3f)
@@ -78,16 +92,18 @@ fun ColourStrip(position: Int, spec: ParamSpec?, controller: SynthController, mo
             .clip(shape)
             .background(GrooveColors.Panel)
             .semantics {
-                contentDescription = "${spec.label} $text${if (locked) ", locked" else ""}, drag up or down"
+                contentDescription = "${spec.label} $text${if (pending) ", queued" else ""}" +
+                    "${if (locked) ", locked" else ""}, drag up or down"
             }
-            // Restarts (dropping any gesture in progress) when the strip shows another parameter.
-            .pointerInput(spec.id) {
+            // Restarts (dropping any gesture in progress) when the strip shows another parameter
+            // or drives another host (e.g. another slot).
+            .pointerInput(spec, host) {
                 val gesture = StripGesture(touchSlop = viewConfiguration.touchSlop)
                 fun handle(action: StripAction?) {
                     when (action) {
-                        is StripAction.Set -> controller.setNormalized(spec, action.normalized)
-                        StripAction.Reset -> controller.reset(spec)
-                        is StripAction.Lock -> controller.setLocked(spec, action.locked)
+                        is StripAction.Set -> host.setValue(spec, ParamMapping.fromNormalized(spec, action.normalized))
+                        StripAction.Reset -> host.reset(spec)
+                        is StripAction.Lock -> host.setLocked(spec, action.locked)
                         null -> Unit
                     }
                 }
@@ -131,6 +147,16 @@ fun ColourStrip(position: Int, spec: ParamSpec?, controller: SynthController, mo
                 val top = (size.height * (1f - normalized.toFloat())).coerceIn(0f, size.height - edge)
                 drawRect(colour.copy(alpha = 0x38 / 255f), Offset(0f, top), Size(size.width, size.height - top))
                 drawRect(colour, Offset(0f, top), Size(size.width, edge))
+                // A queued change: outlined in the strip colour until it takes effect.
+                if (pending) {
+                    drawRoundRect(
+                        colour,
+                        topLeft = Offset(edge / 2, edge / 2),
+                        size = Size(size.width - edge, size.height - edge),
+                        cornerRadius = CornerRadius(d.px(14f)),
+                        style = Stroke(edge * 0.67f),
+                    )
+                }
             },
     ) {
         Column(
@@ -142,7 +168,13 @@ fun ColourStrip(position: Int, spec: ParamSpec?, controller: SynthController, mo
             BasicText(spec.label, style = d.label(14f, colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
             if (locked) LockMark(colour, Modifier.padding(top = d.dp(6)).size(d.dp(14)))
             Spacer(Modifier.weight(1f))
-            BasicText(text, style = d.value(13f, GrooveColors.White), maxLines = 1, overflow = TextOverflow.Clip)
+            BasicText(
+                text,
+                Modifier.alpha(textAlpha),
+                style = d.value(13f, GrooveColors.White),
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+            )
         }
     }
 }

@@ -21,7 +21,7 @@ TEST(RealtimeSafety, AudioGraphRenderNeverAllocates) {
     std::vector<float> out(4096 * 2);
     groove::test::AllocationScope scope;
     for (int i = 0; i < 3000; ++i) {
-        SynthEngine& s = graph.synth();
+        SynthEngine& s = graph.synth(1);
         if (i % 7 == 0) s.noteOn(36 + (i * 5) % 48, 0.5f + 0.5f * static_cast<float>(i % 3) / 2.0f, i + 1);
         if (i % 7 == 4) s.noteOff(36 + ((i - 4) * 5) % 48);
         if (i % 50 == 0) s.loadPreset((i / 50) % presetCount());

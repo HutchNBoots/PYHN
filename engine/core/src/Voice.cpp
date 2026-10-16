@@ -181,21 +181,28 @@ void Voice::controlUpdate(const VoiceControl& c, int n) {
     }
 }
 
-void Voice::render(float* out, int n, const VoiceControl& c) {
+void Voice::render(float* out, int n, int subBlockLeft, bool newSubBlock, const VoiceControl& c) {
     if (fading_ && fadeGain_ <= 0.0f && hasPending_) start(pendingNote_, pendingVelocity_, c);
 
-    controlUpdate(c, n);
+    if (newSubBlock || snapRamps_ || rampLeft_ <= 0) {
+        const int len = std::max(subBlockLeft, n);
+        controlUpdate(c, len);
+        const float inv = 1.0f / static_cast<float>(len);
+        for (std::size_t k = 0; k < dWeights_.size(); ++k) dWeights_[k] = (weightsTarget_[k] - weights_[k]) * inv;
+        dSub_ = (subTarget_ - sub_) * inv;
+        dNoise_ = (noiseTarget_ - noiseLevel_) * inv;
+        dGain_ = (gainTarget_ - gain_) * inv;
+        rampLeft_ = len;
+    }
 
-    const float inv = 1.0f / static_cast<float>(n);
     Oscillator::Weights w = weights_;
-    Oscillator::Weights dw;
-    for (std::size_t k = 0; k < dw.size(); ++k) dw[k] = (weightsTarget_[k] - w[k]) * inv;
+    const Oscillator::Weights dw = dWeights_;
     float sub = sub_;
-    const float dSub = (subTarget_ - sub) * inv;
+    const float dSub = dSub_;
     float noise = noiseLevel_;
-    const float dNoise = (noiseTarget_ - noise) * inv;
+    const float dNoise = dNoise_;
     float gain = gain_;
-    const float dGain = (gainTarget_ - gain) * inv;
+    const float dGain = dGain_;
     const bool useNoise = noise > 0.0f || noiseTarget_ > 0.0f;
     const bool useSub = sub > 0.0f || subTarget_ > 0.0f;
 
@@ -220,10 +227,19 @@ void Voice::render(float* out, int n, const VoiceControl& c) {
         out[i] = s * a;
     }
 
-    weights_ = weightsTarget_;
-    sub_ = subTarget_;
-    noiseLevel_ = noiseTarget_;
-    gain_ = gainTarget_;
+    rampLeft_ -= n;
+    if (rampLeft_ <= 0) {
+        // End of the sub-block: land exactly on the targets (no rounding drift).
+        weights_ = weightsTarget_;
+        sub_ = subTarget_;
+        noiseLevel_ = noiseTarget_;
+        gain_ = gainTarget_;
+    } else {
+        weights_ = w;
+        sub_ = useSub ? sub : sub_ + dSub * static_cast<float>(n);
+        noiseLevel_ = useNoise ? noise : noiseLevel_ + dNoise * static_cast<float>(n);
+        gain_ = gain;
+    }
     sounded_ = true;
 
     if (fading_) {

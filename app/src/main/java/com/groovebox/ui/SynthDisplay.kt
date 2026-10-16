@@ -2,7 +2,6 @@ package com.groovebox.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,8 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,7 +24,6 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -61,13 +57,10 @@ private const val DB_BOTTOM = -60.0
 fun SynthDisplay(
     controller: SynthController,
     audioStarted: Boolean,
-    debugOpen: Boolean,
-    onToggleDebug: () -> Unit,
-    debugPanel: @Composable () -> Unit,
+    debug: DebugSlot,
     modifier: Modifier = Modifier,
 ) {
     val d = LocalDesign.current
-    val toggleDebug by rememberUpdatedState(onToggleDebug)
     val section = controller.section
     val shifted = controller.shifted
     val modeSpec = controller.spec("osc.voiceMode")
@@ -82,29 +75,12 @@ fun SynthDisplay(
         verticalArrangement = Arrangement.spacedBy(d.dp(8)),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
-            BasicText(
-                "Brook",
-                Modifier
-                    .alignByBaseline()
-                    .pointerInput(Unit) { detectTapGestures(onTap = { toggleDebug() }) },
-                style = d.label(20f, GrooveColors.Text, FontWeight.Bold),
+            DisplayTitle("Brook", debug, Modifier.alignByBaseline())
+            DisplaySubtitle(
+                "${controller.presetName} · slot ${controller.slot + 1} · $mode",
+                audioStarted,
+                Modifier.weight(1f).alignByBaseline(),
             )
-            if (audioStarted) {
-                BasicText(
-                    "${controller.presetName} · slot 1 · $mode",
-                    Modifier.weight(1f).alignByBaseline(),
-                    style = d.label(13f, GrooveColors.TextDim),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                BasicText(
-                    "audio stream failed to open",
-                    Modifier.weight(1f).alignByBaseline(),
-                    style = d.label(13f, GrooveColors.Warn),
-                    maxLines = 1,
-                )
-            }
             BasicText(
                 "${section.label.uppercase()} · ${if (shifted) "SHIFT" else "MAIN"} LAYER",
                 Modifier.alignByBaseline(),
@@ -115,35 +91,10 @@ fun SynthDisplay(
 
         Box(Modifier.fillMaxWidth().weight(1f)) {
             Pictures(controller, section, shifted, Modifier.fillMaxSize())
-            if (debugOpen) debugPanel()
+            if (debug.open) debug.panel()
         }
 
         Legend(controller.strips, controller)
-    }
-}
-
-@Composable
-private fun Legend(strips: List<ParamSpec?>, controller: SynthController) {
-    val d = LocalDesign.current
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
-        strips.forEachIndexed { i, spec ->
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(d.dp(10))
-                        .clip(RoundedCornerShape(d.dp(3)))
-                        .background(GrooveColors.Strips[i]),
-                )
-                Spacer(Modifier.size(d.dp(6)))
-                val text = spec?.let { "${it.label} ${ParamMapping.format(it, controller.value(it))}" } ?: "—"
-                BasicText(
-                    text,
-                    style = d.value(13f, GrooveColors.Text),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
     }
 }
 

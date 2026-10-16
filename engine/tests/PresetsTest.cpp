@@ -60,11 +60,11 @@ TEST(Presets, EveryPresetSoundsAndStops) {
     for (int i = 0; i < presetCount(); ++i) {
         AudioGraph graph;
         graph.prepare(48000.0f);
-        graph.synth().loadPreset(i);
+        graph.synth(1).loadPreset(i);
         std::vector<float> out(2 * 48000);
-        graph.synth().noteOn(48, 0.8f, 0);
-        graph.synth().noteOn(55, 0.8f, 0);
-        graph.synth().noteOn(60, 0.8f, 0);
+        graph.synth(1).noteOn(48, 0.8f, 0);
+        graph.synth(1).noteOn(55, 0.8f, 0);
+        graph.synth(1).noteOn(60, 0.8f, 0);
         graph.render(out.data(), 48000, 2);
         double sum = 0.0;
         float peak = 0.0f;
@@ -79,7 +79,7 @@ TEST(Presets, EveryPresetSoundsAndStops) {
         EXPECT_GT(rmsDb, -40.0) << preset(i).name;
         EXPECT_LE(peak, std::pow(10.0f, -0.3f / 20.0f)) << preset(i).name;
 
-        graph.synth().allNotesOff();
+        graph.synth(1).allNotesOff();
         for (int s = 0; s < 8; ++s) graph.render(out.data(), 48000, 2);  // longest release is 3 s
         EXPECT_EQ(peakAbs(out), 0.0f) << preset(i).name;
     }

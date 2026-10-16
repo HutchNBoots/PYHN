@@ -73,8 +73,13 @@ public:
     void cancelPending() { hasPending_ = false; }
     void reset();
 
-    // Writes n (<= kSubBlock) samples. Call only when !isIdle().
-    void render(float* out, int n, const VoiceControl& c);
+    // Writes n samples of the current control sub-block. Call only when !isIdle().
+    // newSubBlock: a control sub-block of subBlockLeft (<= kSubBlock) samples starts here, so
+    // modulation and filter are updated and the gains ramp across all of it. Otherwise the
+    // call continues the sub-block (the engine split it at an event): n <= what is left.
+    // A note that starts mid-sub-block gets its own update for the rest of it.
+    void render(float* out, int n, int subBlockLeft, bool newSubBlock, const VoiceControl& c);
+    void render(float* out, int n, const VoiceControl& c) { render(out, n, n, true, c); }
 
     bool isIdle() const { return idle_; }
     bool isGateOn() const { return !idle_ && !fading_ && gate_; }
@@ -137,6 +142,12 @@ private:
     float subTarget_ = 0.0f;
     float noiseTarget_ = 0.0f;
     float gainTarget_ = 0.0f;
+    // Per-sample increments toward the targets, and samples left in the sub-block.
+    Oscillator::Weights dWeights_{0.0f, 0.0f, 0.0f, 0.0f};
+    float dSub_ = 0.0f;
+    float dNoise_ = 0.0f;
+    float dGain_ = 0.0f;
+    int rampLeft_ = 0;
 };
 
 }  // namespace groove
