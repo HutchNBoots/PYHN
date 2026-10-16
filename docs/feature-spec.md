@@ -162,6 +162,65 @@ All tape memory is allocated before playback starts.
 
 ---
 
+## F8. Key and scale (next increment, after v1)
+
+Status: draft, refined from the owner's request (16 Oct 2026). **Decision** marks a proposed
+default awaiting the owner's answer to the questions at the end of this section.
+
+Pick a key (root note) and a scale. The keyboard then only plays notes in that key, and every
+way of choosing a note in the sequencer only offers notes in that key, so a Noodler can't
+play a wrong note.
+
+**Settings**
+- **Key:** C, C♯, D … B (12 roots).
+- **Scale:** Off (chromatic, today's behaviour), Major, Minor (natural), Dorian, Phrygian,
+  Lydian, Mixolydian, Harmonic minor, Major pentatonic, Minor pentatonic, Blues.
+- **Decision:** one key and scale for the whole session, like a song key. It applies to every
+  synth slot; the drum slot is never affected.
+- **Decision:** the default is Off, so nothing changes until the player picks a scale. It is
+  saved with the session (F7.4).
+- **Where:** on the strips, never in a dialog. The Seq screen's Shift layer (no step
+  selected) has two unused strips today; they become Key and Scale. The display shows the
+  current key and scale, e.g. "A minor", on every synth and Seq screen while a scale is on.
+
+**Keyboard**
+- **Decision:** out-of-key keys are dimmed and play nothing (*dead keys*). In-key keys work
+  as now; the root note's pads get an accent (amber stripe) so the tonic is easy to find.
+- Sliding a finger across the keys skips dead keys: only in-key notes sound.
+- Changing key or scale never cuts a held note. The new rule applies to the next touch.
+
+**Sequencer note entry**
+- With a step selected (Shift + pad), the **Note** strip steps through in-key notes only, up
+  and down across octaves.
+- Playing keys to set a step's notes, step-recording and live recording can only produce
+  in-key notes, because the keys themselves only play in-key notes.
+- Tapping a pad to turn on an empty step uses the last note played, which is always in key.
+- **Decision:** changing key or scale never rewrites existing patterns. Steps already out of
+  key keep playing as they are, and their pads show a small mark so they are easy to spot.
+
+**Acceptance criteria**
+
+| ID | Criterion | Module | Check |
+| --- | --- | --- | --- |
+| F8.1 | Every scale's note set is correct for all 12 keys. Off = all 12 notes. | ui | [K] |
+| F8.2 | With a scale on, a touch-down or slide onto an out-of-key key sends no note-on; in-key keys behave exactly as with Off (velocity, tap-to-tone measurement). | ui | [K] [D] |
+| F8.3 | Out-of-key keys are drawn dimmed and root keys accented, updated in the same frame as the setting. | ui | [D] |
+| F8.4 | The Note strip on a selected step only lands on in-key notes, across the full note range, and is monotonic (up never goes down). | ui | [K] |
+| F8.5 | Key and scale survive app restart (session v2, migrated from v1 with Off). | storage | [K] |
+| F8.6 | Changing key or scale never alters stored steps or cuts a held note; out-of-key steps are marked. | ui | [K] [D] |
+| F8.7 | The drum slot keyboard and drum steps are unaffected by any setting. | ui | [K] |
+| F8.8 | No engine or audio-thread change is needed: the rules live in the UI before notes reach the engine. | review | — |
+
+**Questions for the owner**
+1. **Dead keys or folded keys?** Dead keys (the default above) keep the piano layout, with
+   out-of-key keys switched off. Folded keys remap every pad to an in-key note, so there are
+   no dead pads but the layout no longer looks like a piano.
+2. **One key for everything, or per slot?** The default is one global key, which is simpler
+   and keeps everything musically together. Per-slot keys suit, say, a bass in a different mode.
+3. **Changing key with notes already written:** leave them alone (the default), transpose the
+   patterns to the new key, or snap out-of-key notes to the nearest in-key note?
+4. **Is the scale list right?** Anything to add, e.g. whole-tone or Japanese scales?
+
 ## Out of MVP (from the vision spec, unchanged)
 
 Tilt, USB-MIDI and clock sync, oscillator draw, the playful sequencers (endless, random,
