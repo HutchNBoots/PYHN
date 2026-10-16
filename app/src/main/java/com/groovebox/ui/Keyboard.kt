@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
@@ -147,7 +148,9 @@ fun Keyboard(
                             key.isBlack -> GrooveColors.BlackKey
                             else -> GrooveColors.WhiteKey
                         }
-                        drawPath(shapes[i], fill, alpha = if (key.note in dimmed && key.note !in pressed) DIM_ALPHA else 1f)
+                        // Blended, not translucent: black keys overlap the white ones.
+                        val shown = if (key.note in dimmed && key.note !in pressed) lerp(fill, GrooveColors.Ground, DIM) else fill
+                        drawPath(shapes[i], shown)
                         labels[i]?.let { (measured, topLeft) -> drawText(measured, topLeft = topLeft) }
                     }
                 }
@@ -155,7 +158,7 @@ fun Keyboard(
     )
 }
 
-private const val DIM_ALPHA = 0.55f
+private const val DIM = 0.5f
 
 /** CLOCK_MONOTONIC time of the touch sample, same clock as AAudio timestamps. */
 private fun touchTimeNs(event: MotionEvent): Long =

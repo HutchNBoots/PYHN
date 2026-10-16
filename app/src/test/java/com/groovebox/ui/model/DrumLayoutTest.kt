@@ -29,6 +29,24 @@ class DrumLayoutTest {
     }
 
     @Test
+    fun everyDrumParamFormats() {
+        val specs = defRows.mapIndexed { id, r ->
+            com.groovebox.engine.ParamSpec(id, r[1], r[2], r[3].toDouble(), r[4].toDouble(), r[5].toDouble(),
+                com.groovebox.engine.Curve.valueOf(r[6]), r[7])
+        }
+        val byKey = specs.associateBy { it.key }
+        assertEquals("+3 st", ParamMapping.format(byKey.getValue("drum.pitch"), 3.0))
+        assertEquals("−12 st", ParamMapping.format(byKey.getValue("drum.pitch"), -12.0))
+        assertEquals("0 st", ParamMapping.format(byKey.getValue("drum.pitch"), 0.0))
+        assertEquals("B", ParamMapping.format(byKey.getValue("drum.choke"), 2.0))
+        assertEquals("On", ParamMapping.format(byKey.getValue("drum.reverse"), 1.0))
+        for (s in specs) {
+            assertTrue(s.key, ParamMapping.format(s, s.default).isNotBlank())
+            if (s.curve == com.groovebox.engine.Curve.Exp) assertTrue(s.min > 0)
+        }
+    }
+
+    @Test
     fun keysMapToNotes48To63() {
         assertEquals(0, DrumLayout.keyOf(48))
         assertEquals(15, DrumLayout.keyOf(63))

@@ -56,6 +56,7 @@ object ParamMapping {
             "c" -> signed((value).roundToInt()) + "c"
             "dB" -> "${value.roundToInt()} dB"
             "oct" -> signed(value.roundToInt())
+            "st" -> signed(value.roundToInt()) + " st"
             "" -> fixed(value, 2)
             else -> fixed(value, 2) + " " + spec.unit
         }

@@ -634,3 +634,135 @@ TEST_F(SynthEngineTest, HeldZeroSustainSettlesToExactSilence) {
     EXPECT_EQ(synth.voiceInfo(0).ampLevel, 0.0f);
     EXPECT_EQ(peakAbs(x, 24000), 0.0f);
 }
+
+// --- M2: Instrument (sequencer notes, motion overrides, tempo) ---
+
+// Rendering in arbitrary pieces (as the graph does when it splits at event frames) gives
+// bit-identical output: control sub-blocks follow the stream, not the calls.
+TEST_F(SynthEngineTest, SplitRendersAreBitIdentical) {
+    synth.setParam(ParamId::OscWave, 0.4f);
+    synth.setParam(ParamId::LfoDepth, 0.6f);
+    synth.setParam(ParamId::LfoRetrigger, 0.0f);
+    synth.setParam(ParamId::FltEnvAmount, 0.7f);
+    synth.setParam(ParamId::OscSub, 0.4f);
+    SynthEngine other;
+    for (std::size_t i = 0; i < kParamCount; ++i) other.setParam(static_cast<ParamId>(i), synth.param(static_cast<ParamId>(i)));
+    synth.prepare(kRate);
+    other.prepare(kRate);
+    synth.noteOn(48, 1.0f, 0);
+    other.noteOn(48, 1.0f, 0);
+    const auto a = render(9600, 96);
+    std::vector<float> b(9600), r(9600);
+    const int pieces[] = {1, 7, 16, 3, 40, 96, 13, 2, 200, 5};
+    for (int done = 0, i = 0; done < 9600; ++i) {
+        const int n = std::min(pieces[i % 10], 9600 - done);
+        other.renderStereo(b.data() + done, r.data() + done, n);
+        done += n;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) ASSERT_EQ(a[i], b[i]) << i;
+}
+
+TEST_F(SynthEngineTest, SequencerNoteOnSoundsAtTheNextRender) {
+    synth.seqNoteOn(69, 1.0f);
+    auto x = render(kBlock);
+    EXPECT_GT(peakAbs(x, 0, 48), 0.0f);
+    synth.seqNoteOff(69);
+    EXPECT_EQ(peakAbs(render(4800), 2400), 0.0f);
+    synth.seqNoteOn(200, 1.0f);  // ignored
+    EXPECT_EQ(peakAbs(render(kBlock)), 0.0f);
+}
+
+// Note-source rule: a sequencer note-off doesn't cut a key the player holds, and a key
+// release doesn't cut a sequencer note within its gate.
+TEST_F(SynthEngineTest, KeysAndSequencerDoNotCutEachOthersNotes) {
+    for (auto mode : {SynthEngine::VoiceMode::Poly, SynthEngine::VoiceMode::Mono}) {
+        setMode(mode);
+        synth.noteOn(60, 1.0f, 0);
+        render(kBlock);
+        synth.seqNoteOn(60, 1.0f);
+        render(kBlock);
+        synth.seqNoteOff(60);
+        render(kBlock);
+        EXPECT_TRUE(synth.voiceInfo(0).gateOn) << "key still held";
+        synth.noteOff(60);
+        render(kBlock);
+        EXPECT_FALSE(synth.voiceInfo(0).gateOn);
+        render(4800);
+
+        synth.seqNoteOn(62, 1.0f);
+        render(kBlock);
+        synth.noteOn(62, 1.0f, 0);
+        synth.noteOff(62);
+        render(kBlock);
+        EXPECT_TRUE(synth.voiceInfo(0).gateOn) << "sequencer note within its gate";
+        synth.seqAllNotesOff();  // Stop
+        render(kBlock);
+        EXPECT_FALSE(synth.voiceInfo(0).gateOn);
+        render(4800);
+
+        // Stop leaves a held key alone; the UI's all-notes-off is a panic.
+        synth.noteOn(64, 1.0f, 0);
+        synth.seqNoteOn(65, 1.0f);
+        render(kBlock);
+        synth.seqAllNotesOff();
+        render(kBlock);
+        if (mode == SynthEngine::VoiceMode::Poly) {
+            EXPECT_TRUE(synth.voiceInfo(voiceWithNote(synth, 64)).gateOn);
+            EXPECT_FALSE(synth.voiceInfo(voiceWithNote(synth, 65)).gateOn);
+        } else {
+            EXPECT_TRUE(synth.voiceInfo(0).gateOn);
+            EXPECT_EQ(synth.voiceInfo(0).note, 64) << "back to the held key";
+        }
+        synth.allNotesOff();
+        render(kBlock);
+        for (int i = 0; i < SynthEngine::kVoiceCount; ++i) EXPECT_FALSE(synth.voiceInfo(i).gateOn);
+        render(4800);
+    }
+}
+
+// Motion overrides replace the strip's value, smoothed like any change (F3.7, F0.7), and
+// NaN / clearAllMotion return to the strip.
+TEST_F(SynthEngineTest, MotionOverridesAreSmoothedAndClear) {
+    synth.setParam(ParamId::FltCutoff, 1000.0f);
+    synth.prepare(kRate);
+    synth.setMotion(static_cast<int>(ParamId::FltCutoff), 4000.0f);
+    render(kBlock);
+    const float afterOne = synth.smoothedParam(ParamId::FltCutoff);
+    EXPECT_GT(afterOne, 1050.0f);
+    EXPECT_LT(afterOne, 3800.0f) << "no jump";
+    render(480);
+    EXPECT_NEAR(synth.smoothedParam(ParamId::FltCutoff), 4000.0f, 40.0f);
+    synth.setParam(ParamId::FltCutoff, 500.0f);  // the strip moves: the override still wins
+    render(480);
+    EXPECT_NEAR(synth.smoothedParam(ParamId::FltCutoff), 4000.0f, 40.0f);
+    synth.setMotion(static_cast<int>(ParamId::FltCutoff), std::nanf(""));
+    render(960);
+    EXPECT_NEAR(synth.smoothedParam(ParamId::FltCutoff), 500.0f, 5.0f);
+
+    synth.setMotion(static_cast<int>(ParamId::FltReso), 5.0f);  // clamped
+    synth.setMotion(-1, 1.0f);
+    synth.setMotion(static_cast<int>(kParamCount), 1.0f);
+    render(960);
+    EXPECT_NEAR(synth.smoothedParam(ParamId::FltReso), 1.0f, 0.01f);
+    synth.clearAllMotion();
+    render(960);
+    EXPECT_NEAR(synth.smoothedParam(ParamId::FltReso), 0.0f, 0.01f);
+}
+
+TEST_F(SynthEngineTest, TempoSyncFollowsTheSequencerTempo) {
+    synth.setParam(ParamId::LfoDest, 0.0f);
+    synth.setParam(ParamId::LfoWave, 2.0f);
+    synth.setParam(ParamId::LfoDepth, 1.0f);
+    synth.setParam(ParamId::LfoRate, 2.3f);
+    synth.setParam(ParamId::LfoSync, 1.0f);
+    synth.setTempo(60.0f);
+    synth.prepare(kRate);
+    EXPECT_FLOAT_EQ(synth.tempo(), 60.0f);
+    const float hz = Lfo::divisionHz(Lfo::nearestDivision(2.3f, 60.0f), 60.0f);
+    const auto halfCycle = static_cast<int>(0.5f / hz * kRate);
+    synth.noteOn(60, 1.0f, 0);
+    render(halfCycle - 400);
+    EXPECT_GT(cents(synth.voiceInfo(0).frequencyHz, noteHz(60)), 1000.0);
+    render(800);
+    EXPECT_LT(cents(synth.voiceInfo(0).frequencyHz, noteHz(60)), -1000.0);
+}
