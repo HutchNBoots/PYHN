@@ -41,7 +41,8 @@ import com.groovebox.ui.theme.LocalDesign
 
 /**
  * One colour strip (feature spec F4). The fill rises from the bottom to the value with a
- * solid top edge; the label sits at the top in the strip colour and the value at the bottom.
+ * solid top edge; the label sits at the top in the strip colour with the value right under it,
+ * where the right thumb dragging the strip never covers it (two-thumb grip, ADR 0003).
  * Touches go through [StripGesture]; each pointer is tracked on its own, so all four strips
  * and the keys can be used at once. A null [spec] is a disabled strip, labelled
  * [disabledLabel] (and [disabledValue] at the foot, if given).
@@ -70,8 +71,10 @@ fun ColourStrip(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             BasicText(disabledLabel, style = d.label(14f, colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
+            if (disabledValue != null) {
+                BasicText(disabledValue, Modifier.padding(top = d.dp(4)), style = d.value(13f, GrooveColors.White), maxLines = 1)
+            }
             Spacer(Modifier.weight(1f))
-            if (disabledValue != null) BasicText(disabledValue, style = d.value(13f, GrooveColors.White), maxLines = 1)
         }
         return
     }
@@ -166,15 +169,15 @@ fun ColourStrip(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             BasicText(spec.label, style = d.label(14f, colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
-            if (locked) LockMark(colour, Modifier.padding(top = d.dp(6)).size(d.dp(14)))
-            Spacer(Modifier.weight(1f))
             BasicText(
                 text,
-                Modifier.alpha(textAlpha),
+                Modifier.padding(top = d.dp(4)).alpha(textAlpha),
                 style = d.value(13f, GrooveColors.White),
                 maxLines = 1,
                 overflow = TextOverflow.Clip,
             )
+            if (locked) LockMark(colour, Modifier.padding(top = d.dp(6)).size(d.dp(14)))
+            Spacer(Modifier.weight(1f))
         }
     }
 }

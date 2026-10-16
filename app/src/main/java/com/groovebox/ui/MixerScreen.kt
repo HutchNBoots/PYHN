@@ -83,7 +83,7 @@ private fun MixerDisplay(state: GrooveState, audioStarted: Boolean, debug: Debug
         }
     }
     val layer = when {
-        !shifted -> "MAIN · tap a pad to select"
+        !shifted -> "MAIN · tap a bar or pad to select"
         pad == MixerPad.Delay -> "SHIFT · sync / div / return"
         else -> "SHIFT · tap a pad to mute"
     }
@@ -111,7 +111,7 @@ private fun MixerDisplay(state: GrooveState, audioStarted: Boolean, debug: Debug
 /**
  * One column per pad: its fader level as a bar (set by the faders, not metered: the engine
  * has no metering API), the value above and the name below. Muted channels are greyed with
- * a coral M.
+ * a coral M. Tapping a column selects that channel (Shift + tap mutes), like the pads.
  */
 @Composable
 private fun Levels(state: GrooveState, modifier: Modifier) {
@@ -142,8 +142,23 @@ private fun Levels(state: GrooveState, modifier: Modifier) {
             }
             val isSelected = pad == selected
             val colour = if (muted) GrooveColors.Divider else padColour(pad)
+            // Each column is also a target for the left thumb: a tap selects the channel and
+            // Shift + tap mutes it, exactly like its pad (two-thumb grip, ADR 0003).
             Column(
-                Modifier.weight(1f).fillMaxHeight(),
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .semantics {
+                        contentDescription = "${MixerLayout.title(pad, state::instrumentName)} level $text" +
+                            (if (muted) ", muted" else "")
+                        this.selected = isSelected
+                    }
+                    .pointerInput(pad) {
+                        awaitEachGesture {
+                            awaitFirstDown()
+                            state.mixer.tap(pad)
+                        }
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(d.dp(3)),
             ) {
