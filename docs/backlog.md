@@ -4,19 +4,18 @@ Last updated 16 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 
 ## Shipped
 
+- [x] build-15: v1 close-out: bundled fonts; live Mixer level meters with clip lights; Synth/Drum/Mixer mockups as built; two-thumb review (swipe display to change slot, double-tap a tape lane to record).
 - [x] build-14: CX two-thumb fixes (ADR 0003): strip values under the label; Mixer bars select. Owner: works well.
 - [x] build-13: F8 key and scale.
 
 ## v1 close-out
 
 - [ ] Owner 30-minute soak on the S25+: xruns 0, callback load ≤ 35% average and ≤ 70% peak (F0.3, F0.4).
-- [ ] Bundle the Space Grotesk and IBM Plex Mono fonts (ADR 0002); the system fonts are used now.
 - [ ] Changing voice mode cuts held notes.
-- [ ] Mixer level bars show fader settings, not audio levels (needs a metering API).
-- [ ] Mockups for the Drum and Mixer screens, and the Synth section rail.
-- [ ] Two-thumb review (ADR 0003) of the Seq, Tape and Synth screens.
 - [ ] Tape tempo lock: the tape keeps the tempo of its first take.
 - [ ] A commit of a pattern that isn't a whole number of bars leaves silence.
+- [ ] Two-thumb proposals P1–P6 (ADR 0003): owner to pick.
+- [ ] Mixer DLY/REV columns: the setting marker uses the 0–100% return scale, the meter dB.
 
 ## v1.1
 
