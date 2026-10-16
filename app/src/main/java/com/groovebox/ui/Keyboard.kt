@@ -80,8 +80,8 @@ fun Keyboard(
     // Keys still held when the keyboard leaves the screen are released.
     DisposableEffect(tracker) { onDispose { tracker.cancel() } }
     val textMeasurer = rememberTextMeasurer()
-    val labelStyle = d.value(11f, GrooveColors.KeyLabel)
-    val smallLabelStyle = d.value(9f, GrooveColors.KeyLabel)
+    val labelStyle = d.value(11f, GrooveColors.TextDim)
+    val smallLabelStyle = d.value(9f, GrooveColors.TextDim)
     val blackLabelStyle = d.value(9f, GrooveColors.TextDim)
 
     Spacer(
@@ -109,53 +109,45 @@ fun Keyboard(
                 true
             }
             .drawWithCache {
-                // Silicone-pad look: every key is a separate fully rounded pad with a visible gap,
-                // black keys sit in a dark moat so they read as their own pads, each pad has a
-                // soft top highlight and a darker foot, and a held pad sinks in slightly.
-                val gap = d.px(PAD_GAP)
-                val moat = d.px(BLACK_MOAT)
-                val sink = d.px(PRESS_SINK)
+                // Capsule-pad look: a recessed tray holding two rows of separate rounded pads,
+                // sharps above and naturals below (piano order), each with a light stripe down
+                // its middle. A held pad and its stripe light up. Touch geometry is unchanged:
+                // KeyboardLayout still owns which note a point plays.
+                val tray = RoundRect(Rect(0f, 0f, size.width, size.height), CornerRadius(d.px(TRAY_RADIUS)))
+                val inset = d.px(TRAY_INSET)
+                val inner = Rect(inset, inset, size.width - inset, size.height - inset)
+                // Every pad, natural or sharp, has the same width: a fraction of a natural key's
+                // slot, centred on its key, so the pads stand upright like capsules.
+                val whiteCount = layout.keys.count { !it.isBlack }
+                val padWidth = inner.width / whiteCount * PAD_WIDTH
                 val rects = layout.keys.map { key ->
+                    val (top, bottom) = if (key.isBlack) TOP_ROW else BOTTOM_ROW
+                    val cx = inner.left + (key.left + key.right) / 2f * inner.width
                     Rect(
-                        left = key.left * size.width + gap,
-                        top = key.top * size.height + if (key.isBlack) 0f else gap,
-                        right = key.right * size.width - gap,
-                        bottom = key.bottom * size.height - gap,
+                        left = cx - padWidth / 2f,
+                        top = inner.top + top * inner.height,
+                        right = cx + padWidth / 2f,
+                        bottom = inner.top + bottom * inner.height,
                     )
                 }
-                val radii = layout.keys.map { CornerRadius(d.px(if (it.isBlack) BLACK_RADIUS else WHITE_RADIUS)) }
-                fun pad(r: Rect, radius: CornerRadius, inset: Float = 0f) = Path().apply {
-                    addRoundRect(RoundRect(r.deflate(inset), radius))
+                val pads = rects.map { r -> RoundRect(r, CornerRadius(minOf(r.width, r.height) / 2f)) }
+                val stripes = rects.map { r ->
+                    val w = r.width * STRIPE_WIDTH
+                    val cx = r.center.x
+                    val inY = r.width * 0.45f
+                    RoundRect(Rect(cx - w / 2f, r.top + inY, cx + w / 2f, r.bottom - inY), CornerRadius(w / 2f))
                 }
-                val shapes = rects.indices.map { pad(rects[it], radii[it]) }
-                val pressedShapes = rects.indices.map { pad(rects[it], radii[it], sink) }
-                val moats = rects.indices.map { i ->
-                    if (layout.keys[i].isBlack) {
-                        val r = rects[i]
-                        Path().apply {
-                            addRoundRect(
-                                RoundRect(
-                                    Rect(r.left - moat, r.top, r.right + moat, r.bottom + moat),
-                                    CornerRadius(radii[i].x + moat),
-                                ),
-                            )
-                        }
-                    } else {
-                        null
-                    }
-                }
-                // Highlight across the top third of each pad, shade along its foot.
-                val gloss = rects.map { r ->
+                // A soft top-lit sheen on each pad, darker toward its foot.
+                val sheen = rects.map { r ->
                     Brush.verticalGradient(
-                        0f to Color.White.copy(alpha = GLOSS_ALPHA),
-                        0.35f to Color.Transparent,
-                        0.8f to Color.Transparent,
+                        0f to Color.White.copy(alpha = SHEEN_ALPHA),
+                        0.5f to Color.Transparent,
                         1f to Color.Black.copy(alpha = SHADE_ALPHA),
                         startY = r.top,
                         endY = r.bottom,
                     )
                 }
-                // "C3", "C4" at the foot of each C, as in the mockup, or the given key names.
+                // "C3", "C4" (or the given key names) just under each pad's stripe.
                 val labels = HashMap<Int, Pair<TextLayoutResult, Offset>>()
                 layout.keys.forEachIndexed { i, key ->
                     val text = when {
@@ -169,26 +161,26 @@ fun Keyboard(
                         else -> smallLabelStyle
                     }
                     val measured = textMeasurer.measure(text, style)
-                    val cx = (key.left + key.right) / 2f * size.width
-                    val top = rects[i].bottom - d.px(8f) - measured.size.height
-                    labels[i] = measured to Offset(cx - measured.size.width / 2f, top)
+                    val r = rects[i]
+                    val top = r.bottom + d.px(1f)
+                    labels[i] = measured to Offset(r.center.x - measured.size.width / 2f, top)
                 }
+                fun roundPath(rr: RoundRect) = Path().apply { addRoundRect(rr) }
+                val trayPath = roundPath(tray)
+                val padPaths = pads.map(::roundPath)
+                val stripePaths = stripes.map(::roundPath)
                 onDrawBehind {
+                    drawPath(trayPath, GrooveColors.KeyTray)
                     layout.keys.forEachIndexed { i, key ->
                         val held = key.note in pressed
-                        val fill = when {
-                            held -> GrooveColors.KeyLit
-                            key.isBlack -> GrooveColors.BlackKey
-                            else -> GrooveColors.WhiteKey
-                        }
-                        // Blended, not translucent: black pads overlap the white ones.
-                        val shown = if (key.note in dimmed && !held) lerp(fill, GrooveColors.Ground, DIM) else fill
-                        moats[i]?.let { drawPath(it, GrooveColors.Ground) }
-                        val shape = if (held) pressedShapes[i] else shapes[i]
-                        drawPath(shape, shown)
-                        if (!held) drawPath(shape, gloss[i])
-                        labels[i]?.let { (measured, topLeft) -> drawText(measured, topLeft = topLeft) }
+                        val dim = key.note in dimmed && !held
+                        val body = if (held) GrooveColors.KeyLit else GrooveColors.KeyPad
+                        val stripe = if (held) GrooveColors.KeyLitStripe else GrooveColors.KeyStripe
+                        drawPath(padPaths[i], if (dim) lerp(body, GrooveColors.KeyTray, DIM) else body)
+                        if (!held) drawPath(padPaths[i], sheen[i])
+                        drawPath(stripePaths[i], if (dim) lerp(stripe, GrooveColors.KeyPad, DIM) else stripe)
                     }
+                    labels.values.forEach { (measured, topLeft) -> drawText(measured, topLeft = topLeft) }
                 }
             },
     )
@@ -196,14 +188,15 @@ fun Keyboard(
 
 private const val DIM = 0.5f
 
-// Silicone-pad geometry, in design units, and finish.
-private const val PAD_GAP = 3f
-private const val BLACK_MOAT = 3f
-private const val PRESS_SINK = 1.5f
-private const val WHITE_RADIUS = 12f
-private const val BLACK_RADIUS = 9f
-private const val GLOSS_ALPHA = 0.18f
-private const val SHADE_ALPHA = 0.14f
+// Capsule-pad geometry (design units, or fractions of the tray's inner height) and finish.
+private const val TRAY_RADIUS = 18f
+private const val TRAY_INSET = 6f
+private const val PAD_WIDTH = 0.56f
+private val TOP_ROW = 0.03f to 0.45f
+private val BOTTOM_ROW = 0.50f to 0.90f
+private const val STRIPE_WIDTH = 0.12f
+private const val SHEEN_ALPHA = 0.10f
+private const val SHADE_ALPHA = 0.25f
 
 /** CLOCK_MONOTONIC time of the touch sample, same clock as AAudio timestamps. */
 private fun touchTimeNs(event: MotionEvent): Long =

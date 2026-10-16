@@ -64,7 +64,7 @@ class KeyboardLayoutTest {
     @Test
     fun velocityOnABlackKeyUsesTheBlackKeyHeight() {
         val x = whiteWidth * 1.0f // C#3
-        val blackBottom = height * 0.6f
+        val blackBottom = height * 0.48f
         val top = layout.hit(x, 0f, width, height)!!
         val mid = layout.hit(x, blackBottom / 2, width, height)!!
         assertEquals(49, top.note)

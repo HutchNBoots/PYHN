@@ -64,7 +64,7 @@ class KeyboardLayout(val lowestNote: Int = 48, val octaves: Int = 2) {
         // C, D, F, G, A are followed by a black key.
         val HAS_BLACK_AFTER = setOf(0, 1, 3, 4, 5)
         const val BLACK_WIDTH = 0.6f
-        const val BLACK_HEIGHT = 0.6f
+        const val BLACK_HEIGHT = 0.48f
         const val MIN_VELOCITY = 0.5f
     }
 }

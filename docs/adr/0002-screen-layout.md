@@ -30,3 +30,11 @@ Sources are copied in `docs/mockups/` for reference. They are design files, not 
 - How the synth's sections (Osc, Filter, Env, Mod) are picked. The feature spec adds a
   section rail; the mockups will be updated before the UI is built.
 - The Drum and Mixer screens, which aren't drawn yet.
+
+## Update (16 Oct 2026): keyboard look
+
+At the owner's request the keyboard now uses capsule pads, after a photo of a pocket synth:
+dark, upright, rounded pads in a recessed tray, sharps in a row above the naturals (piano
+order), each with a light stripe. A held pad lights amber. The colours are our own and no
+branding is copied. The touch split between the rows sits in the gap between them (48% of the
+keyboard height).

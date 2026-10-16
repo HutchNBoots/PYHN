@@ -22,6 +22,11 @@ object GrooveColors {
     val BlackKey = Color(0xFF2A2A30)
     val KeyLabel = Color(0xFF5C5A55)
     val KeyLit = Color(0xFFFFC23D)
+    // Capsule keyboard: dark pads with a light stripe, in a recessed tray.
+    val KeyTray = Color(0xFF0C0C0E)
+    val KeyPad = Color(0xFF2B2B31)
+    val KeyStripe = Color(0xFFECE9E2)
+    val KeyLitStripe = Color(0xFFFFFFFF)
     val Shift = Color(0xFFFFC23D)
     val Warn = Color(0xFFFF6B57)
     val White = Color(0xFFFFFFFF)
