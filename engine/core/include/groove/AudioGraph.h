@@ -53,10 +53,14 @@ public:
     static constexpr int kSlots = kSlotCount;
     static constexpr int kFirstSynthSlot = 1;
     static constexpr int kSynthCount = kSlots - kFirstSynthSlot;
-    // Equal, fixed gain per slot (M2 has no mixer; M3 adds per-slot volume). A single slot
-    // plays about 6 dB below M1's lone synth; when many slots peak together the master
+    // The channel strips pan with an equal-power law, so a centred channel is 3 dB down.
+    // kPanMakeup restores unity at centre, so a centred slot plays at its M2 level and a tape
+    // track plays back at the level it was recorded.
+    static constexpr float kPanMakeup = 1.41421356237f;
+    // Fixed headroom per slot before its strip (the strip's volume does the rest). A single
+    // slot plays about 6 dB below M1's lone synth; when many slots peak together the master
     // limiter catches it (F0.6).
-    static constexpr float kSlotGain = 0.5f;
+    static constexpr float kSlotGain = 0.5f * kPanMakeup;
     static constexpr std::size_t kNoteCapacity = SynthEngine::kEventCapacity;
 
     AudioGraph();

@@ -231,6 +231,10 @@ void AudioGraph::mix(int32_t n) {
     // its 4 tracks back through their channel strips into the master mix (dry: F5).
     tape_->process(srcL_.data(), srcR_.data(), n, trackOutL_.data(), trackOutR_.data());
     for (std::size_t t = 0; t < Tape::kTracks; ++t) {
+        for (std::size_t i = 0; i < un; ++i) {
+            trackL_[t][i] *= kPanMakeup;
+            trackR_[t][i] *= kPanMakeup;
+        }
         strips_[kFirstTapeChannel + t]->process(trackL_[t].data(), trackR_[t].data(), n, left_.data(), right_.data(),
                                                 nullptr, nullptr, nullptr, nullptr);
     }
