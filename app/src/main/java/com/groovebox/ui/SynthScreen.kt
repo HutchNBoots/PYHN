@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +49,7 @@ fun SynthMiddleRow(
     modifier: Modifier = Modifier,
     keyName: String? = null,
     onSlotSwipe: ((Int) -> Unit)? = null,
+    onPresets: (() -> Unit)? = null,
 ) {
     val d = LocalDesign.current
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
@@ -65,7 +67,14 @@ fun SynthMiddleRow(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .then(if (onSlotSwipe != null) Modifier.slotSwipe(onSlotSwipe) else Modifier),
+                .then(if (onSlotSwipe != null) Modifier.slotSwipe(onPresets, onSlotSwipe) else Modifier)
+                .then(
+                    if (onPresets != null) {
+                        Modifier.semantics { onLongClick("Presets for slot ${controller.slot + 1}") { onPresets(); true } }
+                    } else {
+                        Modifier
+                    },
+                ),
             keyName = keyName,
         )
         StripRow(controller.strips, controller)

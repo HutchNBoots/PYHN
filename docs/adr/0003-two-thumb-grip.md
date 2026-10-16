@@ -38,7 +38,7 @@ x > 624 and y > 120. The top bar (y 10–58) is above both zones: its two ends a
 | Control | Where (x) | Thumb | Reachable? | Fix done / proposal |
 | --- | --- | --- | --- | --- |
 | Screen tabs | 14–350 | Left | Stretch (top-left) | None needed: navigation, not played live. |
-| Slot buttons 1–8 | 360–708 | Either | **No** (top centre) | **Done:** swipe the Synth or Seq display sideways to step slots (left thumb). Long-press presets still need the slot button: proposal P1. |
+| Slot buttons 1–8 | 360–708 | Either | **No** (top centre) | **Done:** swipe the Synth or Seq display sideways to step slots (left thumb). **Done (P1):** long-press the Synth display for the presets. |
 | Play / Stop | 838–886 | Right | Stretch (top-right) | Proposal P2. |
 | Record (Synth, Seq) | 896–944 | Right | Stretch | Tap-to-arm is fine. "Hold Record + move a strip" needs Record and a strip at once, both under the right thumb: proposal P3. |
 | Record (Tape) | 896–944 | Right | Stretch | **Done:** double-tap a tape lane to arm it, or stop its take (left thumb). |
@@ -54,7 +54,7 @@ x > 624 and y > 120. The top bar (y 10–58) is above both zones: its two ends a
 | Display | Left | Yes | **Done:** horizontal swipe steps the synth slots (finger left = next, ~58 dp per slot, clamped 2–8; never jumps to the Drum screen). Title tap (debug) unchanged. |
 | Four strips | Right | Yes | None (value under the label, as above). |
 | Keys | Both | Yes | None. |
-| Preset strip (long-press a slot) | Either | **No** | Proposal P1. |
+| Preset strip (long-press a slot) | Left | Yes, via the display | **Done (P1):** long-press the Synth display opens the strip for the selected slot. |
 
 ### Seq
 
@@ -85,7 +85,7 @@ hold still clears.
 
 ### Proposals for the owner (not built)
 
-- **P1 Presets without the top bar.** Long-press the Synth display (or Shift + display tap)
+- **P1 Presets without the top bar. Built (owner: "do P1").** Long-press the Synth display (or Shift + display tap)
   opens the preset strip for the selected slot. Small, but it takes a gesture from the
   display, so it's the owner's call.
 - **P2 + P3 Transport in reach.** Move Play and Record into a small cluster in the

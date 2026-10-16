@@ -1,7 +1,10 @@
 package com.groovebox.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,7 +21,10 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import com.groovebox.engine.ParamSpec
@@ -35,22 +41,60 @@ private const val SLOT_SWIPE_UNITS = 72f
 
 /**
  * ADR 0003: a horizontal swipe on a display steps the selected slot ([SlotSwipe]), so the left
- * thumb never has to reach the slot buttons at the top centre. Taps (the title's debug toggle)
- * still work: the swipe only starts past the horizontal touch slop.
+ * thumb never has to reach the slot buttons at the top centre. With [onLongPress], holding
+ * still on the display for the long-press time calls it instead (P1: the Synth display opens
+ * the preset strip). One detector does both, so a slow swipe never turns into a long-press:
+ * the swipe wins once the finger passes the horizontal touch slop. Taps (the title's debug
+ * toggle) still work: nothing here consumes the touch until a swipe starts.
  */
 @Composable
-fun Modifier.slotSwipe(onSteps: (Int) -> Unit): Modifier {
+fun Modifier.slotSwipe(onLongPress: (() -> Unit)? = null, onSteps: (Int) -> Unit): Modifier {
     val d = LocalDesign.current
     val steps by rememberUpdatedState(onSteps)
+    val longPress by rememberUpdatedState(onLongPress)
     val stepPx = d.px(SLOT_SWIPE_UNITS)
     return pointerInput(stepPx) {
         val swipe = SlotSwipe(stepPx)
-        detectHorizontalDragGestures(onDragStart = { swipe.reset() }) { change, dx ->
-            change.consume()
-            val n = swipe.drag(dx)
-            if (n != 0) steps(n)
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            var overSlop = 0f
+            // null: the long-press time ran out with the finger still down and not swiping.
+            // Without a long-press action there is no time limit: a swipe can start any time.
+            val limit = if (longPress != null) viewConfiguration.longPressTimeoutMillis else Long.MAX_VALUE
+            val outcome = withTimeoutOrNull(limit) {
+                awaitHorizontalTouchSlopOrCancellation(down.id) { change, over ->
+                    change.consume()
+                    overSlop = over
+                } ?: SwipeOutcome.Cancelled
+            }
+            when (outcome) {
+                null -> longPress?.let { open ->
+                    open()
+                    // The rest of this touch is ours: consumed before the children see it, so
+                    // lifting the finger doesn't also count as a tap (the title's debug toggle).
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        event.changes.forEach { it.consume() }
+                    } while (event.changes.any { it.pressed })
+                }
+                is PointerInputChange -> {
+                    swipe.reset()
+                    swipe.drag(overSlop).let { if (it != 0) steps(it) }
+                    horizontalDrag(outcome.id) { change ->
+                        val dx = change.positionChange().x  // before consume(): it zeroes this
+                        change.consume()
+                        val n = swipe.drag(dx)
+                        if (n != 0) steps(n)
+                    }
+                }
+                else -> Unit  // lifted or taken by a child: a tap, not ours
+            }
         }
     }
+}
+
+private object SwipeOutcome {
+    val Cancelled = Any()
 }
 
 /** The display's big name ("Brook", "Kit", "Pattern 3"); a tap toggles the debug panel. */

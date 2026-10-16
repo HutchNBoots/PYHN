@@ -153,6 +153,8 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                         Screen.Synth -> SynthMiddleRow(
                             state.selectedSynth, audioStarted, debug, middle, state.keyScale.displayName,
                             onSlotSwipe = { state.swipeSlot(it, includeDrum = false) },
+                            // ADR 0003 P1: long-press the display for the selected slot's presets.
+                            onPresets = { presetSlot = state.selectedSlot },
                         )
                         Screen.Drum -> DrumMiddleRow(state.drum, audioStarted, debug, middle)
                         Screen.Seq -> SeqMiddleRow(state, audioStarted, debug, middle)

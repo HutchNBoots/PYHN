@@ -92,7 +92,7 @@ fun TopBar(
                     append("Sound slot ${slot + 1}, ")
                     append(if (drum) "drum kit" else state.synth(slot).presetName)
                     if (active) append(", selected")
-                    if (!drum) append(". Long-press for presets")
+                    if (!drum) append(". Long-press, or long-press the display, for presets")
                 }
                 BarButton(
                     width = d.dp(40),

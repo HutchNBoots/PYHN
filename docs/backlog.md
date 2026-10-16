@@ -4,6 +4,7 @@ Last updated 16 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 
 ## Shipped
 
+- [x] build-19: P1, long-press the Synth display for presets.
 - [x] build-18: v1 close-out: bundled fonts; live Mixer level meters with clip lights; Synth/Drum/Mixer mockups as built; two-thumb review (swipe display to change slot, double-tap a tape lane to record).
 - [x] build-14: CX two-thumb fixes (ADR 0003): strip values under the label; Mixer bars select. Owner: works well.
 - [x] build-13: F8 key and scale.
@@ -14,7 +15,7 @@ Last updated 16 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 - [ ] Changing voice mode cuts held notes.
 - [ ] Tape tempo lock: the tape keeps the tempo of its first take.
 - [ ] A commit of a pattern that isn't a whole number of bars leaves silence.
-- [ ] Two-thumb proposals P1–P6 (ADR 0003): owner to pick.
+- [ ] Two-thumb proposals P2–P6 (ADR 0003): owner to pick.
 - [ ] Mixer DLY/REV columns: the setting marker uses the 0–100% return scale, the meter dB.
 
 ## v1.1
