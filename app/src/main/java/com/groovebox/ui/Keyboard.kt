@@ -16,6 +16,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInteropFilter
@@ -107,21 +109,51 @@ fun Keyboard(
                 true
             }
             .drawWithCache {
-                val gap = d.px(2f)
-                val whiteRadius = CornerRadius(d.px(10f))
-                val blackRadius = CornerRadius(d.px(8f))
-                // Keys are listed white first, so drawing in order puts black keys on top.
-                val shapes = layout.keys.map { key ->
-                    val r = Rect(
+                // Silicone-pad look: every key is a separate fully rounded pad with a visible gap,
+                // black keys sit in a dark moat so they read as their own pads, each pad has a
+                // soft top highlight and a darker foot, and a held pad sinks in slightly.
+                val gap = d.px(PAD_GAP)
+                val moat = d.px(BLACK_MOAT)
+                val sink = d.px(PRESS_SINK)
+                val rects = layout.keys.map { key ->
+                    Rect(
                         left = key.left * size.width + gap,
-                        top = key.top * size.height,
+                        top = key.top * size.height + if (key.isBlack) 0f else gap,
                         right = key.right * size.width - gap,
-                        bottom = key.bottom * size.height,
+                        bottom = key.bottom * size.height - gap,
                     )
-                    val radius = if (key.isBlack) blackRadius else whiteRadius
-                    Path().apply {
-                        addRoundRect(RoundRect(r, CornerRadius.Zero, CornerRadius.Zero, radius, radius))
+                }
+                val radii = layout.keys.map { CornerRadius(d.px(if (it.isBlack) BLACK_RADIUS else WHITE_RADIUS)) }
+                fun pad(r: Rect, radius: CornerRadius, inset: Float = 0f) = Path().apply {
+                    addRoundRect(RoundRect(r.deflate(inset), radius))
+                }
+                val shapes = rects.indices.map { pad(rects[it], radii[it]) }
+                val pressedShapes = rects.indices.map { pad(rects[it], radii[it], sink) }
+                val moats = rects.indices.map { i ->
+                    if (layout.keys[i].isBlack) {
+                        val r = rects[i]
+                        Path().apply {
+                            addRoundRect(
+                                RoundRect(
+                                    Rect(r.left - moat, r.top, r.right + moat, r.bottom + moat),
+                                    CornerRadius(radii[i].x + moat),
+                                ),
+                            )
+                        }
+                    } else {
+                        null
                     }
+                }
+                // Highlight across the top third of each pad, shade along its foot.
+                val gloss = rects.map { r ->
+                    Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = GLOSS_ALPHA),
+                        0.35f to Color.Transparent,
+                        0.8f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = SHADE_ALPHA),
+                        startY = r.top,
+                        endY = r.bottom,
+                    )
                 }
                 // "C3", "C4" at the foot of each C, as in the mockup, or the given key names.
                 val labels = HashMap<Int, Pair<TextLayoutResult, Offset>>()
@@ -138,19 +170,23 @@ fun Keyboard(
                     }
                     val measured = textMeasurer.measure(text, style)
                     val cx = (key.left + key.right) / 2f * size.width
-                    val top = key.bottom * size.height - d.px(8f) - measured.size.height
+                    val top = rects[i].bottom - d.px(8f) - measured.size.height
                     labels[i] = measured to Offset(cx - measured.size.width / 2f, top)
                 }
                 onDrawBehind {
                     layout.keys.forEachIndexed { i, key ->
+                        val held = key.note in pressed
                         val fill = when {
-                            key.note in pressed -> GrooveColors.KeyLit
+                            held -> GrooveColors.KeyLit
                             key.isBlack -> GrooveColors.BlackKey
                             else -> GrooveColors.WhiteKey
                         }
-                        // Blended, not translucent: black keys overlap the white ones.
-                        val shown = if (key.note in dimmed && key.note !in pressed) lerp(fill, GrooveColors.Ground, DIM) else fill
-                        drawPath(shapes[i], shown)
+                        // Blended, not translucent: black pads overlap the white ones.
+                        val shown = if (key.note in dimmed && !held) lerp(fill, GrooveColors.Ground, DIM) else fill
+                        moats[i]?.let { drawPath(it, GrooveColors.Ground) }
+                        val shape = if (held) pressedShapes[i] else shapes[i]
+                        drawPath(shape, shown)
+                        if (!held) drawPath(shape, gloss[i])
                         labels[i]?.let { (measured, topLeft) -> drawText(measured, topLeft = topLeft) }
                     }
                 }
@@ -159,6 +195,15 @@ fun Keyboard(
 }
 
 private const val DIM = 0.5f
+
+// Silicone-pad geometry, in design units, and finish.
+private const val PAD_GAP = 3f
+private const val BLACK_MOAT = 3f
+private const val PRESS_SINK = 1.5f
+private const val WHITE_RADIUS = 12f
+private const val BLACK_RADIUS = 9f
+private const val GLOSS_ALPHA = 0.18f
+private const val SHADE_ALPHA = 0.14f
 
 /** CLOCK_MONOTONIC time of the touch sample, same clock as AAudio timestamps. */
 private fun touchTimeNs(event: MotionEvent): Long =
