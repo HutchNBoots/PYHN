@@ -59,6 +59,7 @@ fun SynthDisplay(
     audioStarted: Boolean,
     debug: DebugSlot,
     modifier: Modifier = Modifier,
+    keyName: String? = null,
 ) {
     val d = LocalDesign.current
     val section = controller.section
@@ -81,6 +82,7 @@ fun SynthDisplay(
                 audioStarted,
                 Modifier.weight(1f).alignByBaseline(),
             )
+            if (keyName != null) KeyName(keyName, Modifier.alignByBaseline())
             BasicText(
                 "${section.label.uppercase()} · ${if (shifted) "SHIFT" else "MAIN"} LAYER",
                 Modifier.alignByBaseline(),

@@ -61,6 +61,13 @@ fun LayerLabel(text: String, shifted: Boolean, modifier: Modifier = Modifier) {
     BasicText(text, modifier, style = d.value(12f, if (shifted) GrooveColors.Shift else GrooveColors.TextDim), maxLines = 1)
 }
 
+/** The session's key and scale ("A minor") on a display while a scale is on (F8). */
+@Composable
+fun KeyName(text: String, modifier: Modifier = Modifier) {
+    val d = LocalDesign.current
+    BasicText(text, modifier, style = d.value(13f, GrooveColors.Shift, FontWeight.Medium), maxLines = 1)
+}
+
 /** One line under the picture: each strip's colour, label and value. */
 @Composable
 fun Legend(strips: List<ParamSpec?>, host: StripHost) {

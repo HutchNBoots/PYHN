@@ -10,11 +10,18 @@ package com.groovebox.ui.model
  * keyboard the whole MotionEvent, including fingers that are dragging a strip, and those
  * must not play notes if they wander over the keys.
  *
+ * [playable] gates notes (F8.2, key and scale): a touch-down on a key it refuses sounds
+ * nothing (the finger is still followed), and a slide skips such keys: the note already
+ * sounding keeps sounding until the finger reaches a playable key or leaves the keyboard.
+ * It is asked only when a note would start, so changing what it allows never cuts a held
+ * note; releases always go through.
+ *
  * Main thread only.
  */
 class KeyTouchTracker(
     private val onNoteOn: (note: Int, velocity: Float, tapTimeNs: Long) -> Unit,
     private val onNoteOff: (note: Int) -> Unit,
+    private val playable: (note: Int) -> Boolean = { true },
 ) {
     private val noteByPointer = HashMap<Int, Int>()
     private val holdCount = HashMap<Int, Int>()
@@ -27,11 +34,12 @@ class KeyTouchTracker(
             return
         }
         owned.add(pointerId)
-        press(pointerId, note, velocity, tapTimeNs)
+        if (playable(note)) press(pointerId, note, velocity, tapTimeNs)
     }
 
     fun move(pointerId: Int, note: Int?, velocity: Float) {
         if (pointerId !in owned || noteByPointer[pointerId] == note) return
+        if (note != null && !playable(note)) return // a dead key: skipped
         release(pointerId)
         if (note != null) press(pointerId, note, velocity, 0L)
     }

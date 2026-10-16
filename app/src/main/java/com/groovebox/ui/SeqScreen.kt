@@ -124,9 +124,10 @@ private fun SeqDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugSl
                 )
             }
             DisplaySubtitle(subtitle, audioStarted, Modifier.weight(1f).alignByBaseline())
+            state.keyScale.displayName?.let { KeyName(it, Modifier.alignByBaseline()) }
             val label = when (layer) {
                 SeqLayer.Pattern -> "MAIN · pattern"
-                SeqLayer.Transport -> "SHIFT · tempo / pattern"
+                SeqLayer.Transport -> "SHIFT · tempo / key"
                 SeqLayer.Step -> "SHIFT · editing step ${(selected ?: 0) + 1}"
             }
             LayerLabel(label, layer != SeqLayer.Pattern, Modifier.alignByBaseline())
@@ -257,8 +258,9 @@ private fun Footer(state: GrooveState) {
                     if (state.isDrum(slot)) state.drum.keyLabels[note] ?: "$note" else NoteNames.name(note)
                 }
             }
+            val offKey = if (state.stepOutOfKey(selected)) " · out of key" else ""
             BasicText(
-                "step ${selected + 1} · ${if (step.on) "" else "off · "}$notes · vel ${SeqStrips.velocity127(step.velocity)}" +
+                "step ${selected + 1} · ${if (step.on) "" else "off · "}$notes$offKey · vel ${SeqStrips.velocity127(step.velocity)}" +
                     " · prob ${(step.probability * 100).roundToInt()}%",
                 style = style,
                 maxLines = 1,
@@ -299,16 +301,7 @@ fun SeqBottom(state: GrooveState, keyboardLayout: KeyboardLayout, modifier: Modi
         ) {
             for (pad in 0 until PADS) StepPad(state, pad, Modifier.weight(1f).fillMaxHeight())
         }
-        if (editing) {
-            val drum = state.isDrum(state.selectedSlot)
-            Keyboard(
-                keyboardLayout,
-                state,
-                Modifier.fillMaxWidth().weight(0.55f),
-                keyLabels = if (drum) state.drum.keyLabels else null,
-                dimmed = if (drum) DRUMLESS_NOTES else emptySet(),
-            )
-        }
+        if (editing) SlotKeyboard(state, keyboardLayout, Modifier.fillMaxWidth().weight(0.55f))
     }
 }
 
@@ -324,6 +317,7 @@ private fun StepPad(state: GrooveState, pad: Int, modifier: Modifier) {
     val inLoop = loop != null && index in loop.first..loop.second
     val inside = index < settings.length
     val motion = state.hasMotion(index)
+    val offKey = state.stepOutOfKey(index)
     val background = when {
         isPlay -> SeqColors.Playhead
         step.on -> GrooveColors.Text
@@ -346,6 +340,7 @@ private fun StepPad(state: GrooveState, pad: Int, modifier: Modifier) {
             .semantics {
                 contentDescription = "Step ${index + 1}, ${if (step.on) "on" else "off"}" +
                     (if (step.on && step.probability < 1f) ", probability ${(step.probability * 100).roundToInt()}%" else "") +
+                    (if (offKey) ", out of key" else "") +
                     (if (!inside) ", past the pattern's end" else "")
                 selected = isSelected
             }
@@ -379,6 +374,15 @@ private fun StepPad(state: GrooveState, pad: Int, modifier: Modifier) {
                 style = d.value(12f, if (step.on || isPlay) GrooveColors.Ground else SeqColors.PadNumber),
             )
             Spacer(Modifier.weight(1f))
+            // F8.6: a step playing a note outside the key: a small ring (it only marks steps that are on).
+            if (offKey) {
+                Box(
+                    Modifier
+                        .size(d.dp(10))
+                        .border(d.dp(2f), if (step.on || isPlay) GrooveColors.Ground else GrooveColors.Shift, CircleShape),
+                )
+                if (motion) Spacer(Modifier.width(d.dp(3)))
+            }
             if (motion) Box(Modifier.size(d.dp(6)).clip(CircleShape).background(SeqColors.Motion))
         }
         // Probability below 100%: a blue bar of that width.

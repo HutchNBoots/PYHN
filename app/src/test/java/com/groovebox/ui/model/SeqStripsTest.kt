@@ -37,7 +37,8 @@ class SeqStripsTest {
     fun specsWorkWithTheStripMapping() {
         val all = listOf(
             SeqStrips.Shuffle, SeqStrips.Length, SeqStrips.Gate, SeqStrips.Rate, SeqStrips.Tempo, SeqStrips.Pattern,
-            SeqStrips.Note, SeqStrips.DrumNote, SeqStrips.Velocity, SeqStrips.Probability,
+            SeqStrips.Note, SeqStrips.DrumNote, SeqStrips.Velocity, SeqStrips.Probability, SeqStrips.Key,
+            SeqStrips.ScaleStrip,
         )
         assertEquals(all.size, all.map { it.key }.toSet().size)
         for (s in all) {
@@ -66,6 +67,24 @@ class SeqStripsTest {
         assertEquals("96", SeqStrips.format(SeqStrips.Velocity, 96 / 127.0))
         assertEquals("127", SeqStrips.format(SeqStrips.Velocity, 1.0))
         assertEquals("70%", SeqStrips.format(SeqStrips.Probability, 0.7))
+        assertEquals("C", SeqStrips.format(SeqStrips.Key, 0.0))
+        assertEquals("C♯", SeqStrips.format(SeqStrips.Key, 1.0))
+        assertEquals("A", SeqStrips.format(SeqStrips.Key, 9.0))
+        assertEquals("B", SeqStrips.format(SeqStrips.Key, 11.0))
+        assertEquals("Off", SeqStrips.format(SeqStrips.ScaleStrip, 0.0))
+        assertEquals("Minor", SeqStrips.format(SeqStrips.ScaleStrip, 2.0))
+        assertEquals("Blues", SeqStrips.format(SeqStrips.ScaleStrip, 10.0))
+    }
+
+    @Test
+    fun keyAndScaleStripsCoverEveryChoice() {
+        assertEquals(KeyScale.KEY_NAMES, SeqStrips.Key.options)
+        assertEquals(Scale.entries.map { it.label }, SeqStrips.ScaleStrip.options)
+        // Every strip position lands on a key and a scale, both ends included; defaults are C and Off.
+        assertEquals(11.0, ParamMapping.fromNormalized(SeqStrips.Key, 1.0), 0.0)
+        assertEquals(Scale.Blues.ordinal.toDouble(), ParamMapping.fromNormalized(SeqStrips.ScaleStrip, 1.0), 0.0)
+        assertEquals(0.0, SeqStrips.Key.default, 0.0)
+        assertEquals(Scale.Off.ordinal.toDouble(), SeqStrips.ScaleStrip.default, 0.0)
     }
 
     @Test

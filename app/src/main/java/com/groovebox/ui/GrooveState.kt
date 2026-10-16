@@ -21,6 +21,7 @@ import com.groovebox.ui.model.ExportHost
 import com.groovebox.ui.model.ExportStatus
 import com.groovebox.ui.model.ExportTracker
 import com.groovebox.ui.model.DrumLayout
+import com.groovebox.ui.model.KeyScale
 import com.groovebox.ui.model.MixKeys
 import com.groovebox.ui.model.MixLimits
 import com.groovebox.ui.model.MixerLayout
@@ -32,6 +33,7 @@ import com.groovebox.ui.model.PatternSettings
 import com.groovebox.ui.model.PatternSink
 import com.groovebox.ui.model.PatternStore
 import com.groovebox.ui.model.RecordButton
+import com.groovebox.ui.model.Scale
 import com.groovebox.ui.model.SeqLimits
 import com.groovebox.ui.model.Step
 import com.groovebox.ui.model.StepPads
@@ -87,7 +89,10 @@ class GrooveState : KeyListener {
         List(SeqLimits.SLOTS - 1) { SynthController(it + 1, shift, stripEdited, edited) { tempoBpm } }
     val drum = DrumController(shift, stripEdited, edited)
     val store = PatternStore(NativePatternSink)
-    private val noteMemory = NoteMemory { slot -> if (slot == NativeEngine.DRUM_SLOT) DrumLayout.LOWEST_NOTE else DEFAULT_SYNTH_NOTE }
+    // Before any key is played a synth pad tap enters C4, or the in-key note nearest it (F8).
+    private val noteMemory = NoteMemory { slot ->
+        if (slot == NativeEngine.DRUM_SLOT) DrumLayout.LOWEST_NOTE else keyScale.snap(DEFAULT_SYNTH_NOTE)
+    }
     private val pads = StepPads()
     val seq = SeqController(this)
     val mix = MixValues(edited)
@@ -116,6 +121,30 @@ class GrooveState : KeyListener {
             pageState = p
             sessionChanged()
         }
+
+    /**
+     * The session's key and scale (F8), one for every synth slot; the drum slot ignores it.
+     * Applied in the UI before notes reach the engine (F8.8): the keyboard's gate, the Note
+     * strip and the pads' marks read it. Changing it never rewrites steps or cuts held notes.
+     */
+    var keyScale by mutableStateOf(KeyScale.OFF)
+        private set
+
+    fun setKey(root: Int) = changeKeyScale(KeyScale.of(root.coerceIn(0, 11), keyScale.scale))
+
+    fun setScale(scale: Scale) = changeKeyScale(keyScale.copy(scale = scale))
+
+    private fun changeKeyScale(k: KeyScale) {
+        if (k == keyScale) return
+        keyScale = k
+        sessionChanged()
+    }
+
+    /** The keyboard plays [note] on the selected slot: always on the drum slot, else only in key (F8.2, F8.7). */
+    fun keyPlayable(note: Int): Boolean = keyScale.playable(note, isDrum(selectedSlot))
+
+    /** The pad of step [i] gets the out-of-key mark (F8.6). */
+    fun stepOutOfKey(i: Int): Boolean = keyScale.marksStep(step(i), isDrum(selectedSlot))
 
     /** The step selected with Shift + pad, or null. */
     var selectedStep by mutableStateOf<Int?>(null)
@@ -612,6 +641,7 @@ class GrooveState : KeyListener {
         // A queued switch counts as made: it is what the player chose.
         currentPatterns = List(SeqLimits.SLOTS) { s -> queuedOf(s).takeIf { it >= 0 } ?: patternOf(s) },
         locks = mapOf(LOCKS_SEQ to seq.locks.keys, LOCKS_TAPE to tape.locks.keys, LOCKS_MIXER to mixer.locks.keys),
+        keyScale = keyScale,
     )
 
     /**
@@ -642,6 +672,7 @@ class GrooveState : KeyListener {
         try {
             store.setTempo(s.tempo, force = true)
             tempoBpm = store.tempo
+            keyScale = s.keyScale
             synths.forEachIndexed { i, synth -> s.synths.getOrNull(i)?.let(synth::restore) ?: synth.refreshFromEngine() }
             drum.restore(s.drum)
             mix.restore(s.mix, s.channels)

@@ -51,6 +51,8 @@ interface KeyListener {
  * measurement. Velocity comes from where the key is touched (0.5 at the top, 1.0 at the bottom).
  * Held keys light up. [keyLabels] puts a small name at the foot of some keys (the drum kit's
  * sounds) in place of the C labels, and [dimmed] keys are drawn faded (they play nothing).
+ * [playable] gates touches (key and scale, F8.2; see [KeyTouchTracker]) and [roots] get an
+ * amber stripe (the key's root, F8.3).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -60,11 +62,14 @@ fun Keyboard(
     modifier: Modifier = Modifier,
     keyLabels: Map<Int, String>? = null,
     dimmed: Set<Int> = emptySet(),
+    roots: Set<Int> = emptySet(),
+    playable: (Int) -> Boolean = { true },
 ) {
     val d = LocalDesign.current
     val pressed = remember { mutableStateMapOf<Int, Unit>() }
     val holder = remember { SizeHolder() }
     val currentListener by rememberUpdatedState(listener)
+    val currentPlayable by rememberUpdatedState(playable)
     val tracker = remember {
         KeyTouchTracker(
             onNoteOn = { note, velocity, tapTimeNs ->
@@ -75,6 +80,7 @@ fun Keyboard(
                 currentListener.keyUp(note)
                 pressed.remove(note)
             },
+            playable = { note -> currentPlayable(note) },
         )
     }
     // Keys still held when the keyboard leaves the screen are released.
@@ -175,7 +181,11 @@ fun Keyboard(
                         val held = key.note in pressed
                         val dim = key.note in dimmed && !held
                         val body = if (held) GrooveColors.KeyLit else GrooveColors.KeyPad
-                        val stripe = if (held) GrooveColors.KeyLitStripe else GrooveColors.KeyStripe
+                        val stripe = when {
+                            held -> GrooveColors.KeyLitStripe
+                            key.note in roots -> GrooveColors.KeyRootStripe
+                            else -> GrooveColors.KeyStripe
+                        }
                         drawPath(padPaths[i], if (dim) lerp(body, GrooveColors.KeyTray, DIM) else body)
                         if (!held) drawPath(padPaths[i], sheen[i])
                         drawPath(stripePaths[i], if (dim) lerp(stripe, GrooveColors.KeyPad, DIM) else stripe)

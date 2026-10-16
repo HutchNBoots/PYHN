@@ -34,6 +34,17 @@ object SeqStrips {
     val Velocity = ParamSpec(8, "seq.velo", "Velo", 0.0, 1.0, SeqLimits.DEFAULT_VELOCITY.toDouble(), Curve.Linear, "vel")
     val Probability = ParamSpec(9, "seq.prob", "Prob", 0.0, 1.0, 1.0, Curve.Linear, "%")
 
+    /** The session's key (F8): its root, 0..11 = C..B. Shift layer, no step selected. */
+    val Key = ParamSpec(
+        10, "seq.key", "Key", 0.0, 11.0, 0.0, Curve.Enum, KeyScale.KEY_NAMES.joinToString("|"),
+    )
+
+    /** The session's scale (F8), [Scale] by ordinal; 0 = Off. */
+    val ScaleStrip = ParamSpec(
+        11, "seq.scale", "Scale", 0.0, (Scale.entries.size - 1).toDouble(), 0.0, Curve.Enum,
+        Scale.entries.joinToString("|") { it.label },
+    )
+
     /** Key prefix of the Motion strip's spec; the rest of the key is the lane's target. */
     const val MOTION_PREFIX = "seq.motion:"
 
@@ -64,6 +75,8 @@ object SeqStrips {
         Note.key -> NoteNames.name(value.roundToInt())
         DrumNote.key -> drumName(value.roundToInt())
         Velocity.key -> velocity127(value.toFloat()).toString()
+        Key.key -> KeyScale.KEY_NAMES[value.roundToInt().coerceIn(0, 11)]
+        ScaleStrip.key -> Scale.entries[value.roundToInt().coerceIn(0, Scale.entries.lastIndex)].label
         else -> ParamMapping.format(spec, value)
     }
 

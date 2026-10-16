@@ -1,5 +1,6 @@
 package com.groovebox.storage
 
+import com.groovebox.ui.model.KeyScale
 import com.groovebox.ui.model.PatternSnapshot
 
 /**
@@ -28,6 +29,8 @@ data class Session(
     val currentPatterns: List<Int>,
     /** Strip locks of the screens that are not per slot, by screen ("seq", "tape", "mixer"). */
     val locks: Map<String, Set<String>>,
+    /** The session's key and scale (F8); saved as the root and the scale's name. */
+    val keyScale: KeyScale = KeyScale.OFF,
 )
 
 /** Which screen and selection the app shows. */

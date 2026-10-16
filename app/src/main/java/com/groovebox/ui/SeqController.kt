@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import com.groovebox.engine.ParamSpec
 import com.groovebox.ui.model.DrumLayout
 import com.groovebox.ui.model.ParamMapping
+import com.groovebox.ui.model.Scale
 import com.groovebox.ui.model.SeqLayer
 import com.groovebox.ui.model.SeqStrips
 import com.groovebox.ui.model.SeqLimits
@@ -13,7 +14,7 @@ import kotlin.math.roundToInt
  * The Sequencer screen's strips (F3, docs/mockups/Sequencer.dc.html), for the selected
  * slot's current pattern:
  *  - main: Shuffle, Length, Gate, Rate;
- *  - Shift, no step selected: Tempo, Pattern (queued while playing), two unused;
+ *  - Shift, no step selected: Tempo, Pattern (queued while playing), Key, Scale (F8);
  *  - Shift with a step selected: Note, Velo, Prob, Motion (the step's latest motion lane).
  * Every edit goes through the pattern store. Main thread only.
  */
@@ -27,7 +28,7 @@ class SeqController(private val app: GrooveState) : StripHost {
     val strips: List<ParamSpec?>
         get() = when (layer) {
             SeqLayer.Pattern -> SeqStrips.main
-            SeqLayer.Transport -> listOf(SeqStrips.Tempo, SeqStrips.Pattern, null, null)
+            SeqLayer.Transport -> listOf(SeqStrips.Tempo, SeqStrips.Pattern, SeqStrips.Key, SeqStrips.ScaleStrip)
             SeqLayer.Step -> listOf(noteSpec, SeqStrips.Velocity, SeqStrips.Probability, motionSpec())
         }
 
@@ -64,6 +65,8 @@ class SeqController(private val app: GrooveState) : StripHost {
             SeqStrips.Tempo.key -> app.tempoBpm
             SeqStrips.Pattern.key -> app.queuedOf(app.selectedSlot).takeIf { it >= 0 }?.toDouble()
                 ?: app.patternOf(app.selectedSlot).toDouble()
+            SeqStrips.Key.key -> app.keyScale.root.toDouble()
+            SeqStrips.ScaleStrip.key -> app.keyScale.scale.ordinal.toDouble()
             SeqStrips.Note.key, SeqStrips.DrumNote.key -> (step?.notes?.firstOrNull() ?: spec.default.toInt()).toDouble()
             SeqStrips.Velocity.key -> (step?.velocity ?: SeqLimits.DEFAULT_VELOCITY).toDouble()
             SeqStrips.Probability.key -> (step?.probability ?: 1f).toDouble()
@@ -88,7 +91,13 @@ class SeqController(private val app: GrooveState) : StripHost {
             SeqStrips.Rate.key -> store.updateSettings(slot, pattern) { it.copy(rate = v.roundToInt()) }
             SeqStrips.Tempo.key -> app.setTempo(v)
             SeqStrips.Pattern.key -> app.selectPattern(v.roundToInt())
-            SeqStrips.Note.key, SeqStrips.DrumNote.key -> editStep { s ->
+            SeqStrips.Key.key -> app.setKey(v.roundToInt())
+            SeqStrips.ScaleStrip.key -> app.setScale(Scale.entries[v.roundToInt().coerceIn(0, Scale.entries.lastIndex)])
+            // F8.4: on a synth slot the chord moves through in-key notes only (chromatic with the scale off).
+            SeqStrips.Note.key -> editStep { s ->
+                s.copy(notes = app.keyScale.transpose(s.notes, v.roundToInt(), spec.min.toInt(), spec.max.toInt()))
+            }
+            SeqStrips.DrumNote.key -> editStep { s ->
                 s.copy(notes = SeqStrips.transpose(s.notes, v.roundToInt(), spec.min.toInt(), spec.max.toInt()))
             }
             SeqStrips.Velocity.key -> editStep { it.copy(velocity = v.toFloat()) }

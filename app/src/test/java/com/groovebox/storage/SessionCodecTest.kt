@@ -1,9 +1,11 @@
 package com.groovebox.storage
 
+import com.groovebox.ui.model.KeyScale
 import com.groovebox.ui.model.LanePoint
 import com.groovebox.ui.model.LaneSnapshot
 import com.groovebox.ui.model.PatternSettings
 import com.groovebox.ui.model.PatternSnapshot
+import com.groovebox.ui.model.Scale
 import com.groovebox.ui.model.Step
 import com.groovebox.ui.model.SynthParamsDef
 import org.junit.Assert.assertEquals
@@ -13,6 +15,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.ByteBuffer
+import java.util.Base64
 import kotlin.random.Random
 
 /** Sessions for the storage tests, built from the real parameter keys. */
@@ -39,6 +42,7 @@ object TestSessions {
         ),
         currentPatterns = listOf(0, 3, 0, 0, 0, 0, 0, 15),
         locks = mapOf("seq" to setOf("seq.shuffle"), "tape" to emptySet(), "mixer" to setOf("2:ch.volume")),
+        keyScale = KeyScale(9, Scale.Minor),
     )
 
     /** Every pattern full: every step on with 4 notes, 8 full lanes. The worst case for size. */
@@ -182,6 +186,65 @@ class SessionCodecTest {
     }
 
     @Test
+    fun everyKeyAndScaleRoundTrips() {
+        for (scale in Scale.entries) for (root in 0..11) {
+            val s = TestSessions.small().copy(keyScale = KeyScale(root, scale))
+            assertEquals(s, SessionCodec.decode(SessionCodec.encode(s)))
+        }
+    }
+
+    /**
+     * F8.5: a real version 1 file, written by the M4 codec before F8 (bytes captured from it, not
+     * re-encoded here), still loads, with the scale off, and saves again as version 2.
+     */
+    @Test
+    fun aVersionOneFileFromM4LoadsWithTheScaleOff() {
+        val v1 = Base64.getDecoder().decode(V1_FILE)
+        assertEquals(1, ByteBuffer.wrap(v1).getInt(4))
+        val back = SessionCodec.decode(v1)
+        assertEquals(V1_SESSION, back)
+        assertEquals(KeyScale.OFF, back!!.keyScale)
+        val again = SessionCodec.encode(back)
+        assertEquals(2, ByteBuffer.wrap(again).getInt(4))
+        assertEquals(back, SessionCodec.decode(again))
+    }
+
+    @Test
+    fun versionOneWrittenTodayMatchesTheM4FileAndDropsTheKey() {
+        // The upgrade path's writer for version 1 is still byte-exact with what M4 wrote.
+        val bytes = SessionCodec.encode(V1_SESSION.copy(keyScale = KeyScale(4, Scale.Dorian)), version = 1)
+        assertEquals(V1_FILE, Base64.getEncoder().encodeToString(bytes))
+        assertEquals(KeyScale.OFF, SessionCodec.decode(bytes)!!.keyScale)
+    }
+
+    @Test
+    fun aCorruptVersionOneFileIsRejected() {
+        val v1 = Base64.getDecoder().decode(V1_FILE)
+        for (n in 0 until v1.size) assertNull("truncated to $n", SessionCodec.decode(v1.copyOf(n)))
+        val flipped = v1.copyOf().also { it[40] = (it[40].toInt() xor 0x10).toByte() }
+        assertNull(SessionCodec.decode(flipped))
+    }
+
+    @Test
+    fun unknownScaleNamesAndBadRootsPlayChromaticallyOrInC() {
+        val s = TestSessions.small()
+        val good = SessionCodec.encode(s)
+        // Rewrite the key block at the payload's end: root int, then the scale name as modified UTF-8.
+        fun withKey(root: Int, name: String): ByteArray {
+            val nameLen = 2 + "Minor".length
+            val payload = good.copyOfRange(12, good.size - 4)
+            val head = payload.copyOf(payload.size - 4 - nameLen)
+            val utf = name.toByteArray(Charsets.UTF_8)
+            val tail = ByteBuffer.allocate(4 + 2 + utf.size).putInt(root).putShort(utf.size.toShort()).put(utf).array()
+            return frame(SessionCodec.VERSION, head + tail)
+        }
+        assertEquals(s, SessionCodec.decode(withKey(9, "Minor"))) // the rewrite itself is faithful
+        assertEquals(KeyScale(9, Scale.Off), SessionCodec.decode(withKey(9, "Klingon"))!!.keyScale)
+        assertEquals(KeyScale(0, Scale.Minor), SessionCodec.decode(withKey(40, "Minor"))!!.keyScale)
+        assertEquals(KeyScale(0, Scale.Minor), SessionCodec.decode(withKey(-1, "Minor"))!!.keyScale)
+    }
+
+    @Test
     fun sizeAndSpeedAreSmall() {
         val typical = SessionCodec.encode(TestSessions.small())
         assertTrue("typical session ${typical.size} bytes", typical.size < 32 * 1024)
@@ -200,6 +263,35 @@ class SessionCodecTest {
         println("session sizes: typical ${typical.size} B, full ${bytes.size} B; full decode $decodeMs ms, encode $encodeMs ms")
         // The worst case on a desktop JVM; the phone is slower, the typical session ~100x smaller.
         assertTrue("decode took $decodeMs ms", decodeMs < 200)
+    }
+
+    private companion object {
+        /** SessionCodec.encode(V1_SESSION) by the M4 (version 1) codec, captured before F8. */
+        const val V1_FILE =
+            "R0JYUwAAAAEAAAF6QFhgAAAAAAAAA1NlcQAAAAMAAAADAAAAAgAAAAEAAlQxAAAACAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAA" +
+                "AAAAAQAAAAQABUdsYXNzAAZGaWx0ZXIAAAACAApmbHQuY3V0b2ZmQJLAAAAAAAAACG9zYy53YXZlP9AAAAAAAAAAAAABAAhmbHQucmVz" +
+                "bwAAAAIAAAABAAAAAQAJZHJtLmxldmVsP+AAAAAAAAAAAAABAAhkcm0udHVuZQAAAAEACm1zdC52b2x1bWXACAAAAAAAAAAAAAEAAAAB" +
+                "AAZjaC5wYW4/0AAAAAAAAAAAAAEAA3NlcQAAAAEACHNlcS5nYXRlAAAAAQAAAAMAAAABAAAADAAAAAI+gAAAPszMzQAAAAIAAAAAAQAA" +
+                "AAIAAAA9AAAAQT9mZma/gAAAP4AAAAAAAAUAAAAAAQAAAEY/AAAAPpmZmj8AAAAAAAABAAAACAAAAAEAAAACRGEAAAAAAAAAAAAE/0vN" +
+                "Dw=="
+
+        val V1_SESSION = Session(
+            tempo = 97.5,
+            ui = UiSnapshot("Seq", 3, 3, 2, 1, "T1"),
+            synths = listOf(SynthSnapshot(4, "Glass", "Filter", mapOf("flt.cutoff" to 1200.0, "osc.wave" to 0.25), setOf("flt.reso"))),
+            drum = DrumSnapshot(2, listOf(mapOf("drm.level" to 0.5)), setOf("drm.tune")),
+            mix = mapOf("mst.volume" to -3.0),
+            channels = listOf(mapOf("ch.pan" to 0.25)),
+            patterns = listOf(
+                PatternSnapshot(
+                    3, 1, PatternSettings(12, 2, 0.25f, 0.4f),
+                    mapOf(0 to Step(true, listOf(61, 65), 0.9f, -1f, 1f), 5 to Step(false, listOf(70), 0.5f, 0.3f, 0.5f)),
+                    listOf(LaneSnapshot(8, listOf(LanePoint(2, 900f, 4)))),
+                ),
+            ),
+            currentPatterns = listOf(0, 0, 0, 1, 0, 0, 0, 0),
+            locks = mapOf("seq" to setOf("seq.gate")),
+        )
     }
 
     private fun frame(version: Int, payload: ByteArray): ByteArray {

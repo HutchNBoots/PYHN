@@ -46,6 +46,7 @@ fun SynthMiddleRow(
     audioStarted: Boolean,
     debug: DebugSlot,
     modifier: Modifier = Modifier,
+    keyName: String? = null,
 ) {
     val d = LocalDesign.current
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
@@ -61,6 +62,7 @@ fun SynthMiddleRow(
             audioStarted = audioStarted,
             debug = debug,
             modifier = Modifier.weight(1f).fillMaxHeight(),
+            keyName = keyName,
         )
         StripRow(controller.strips, controller)
     }

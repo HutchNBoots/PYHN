@@ -1,9 +1,11 @@
 package com.groovebox.storage
 
+import com.groovebox.ui.model.KeyScale
 import com.groovebox.ui.model.LanePoint
 import com.groovebox.ui.model.LaneSnapshot
 import com.groovebox.ui.model.PatternSettings
 import com.groovebox.ui.model.PatternSnapshot
+import com.groovebox.ui.model.Scale
 import com.groovebox.ui.model.Step
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -34,11 +36,13 @@ import java.util.zip.CRC32
  *  - 0: (never shipped; kept to prove the upgrade path) no UI block, current patterns or
  *    screen locks.
  *  - 1: M4, the first shipped format.
+ *  - 2: F8, the key and scale at the end of the payload (root int, scale name). A version 1
+ *    file loads with the scale off, which is how it played.
  *
  * Pure Kotlin.
  */
 object SessionCodec {
-    const val VERSION = 1
+    const val VERSION = 2
     private const val MAGIC = 0x47425853 // "GBXS"
     private const val HEADER_BYTES = 12
     private const val TRAILER_BYTES = 4
@@ -110,6 +114,10 @@ object SessionCodec {
             // were lower-case ("osc"); version 1 stores the enum's name ("Osc").
             s = s.copy(synths = s.synths.map { it.copy(section = it.section.replaceFirstChar(Char::uppercaseChar)) })
         }
+        if (fromVersion < 2) {
+            // Version 1 had no key and scale: it played chromatically.
+            s = s.copy(keyScale = KeyScale.OFF)
+        }
         return s
     }
 
@@ -150,6 +158,10 @@ object SessionCodec {
         }
         out.writeInt(s.patterns.size)
         for (p in s.patterns) writePattern(out, p)
+        if (version >= 2) {
+            out.writeInt(s.keyScale.root)
+            out.writeUTF(s.keyScale.scale.name)
+        }
     }
 
     private fun readPayload(input: DataInputStream, version: Int): Session {
@@ -190,7 +202,9 @@ object SessionCodec {
             emptyMap()
         }
         val patterns = List(count(input)) { readPattern(input) }
-        return Session(tempo, ui, synths, drum, mix, channels, patterns, current, locks)
+        // A root out of range falls back to C and an unknown scale name to Off, rather than failing the load.
+        val keyScale = if (version >= 2) KeyScale.of(input.readInt(), Scale.named(input.readUTF())) else KeyScale.OFF
+        return Session(tempo, ui, synths, drum, mix, channels, patterns, current, locks, keyScale)
     }
 
     private fun writePattern(out: DataOutputStream, p: PatternSnapshot) {

@@ -27,6 +27,8 @@ object GrooveColors {
     val KeyPad = Color(0xFF2B2B31)
     val KeyStripe = Color(0xFFECE9E2)
     val KeyLitStripe = Color(0xFFFFFFFF)
+    /** The key's root note (F8.3): an amber stripe. */
+    val KeyRootStripe = Color(0xFFFFC23D)
     val Shift = Color(0xFFFFC23D)
     val Warn = Color(0xFFFF6B57)
     val White = Color(0xFFFFFFFF)

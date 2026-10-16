@@ -150,7 +150,7 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                     )
                     val middle = Modifier.fillMaxWidth().height(middleRowHeight())
                     when (state.screen) {
-                        Screen.Synth -> SynthMiddleRow(state.selectedSynth, audioStarted, debug, middle)
+                        Screen.Synth -> SynthMiddleRow(state.selectedSynth, audioStarted, debug, middle, state.keyScale.displayName)
                         Screen.Drum -> DrumMiddleRow(state.drum, audioStarted, debug, middle)
                         Screen.Seq -> SeqMiddleRow(state, audioStarted, debug, middle)
                         Screen.Tape -> TapeMiddleRow(state, audioStarted, debug, middle)
@@ -158,26 +158,10 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                     }
                     Box(Modifier.fillMaxWidth().weight(1f)) {
                         when (state.screen) {
-                            Screen.Synth -> Keyboard(keyboardLayout, state, Modifier.fillMaxSize())
-                            Screen.Drum -> Keyboard(
-                                keyboardLayout,
-                                state,
-                                Modifier.fillMaxSize(),
-                                keyLabels = state.drum.keyLabels,
-                                dimmed = DRUMLESS_NOTES,
-                            )
+                            Screen.Synth, Screen.Drum -> SlotKeyboard(state, keyboardLayout, Modifier.fillMaxSize())
                             Screen.Seq -> SeqBottom(state, keyboardLayout, Modifier.fillMaxSize())
                             // The keys play the selected slot over the tape.
-                            Screen.Tape -> {
-                                val drum = state.isDrum(state.selectedSlot)
-                                Keyboard(
-                                    keyboardLayout,
-                                    state,
-                                    Modifier.fillMaxSize(),
-                                    keyLabels = if (drum) state.drum.keyLabels else null,
-                                    dimmed = if (drum) DRUMLESS_NOTES else emptySet(),
-                                )
-                            }
+                            Screen.Tape -> SlotKeyboard(state, keyboardLayout, Modifier.fillMaxSize())
                             Screen.Mixer -> MixerPads(state, Modifier.fillMaxSize())
                         }
                         if (presetSlot >= 0) {
@@ -194,4 +178,27 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
             }
         }
     }
+}
+
+/**
+ * The keys for the selected slot. The drum slot names its 16 sounds and dims the keys above
+ * them; it ignores the key and scale (F8.7). A synth slot with a scale on dims the out-of-key
+ * keys, which play nothing, and marks the root with an amber stripe (F8.2, F8.3).
+ */
+@Composable
+fun SlotKeyboard(state: GrooveState, layout: KeyboardLayout, modifier: Modifier = Modifier) {
+    val drum = state.isDrum(state.selectedSlot)
+    val keyScale = state.keyScale
+    val notes = remember(layout) { layout.keys.map { it.note } }
+    val outOfKey = remember(keyScale, notes) { keyScale.dimmed(notes) }
+    val roots = remember(keyScale, notes) { keyScale.roots(notes) }
+    Keyboard(
+        layout,
+        state,
+        modifier,
+        keyLabels = if (drum) state.drum.keyLabels else null,
+        dimmed = if (drum) DRUMLESS_NOTES else outOfKey,
+        roots = if (drum) emptySet() else roots,
+        playable = state::keyPlayable,
+    )
 }
