@@ -41,14 +41,17 @@ object GrooveColors {
 }
 
 /**
- * The app's two type families, in one place. ADR 0002 picks Space Grotesk for labels and
- * IBM Plex Mono for values (both SIL OFL). They are not bundled yet; to add them, put the
- * .ttf files in app/src/main/res/font/ and replace these with
- * FontFamily(Font(R.font.space_grotesk_medium, FontWeight.Medium), ...).
+ * The app's two type families, in one place (ADR 0002): Space Grotesk for labels and IBM
+ * Plex Mono for values, both SIL OFL 1.1 and bundled in res/font (see [GrooveFonts]).
+ * Every label and value goes through [Design.label] / [Design.value], which use these.
+ *
+ * Sources: Space Grotesk static TTFs from github.com/floriankarsten/space-grotesk
+ * (fonts/ttf/static, commit 03507d0); IBM Plex Mono from github.com/google/fonts
+ * (ofl/ibmplexmono, commit 47d54ca).
  */
 object GrooveType {
-    val Label: FontFamily = FontFamily.SansSerif
-    val Value: FontFamily = FontFamily.Monospace
+    val Label: FontFamily = GrooveFonts.Label
+    val Value: FontFamily = GrooveFonts.Value
 }
 
 /**
