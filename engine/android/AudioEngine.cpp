@@ -60,7 +60,7 @@ bool AudioEngine::openAndStartLocked() {
     const int32_t sampleRate = std::max(stream->getSampleRate(), 1);
     graph_.prepare(static_cast<float>(sampleRate));
     NoteOnRender stale;
-    while (graph_.synth().popNoteOnRender(stale)) {
+    while (popNoteOnRender(stale)) {
     }
     nsPerFrame_ = 1.0e9 / static_cast<double>(sampleRate);
     windowFrames_ = sampleRate;
@@ -89,6 +89,30 @@ void AudioEngine::closeLocked() {
     stream_->stop();
     stream_->close();
     stream_.reset();
+}
+
+bool AudioEngine::popNoteOnRender(NoteOnRender& out) {
+    if (graph_.drums().popNoteOnRender(out)) return true;
+    for (int slot = AudioGraph::kFirstSynthSlot; slot < AudioGraph::kSlots; ++slot) {
+        if (graph_.synth(slot).popNoteOnRender(out)) return true;
+    }
+    return false;
+}
+
+bool AudioEngine::applyCommandsIfStopped() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stream_) return false;
+    graph_.applyPendingCommands();  // no stream, so no callback can run
+    return true;
+}
+
+TransportState AudioEngine::transport() {
+    applyCommandsIfStopped();  // e.g. a tempo set before the stream started
+    return graph_.sequencer().transport();
+}
+
+void AudioEngine::logDropped() {
+    __android_log_print(ANDROID_LOG_ERROR, kTag, "sequencer command queue full: command dropped");
 }
 
 EngineStats AudioEngine::stats() {
@@ -133,7 +157,7 @@ int32_t AudioEngine::pollTapToToneNs(int64_t* out, int32_t maxCount) {
 
     int32_t count = 0;
     NoteOnRender rec;
-    while (count < maxCount && graph_.synth().popNoteOnRender(rec)) {
+    while (count < maxCount && popNoteOnRender(rec)) {
         const double presentedNs =
             static_cast<double>(refTimeNs) + static_cast<double>(rec.frameIndex - refFrame) * nsPerFrame;
         out[count++] = static_cast<int64_t>(presentedNs) - rec.tapTimeNs;
@@ -143,8 +167,8 @@ int32_t AudioEngine::pollTapToToneNs(int64_t* out, int32_t maxCount) {
 
 oboe::DataCallbackResult AudioEngine::onAudioReady(oboe::AudioStream* stream, void* audioData,
                                                    int32_t numFrames) {
-    // Audio thread: no locks, allocation, logging or JNI. AudioGraph::render() is checked
-    // on the host by RealtimeSafety.AudioGraphRenderNeverAllocates.
+    // Audio thread: no locks, allocation, logging or JNI. AudioGraph::render() (sequencer,
+    // all 8 slots, master bus) is checked on the host by RealtimeSafety.*NeverAllocates.
     const int64_t start = monotonicNs();
     graph_.render(static_cast<float*>(audioData), numFrames, stream->getChannelCount());
     recordCallbackLoad(monotonicNs() - start, numFrames);
