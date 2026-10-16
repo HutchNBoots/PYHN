@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Drum screen as built</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#ECE9E2}a:hover{color:#FFFFFF}
+</style>
+</helmet>
+<div style="width: 1040px; height: 480px; box-sizing: border-box; background: #121214; color: #ECE9E2; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px">
+
+<div style="height: 48px; display: flex; align-items: center; gap: 10px">
+<div style="display: flex; gap: 4px">
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Synth</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #ECE9E2; color: #121214; font-weight: 700; font-size: 14px">Drum</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Seq</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Tape</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Mixer</span>
+</div>
+<div style="display: flex; gap: 4px">
+<sc-for list="{{slots}}" as="s" hint-placeholder-count="8">
+<span style="{{s.style}}">{{s.n}}</span>
+</sc-for>
+</div>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 22px">120.0 <span style="font-size: 12px; color: #A9A69F">BPM</span></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><path d="M4 2.5v13l11-6.5z" fill="none" stroke="#3DD68C" stroke-width="2" stroke-linejoin="round"></path></svg></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="none" stroke="#FF6B57" stroke-width="2"></circle></svg></span>
+<span style="min-width: 72px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px">Shift</span>
+</div>
+
+<div style="height: 220px; display: flex; gap: 10px">
+<div style="flex-grow: 1; border-radius: 16px; background: #1C1C20; padding: 14px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: baseline; gap: 10px">
+<span style="font-size: 20px; font-weight: 700">Kit</span>
+<span style="font-size: 13px; color: #A9A69F">Closed Hat · key 7 · slot 1</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #A9A69F">MAIN · pitch / decay / tone / level</span>
+</div>
+<div style="flex-grow: 1; display: flex; gap: 14px; align-items: center">
+<svg role="img" aria-label="Decay shape of the selected sound" width="100%" height="120" viewBox="0 0 520 120" preserveAspectRatio="none" style="flex-grow: 1">
+<path d="M0 8 C60 8 90 70 200 96 C300 112 400 116 520 118 L520 120 L0 120 Z" fill="#3DD68C" opacity="0.18"></path>
+<path d="M0 60 Q20 0 40 60 T80 60 T120 60 T160 60 T200 60 T240 60" fill="none" stroke="#FF6B57" stroke-width="2.5"></path>
+</svg>
+<div role="img" aria-label="The 16 kit keys, key 7 selected" style="width: 150px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px">
+<sc-for list="{{grid}}" as="g" hint-placeholder-count="16">
+<span style="{{g.style}}"></span>
+</sc-for>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 13px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<span>{{s.label}} {{s.value}}</span>
+</sc-for>
+</div>
+</div>
+<div style="width: 332px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<div style="position: relative; overflow: hidden; border-radius: 14px; background: #1C1C20; padding: 10px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px">
+<span style="{{s.fillStyle}}"></span>
+<span style="{{s.labelStyle}}">{{s.label}}</span>
+<span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #FFFFFF">{{s.value}}</span>
+</div>
+</sc-for>
+</div>
+</div>
+
+<div role="img" aria-label="Capsule keyboard: the lowest 16 pads are the kit, named; the rest are dimmed" style="flex-grow: 1; position: relative; border-radius: 18px; background: #0C0C0E">
+<sc-for list="{{keys}}" as="k" hint-placeholder-count="25">
+<span style="{{k.pad}}"><span style="{{k.stripe}}"></span></span>
+<span style="{{k.labelStyle}}">{{k.label}}</span>
+</sc-for>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1040,"height":480}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const colours = ['#FF6B57', '#FFC23D', '#3DD68C', '#4F8BFF'];
+    const strips = [
+      { label: 'Pitch', value: '0 st', pct: 50 },
+      { label: 'Decay', value: '100%', pct: 100 },
+      { label: 'Tone', value: '20k', pct: 100 },
+      { label: 'Level', value: '80%', pct: 80 }
+    ].map((s, i) => ({
+      ...s,
+      labelStyle: 'position: relative; font-size: 14px; font-weight: 700; color: ' + colours[i],
+      fillStyle: 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + s.pct + '%; background: ' + colours[i] + '38; border-top: 3px solid ' + colours[i]
+    }));
+    const slots = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
+      n,
+      style: 'width: 38px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: IBM Plex Mono, monospace; font-size: 14px; ' +
+        (n === 1 ? 'background: #FF6B57; color: #121214' : 'background: #1C1C20; color: #A9A69F')
+    }));
+    const grid = Array.from({ length: 16 }, (_, i) => ({
+      style: 'height: 26px; border-radius: 6px; background: ' + (i === 6 ? '#FFC23D' : '#2B2B31')
+    }));
+    const names = ['Kick1', 'Kick2', 'Snar1', 'Snar2', 'Clap', 'Rim', 'CH1', 'CH2', 'OH', 'Cras', 'Ride', 'Tom1', 'Tom2', 'Tom3', 'Perc1', 'Perc2'];
+    const whitePc = [0, 2, 4, 5, 7, 9, 11];
+    const w = 100 / 15;
+    const pw = w * 0.56;
+    const keys = [];
+    const pad = (cx, top, bottom, note, below) => {
+      const on = note >= 48 && note <= 63;
+      return {
+        pad: 'position: absolute; left: ' + (cx - pw / 2) + '%; width: ' + pw + '%; top: ' + top + '%; height: ' + (bottom - top) + '%; border-radius: 999px; background: ' + (on ? '#2B2B31' : '#17171A') + '; display: flex; justify-content: center; align-items: center',
+        stripe: 'width: 12%; height: 45%; border-radius: 4px; background: ' + (on ? '#ECE9E2' : '#34343A'),
+        label: on ? names[note - 48] : '',
+        labelStyle: 'position: absolute; left: ' + (cx - w / 2) + '%; width: ' + w + '%; top: ' + below + '%; text-align: center; font-family: IBM Plex Mono, monospace; font-size: 10px; color: #A9A69F'
+      };
+    };
+    for (let i = 0; i < 15; i++) {
+      const note = 48 + 12 * Math.floor(i / 7) + whitePc[i % 7];
+      keys.push(pad((i + 0.5) * w, 52, 88, note, 89));
+      if (i < 14 && [0, 1, 3, 4, 5].includes(i % 7)) keys.push(pad((i + 1) * w, 6, 42, note + 1, 43));
+    }
+    return { strips, slots, grid, keys };
+  }
+}
+</script>
+</body>
+</html>

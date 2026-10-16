@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mixer screen as built</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#ECE9E2}a:hover{color:#FFFFFF}
+</style>
+</helmet>
+<div style="width: 1040px; height: 480px; box-sizing: border-box; background: #121214; color: #ECE9E2; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px">
+
+<div style="height: 48px; display: flex; align-items: center; gap: 10px">
+<div style="display: flex; gap: 4px">
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Synth</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Drum</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Seq</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Tape</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #ECE9E2; color: #121214; font-weight: 700; font-size: 14px">Mixer</span>
+</div>
+<div style="display: flex; gap: 4px">
+<sc-for list="{{slots}}" as="s" hint-placeholder-count="8">
+<span style="{{s.style}}">{{s.n}}</span>
+</sc-for>
+</div>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 22px">120.0 <span style="font-size: 12px; color: #A9A69F">BPM</span></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><path d="M4 2.5v13l11-6.5z" fill="none" stroke="#3DD68C" stroke-width="2" stroke-linejoin="round"></path></svg></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="none" stroke="#FF6B57" stroke-width="2"></circle></svg></span>
+<span style="min-width: 72px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px">Shift</span>
+</div>
+
+<div style="height: 220px; display: flex; gap: 10px">
+<div style="flex-grow: 1; border-radius: 16px; background: #1C1C20; padding: 12px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: baseline; gap: 10px">
+<span style="font-size: 20px; font-weight: 700">Mixer</span>
+<span style="font-size: 13px; color: #A9A69F">Slot 3 · Brook</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #A9A69F">MAIN · tap a bar or pad to select</span>
+</div>
+<div role="img" aria-label="Level columns: a live peak meter per channel with its fader position marked; slot 3 selected; master clipping" style="flex-grow: 1; display: flex; gap: 4px">
+<sc-for list="{{cols}}" as="c" hint-placeholder-count="15">
+<div style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0">
+<span style="{{c.valueStyle}}">{{c.value}}</span>
+<div style="position: relative; flex-grow: 1; width: 55%; border-radius: 3px; background: #121214; overflow: hidden">
+<span style="{{c.meterStyle}}"></span>
+<span style="{{c.faderStyle}}"></span>
+<span style="{{c.clipStyle}}"></span>
+</div>
+<span style="{{c.nameStyle}}">{{c.name}}</span>
+</div>
+</sc-for>
+</div>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 13px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<span>{{s.label}} {{s.value}}</span>
+</sc-for>
+</div>
+</div>
+<div style="width: 332px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<div style="position: relative; overflow: hidden; border-radius: 14px; background: #1C1C20; padding: 10px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px">
+<span style="{{s.fillStyle}}"></span>
+<span style="{{s.labelStyle}}">{{s.label}}</span>
+<span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #FFFFFF">{{s.value}}</span>
+</div>
+</sc-for>
+</div>
+</div>
+
+<div style="flex-grow: 1; display: flex; gap: 5px">
+<sc-for list="{{pads}}" as="p" hint-placeholder-count="15">
+<div style="{{p.style}}">
+<span style="{{p.nameStyle}}">{{p.name}}</span>
+<div style="flex-grow: 1"></div>
+<span style="{{p.subStyle}}">{{p.sub}}</span>
+<span style="{{p.tickStyle}}"></span>
+<span style="{{p.muteStyle}}">M</span>
+</div>
+</sc-for>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1040,"height":480}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const colours = ['#FF6B57', '#FFC23D', '#3DD68C', '#4F8BFF'];
+    const strips = [
+      { label: 'Volume', value: '-6 dB', pct: 70 },
+      { label: 'Pan', value: 'C', pct: 50 },
+      { label: 'Delay', value: '20%', pct: 20 },
+      { label: 'Reverb', value: '35%', pct: 35 }
+    ].map((s, i) => ({
+      ...s,
+      labelStyle: 'position: relative; font-size: 14px; font-weight: 700; color: ' + colours[i],
+      fillStyle: 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + s.pct + '%; background: ' + colours[i] + '38; border-top: 3px solid ' + colours[i]
+    }));
+    const slots = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
+      n,
+      style: 'width: 38px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: IBM Plex Mono, monospace; font-size: 14px; ' +
+        (n === 3 ? 'background: #FF6B57; color: #121214' : 'background: #1C1C20; color: #A9A69F')
+    }));
+    // name, sub, kind colour, fader (0..1), meter peak (0..1), value text, muted, clip
+    const chans = [
+      ['1', 'Kit', '#FF6B57', 0.75, 0.62, '-3', false, false],
+      ['2', 'Rubber Floor', '#FF6B57', 0.7, 0.4, '-6', false, false],
+      ['3', 'Brook', '#FF6B57', 0.7, 0.55, '-6', false, false],
+      ['4', 'Glass', '#FF6B57', 0.7, 0, '-6', true, false],
+      ['5', 'Empty', '#FF6B57', 0.7, 0, '-6', false, false],
+      ['6', 'Empty', '#FF6B57', 0.7, 0, '-6', false, false],
+      ['7', 'Empty', '#FF6B57', 0.7, 0, '-6', false, false],
+      ['8', 'Empty', '#FF6B57', 0.7, 0, '-6', false, false],
+      ['T1', 'tape', '#FFC23D', 0.7, 0.48, '-6', false, false],
+      ['T2', 'tape', '#FFC23D', 0.7, 0.3, '-6', false, false],
+      ['T3', 'tape', '#FFC23D', 0.7, 0, '-6', false, false],
+      ['T4', 'tape', '#FFC23D', 0.7, 0, '-6', false, false],
+      ['DLY', 'delay', '#3DD68C', 0.6, 0.2, '-9', false, false],
+      ['REV', 'reverb', '#4F8BFF', 0.6, 0.28, '-9', false, false],
+      ['MST', 'master', '#ECE9E2', 0.8, 0.97, '-2', false, true]
+    ];
+    const selected = 2;
+    const mono = 'font-family: IBM Plex Mono, monospace; ';
+    const cols = chans.map(([name, sub, col, fader, meter, value, muted, clip], i) => ({
+      name,
+      value: muted ? 'M' : value,
+      valueStyle: mono + 'font-size: 10px; color: ' + (muted ? '#FF6B57' : '#A9A69F'),
+      nameStyle: mono + 'font-size: 10px; color: ' + (i === selected ? '#ECE9E2' : '#7C7A75') + (i === selected ? '; font-weight: 500' : ''),
+      meterStyle: 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + (meter * 100) + '%; background: ' + (muted ? '#2B2B31' : col) + '; opacity: 0.85',
+      faderStyle: 'position: absolute; left: -2px; right: -2px; bottom: ' + (fader * 100) + '%; height: 2px; background: #ECE9E2' + (muted ? '; opacity: 0.4' : ''),
+      clipStyle: clip ? 'position: absolute; left: 0; right: 0; top: 0; height: 5px; background: #FF3B30' : 'display: none'
+    }));
+    cols[selected].meterStyle += '; box-shadow: inset 0 -2px 0 #A98CFF';
+    const pads = chans.map(([name, sub, col, , , , muted], i) => {
+      const sel = i === selected;
+      return {
+        name,
+        sub,
+        style: 'position: relative; flex: 1; min-width: 0; border-radius: 12px; padding: 6px; box-sizing: border-box; display: flex; flex-direction: column; background: ' + (sel ? '#ECE9E2' : '#1C1C20') + '; border: ' + (muted ? '2px solid #FF6B57' : '1px solid #2B2B31') + (muted ? '; opacity: 0.6' : ''),
+        nameStyle: mono + 'font-size: 15px; font-weight: 500; color: ' + (sel ? '#121214' : '#ECE9E2'),
+        subStyle: 'font-size: 10px; line-height: 1.15; overflow: hidden; color: ' + (sel ? '#121214' : '#7C7A75'),
+        tickStyle: 'margin-top: 4px; height: 3px; border-radius: 2px; background: ' + col + '; opacity: ' + (sel ? 0.9 : 0.5),
+        muteStyle: muted ? 'position: absolute; top: 4px; right: 4px; padding: 0 4px; border-radius: 4px; background: #FF6B57; color: #121214; ' + mono + 'font-size: 11px; font-weight: 500' : 'display: none'
+      };
+    });
+    return { strips, slots, cols, pads };
+  }
+}
+</script>
+</body>
+</html>

@@ -31,6 +31,13 @@ Sources are copied in `docs/mockups/` for reference. They are design files, not 
   section rail; the mockups will be updated before the UI is built.
 - The Drum and Mixer screens, which aren't drawn yet.
 
+Both are now settled (16 Oct 2026). `SynthBuilt.dc.html`, `Drum.dc.html` and
+`Mixer.dc.html` in `docs/mockups/` draw the screens as v1 builds them: a section rail on
+the synth's left edge, capsule keys (with key and scale dimming), values under the strip
+labels (ADR 0003), the kit names on the drum's lowest 16 pads, and the mixer's level
+columns, which are tap targets with a live meter, a fader mark and a clip flag on top.
+They record what was built; they don't add requirements.
+
 ## Update (16 Oct 2026): keyboard look
 
 At the owner's request the keyboard now uses capsule pads, after a photo of a pocket synth:
