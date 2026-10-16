@@ -427,6 +427,8 @@ void Sequencer::doPlay(int64_t frame) {
     playing_ = true;
     anchorFrame_ = frame;
     anchorPosition_ = 0;
+    playFrame_ = frame;
+    ++playCount_;
     for (int slot = 0; slot < kSlotCount; ++slot) {
         SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
         if (s.queued >= 0) s.current = s.queued;
@@ -745,6 +747,47 @@ void Sequencer::publish() {
         outPattern_[i].store(started ? s.lastPattern : s.current, std::memory_order_relaxed);
         outQueued_[i].store(s.queued, std::memory_order_relaxed);
     }
+}
+
+// --- tape link ---
+
+int64_t Sequencer::roundedBarFrames() const {
+    // 4 beats of 60 / bpm seconds = 2400 * sampleRate / tempoTenths frames.
+    const int64_t num = 2400LL * sampleRate_;
+    return (2 * num + tempoTenths_) / (2 * static_cast<int64_t>(tempoTenths_));
+}
+
+int64_t Sequencer::nextBarFrame(int64_t frame) const {
+    // The first bar whose position is > the position of frame - 1: its frame is >= frame.
+    const int64_t before = positionAt(frame - 1);
+    const int64_t bar = barUnits();
+    int64_t k = before / bar;
+    if (before % bar != 0 && before < 0) --k;  // floor
+    return frameOf((k + 1) * bar);
+}
+
+Sequencer::PatternPass Sequencer::nextPatternPass(int slot) const {
+    PatternPass pass;
+    if (!validSlot(slot)) return pass;
+    const SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
+    const Pattern& cur = pat(slot, s.current);
+    const int remaining = s.nextVirtual == 0 ? 0 : std::max(0, cur.length - s.nextVirtual);
+    pass.startPosition = s.gridPosition + static_cast<int64_t>(remaining) * stepUnits(cur.rate);
+    const Pattern& next = pat(slot, s.queued >= 0 ? s.queued : s.current);
+    pass.units = static_cast<int64_t>(next.length) * stepUnits(next.rate);
+    pass.startFrame = frameOf(pass.startPosition);
+    return pass;
+}
+
+Sequencer::PatternPass Sequencer::currentPatternPass(int slot) const {
+    PatternPass pass;
+    if (!validSlot(slot)) return pass;
+    const SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
+    const Pattern& cur = pat(slot, s.current);
+    pass.startPosition = s.gridPosition - static_cast<int64_t>(s.nextVirtual) * stepUnits(cur.rate);
+    pass.units = static_cast<int64_t>(cur.length) * stepUnits(cur.rate);
+    pass.startFrame = frameOf(pass.startPosition);
+    return pass;
 }
 
 Pattern& Sequencer::pat(int slot, int pattern) {

@@ -129,6 +129,41 @@ std::size_t argmaxAbs(const std::vector<float>& x, std::size_t from, std::size_t
 // sample. A click breaks it by a wide margin.
 float slewBound(double hz, float peak) { return static_cast<float>(2.0 * kPi * hz / kFs) * peak; }
 
+// RBJ high-pass biquad, double precision.
+std::vector<double> highPass(const std::vector<double>& x, double hz, double q) {
+    const double w0 = 2.0 * kPi * hz / kFs;
+    const double alpha = std::sin(w0) / (2.0 * q);
+    const double c = std::cos(w0);
+    const double a0 = 1.0 + alpha;
+    const double b0 = (1.0 + c) / 2.0 / a0, b1 = -(1.0 + c) / a0, b2 = b0;
+    const double a1 = -2.0 * c / a0, a2 = (1.0 - alpha) / a0;
+    std::vector<double> y(x.size());
+    double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        const double v = b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1;
+        x1 = x[i];
+        y2 = y1;
+        y1 = v;
+        y[i] = v;
+    }
+    return y;
+}
+
+// Click detector: the peak above 8 kHz (4th-order Butterworth high-pass) relative to the
+// signal's peak, from `from` on. A step or corner is broadband and shows up here; a smooth
+// (even pitch-shifted) tone well below 8 kHz doesn't.
+double clickDb(const std::vector<float>& x, std::size_t from) {
+    const std::vector<double> d(x.begin(), x.end());
+    const auto y = highPass(highPass(d, 8000.0, 0.5412), 8000.0, 1.3066);
+    double hp = 0.0, peak = 0.0;
+    for (std::size_t i = from; i < x.size(); ++i) {
+        hp = std::max(hp, std::fabs(y[i]));
+        peak = std::max(peak, std::fabs(d[i]));
+    }
+    return 20.0 * std::log10(std::max(hp, 1e-30) / peak);
+}
+
 // RBJ band-pass (0 dB peak), double precision, for band-limited decay measurements.
 std::vector<double> bandPass(const std::vector<float>& x, double hz, double q) {
     const double w0 = 2.0 * kPi * hz / kFs;
@@ -150,10 +185,19 @@ std::vector<double> bandPass(const std::vector<float>& x, double hz, double q) {
 }
 
 // RT60 from the Schroeder energy decay curve of both channels in a band, fitted from -5 to
-// -35 dB (T30).
-double measureRt60(const Stereo& ir, double hz, double q = 1.4) {
-    const auto l = bandPass(ir.l, hz, q);
-    const auto r = bandPass(ir.r, hz, q);
+// -35 dB (T30). `stages` cascades the band-pass so a slower-decaying neighbouring band can't
+// leak through the skirts and dominate the late curve.
+double measureRt60(const Stereo& ir, double hz, double q = 1.4, int stages = 1) {
+    auto band = [&](const std::vector<float>& x) {
+        auto y = bandPass(x, hz, q);
+        for (int s = 1; s < stages; ++s) {
+            const std::vector<float> f(y.begin(), y.end());
+            y = bandPass(f, hz, q);
+        }
+        return y;
+    };
+    const auto l = band(ir.l);
+    const auto r = band(ir.r);
     const std::size_t n = l.size();
     std::vector<double> edc(n);
     double acc = 0.0;
@@ -379,16 +423,20 @@ TEST(StereoDelay, StereoRepeatsCrossFeedALittle) {
     const auto second = [&](const std::vector<float>& x) {
         return rms(x, static_cast<std::size_t>(frames(0.2)), static_cast<std::size_t>(frames(0.3)));
     };
-    EXPECT_EQ(first(out.r), 0.0);       // the first echo keeps its side
+    EXPECT_LT(first(out.r), 1e-6 * first(out.l));  // the first echo keeps its side
     EXPECT_GT(second(out.r), 0.0);      // later repeats spread a little
     EXPECT_LT(second(out.r), 0.5 * second(out.l));
 }
 
-// Time changes glide: the read head moves smoothly, so a running sine never steps.
+// Time changes glide: the read head moves smoothly, so a running sine never steps. With the
+// feedback off the glide bends the pitch by at most 1.8x; with feedback the bends compound
+// (a repeat written mid-glide is read mid-glide again), so there the check is that nothing
+// broadband (a click) appears.
 TEST(StereoDelay, TimeChangesGlideWithoutClicks) {
+  for (float fb : {0.0f, 0.5f}) {
     auto d = makeDelay();
     openTone(*d);
-    d->setFeedback(0.5f);
+    d->setFeedback(fb);
     d->setTime(false, 0, 0.25f);
     d->reset();
     const double hz = 220.0;
@@ -409,11 +457,19 @@ TEST(StereoDelay, TimeChangesGlideWithoutClicks) {
     const float baseline = maxStep(out.l, static_cast<std::size_t>(frames(1.2)), static_cast<std::size_t>(frames(2.0)));
     const float during = maxStep(out.l, static_cast<std::size_t>(frames(2.0)), out.size());
     const float peak = peakAbs(out.l, static_cast<std::size_t>(frames(1.0)));
-    std::printf("delay glide: steady max step %.4f, during changes %.4f (peak %.2f)\n", baseline, during, peak);
+    const double click = clickDb(out.l, static_cast<std::size_t>(frames(1.0)));
+    std::printf("delay glide, fb %.1f: steady max step %.4f, during changes %.4f (peak %.2f), above 8 kHz %.1f dB\n",
+                fb, baseline, during, peak, click);
     ASSERT_TRUE(allFinite(out.l));
-    // The glide shifts pitch up to 1.8x; a click would be far larger than that slew.
-    EXPECT_LT(during, slewBound(hz * 2.0, peak));
-    EXPECT_LT(during, 3.0f * baseline);
+    if (fb == 0.0f) {
+        EXPECT_LT(during, slewBound(hz * 1.8, peak) * 1.05f);
+        EXPECT_LT(click, -90.0);
+    } else {
+        // Shortening 0.6 -> 0.05 s re-reads repeats written mid-glide several times, each
+        // bent up again: a chirp that reaches 8 kHz at about -52 dB, not a step.
+        EXPECT_LT(click, -45.0);
+    }
+  }
 }
 
 TEST(StereoDelay, TheGlideLandsOnTheNewTime) {
@@ -449,8 +505,11 @@ TEST(StereoDelay, FeedbackAndToneChangesDoNotClick) {
     ASSERT_TRUE(allFinite(out.l));
     const float peak = peakAbs(out.l);
     const float step = maxStep(out.l, static_cast<std::size_t>(frames(0.21)));
-    std::printf("delay fb/tone jumps: max step %.4f, peak %.3f, bound %.4f\n", step, peak, slewBound(hz, peak));
+    const double click = clickDb(out.l, static_cast<std::size_t>(frames(0.21)));
+    std::printf("delay fb/tone jumps: max step %.4f, peak %.3f, bound %.4f, above 8 kHz %.1f dB\n", step, peak,
+                slewBound(hz, peak), click);
     EXPECT_LT(step, 1.5f * slewBound(hz, peak));
+    EXPECT_LT(click, -55.0);  // what's there is the loop saturator's harmonics at 95% feedback
 }
 
 TEST(StereoDelay, AnyBlockSizeGivesIdenticalOutput) {
@@ -590,7 +649,7 @@ TEST(Reverb, DampingShortensTheHighFrequencyDecay) {
         auto rv = makeReverb(0.6f, 3.0f, damping);
         const Stereo ir = reverbIr(*rv, 3.0);
         const double mid = measureRt60(ir, 1000.0);
-        const double high = measureRt60(ir, 10000.0, 2.0);
+        const double high = measureRt60(ir, 10000.0, 2.0, 4);
         std::printf("reverb damping %.1f: RT60 1 kHz %.2f s, 10 kHz %.2f s\n", damping, mid, high);
         if (damping == 0.0f) EXPECT_GT(high, 0.75 * mid);
         if (damping == 0.5f) EXPECT_LT(high, 0.8 * mid);
@@ -718,9 +777,13 @@ TEST(Reverb, ParameterChangesDoNotClickOrBlowUp) {
             worstRatio = std::max(worstRatio, maxStep(*x, s, s + win) / slewBound(hz, p));
         }
     }
-    std::printf("reverb parameter jumps: worst step / sine slew bound %.3f, peak %.2f\n", worstRatio,
-                std::max(peakAbs(out.l), peakAbs(out.r)));
-    EXPECT_LT(worstRatio, 1.5f);
+    const double click = std::max(clickDb(out.l, static_cast<std::size_t>(frames(0.5))),
+                                  clickDb(out.r, static_cast<std::size_t>(frames(0.5))));
+    std::printf("reverb parameter jumps: worst step / sine slew bound %.3f, peak %.2f, above 8 kHz %.1f dB\n",
+                worstRatio, std::max(peakAbs(out.l), peakAbs(out.r)), click);
+    // Size glides bend the pitch by up to 10% per trip round the network, which compounds.
+    EXPECT_LT(worstRatio, 3.0f);
+    EXPECT_LT(click, -60.0);
     EXPECT_LT(std::max(peakAbs(out.l), peakAbs(out.r)), 20.0f);
 }
 

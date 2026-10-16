@@ -29,10 +29,13 @@ float validRate(float fs) { return (fs >= 8000.0f && fs <= 384000.0f) ? fs : kDe
 // Per-sample coefficient of a one-pole smoother with time constant tau.
 float smoothingCoefficient(float tauSeconds, float fs) { return 1.0f - std::exp(-1.0f / (tauSeconds * fs)); }
 
-// One step of a one-pole smoother that lands exactly on its target (no endless denormal tail).
+// One step of a one-pole smoother that lands exactly on its target: in float the step d * k
+// eventually rounds away (near 1 that happens about 3e-6 short of the target) or heads for
+// denormals near 0, so it snaps once the step stops moving it or the gap is negligible.
 inline void smooth(float& now, float target, float k) {
     const float d = target - now;
-    now = std::fabs(d) < 1.0e-7f ? target : now + d * k;
+    const float next = now + d * k;
+    now = (next == now || std::fabs(d) < 1.0e-7f) ? target : next;
 }
 
 // Non-finite or absurd input becomes silence rather than poisoning a feedback loop.
@@ -107,10 +110,10 @@ constexpr float kMinSizeScale = 0.25f;
 constexpr float kInSign[kLines] = {1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f};
 constexpr float kTapL[kLines] = {1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f, 1.0f, -1.0f};
 constexpr float kTapR[kLines] = {1.0f, 1.0f, -1.0f, -1.0f, 1.0f, 1.0f, -1.0f, -1.0f};
-// Slow deterministic modulation of each line (+-0.15 ms at 0.31..0.89 Hz) breaks up metallic
-// ringing; the pitch wobble is under 2 cents.
-constexpr float kModDepthSeconds = 0.00015f;
-constexpr float kModHz[kLines] = {0.31f, 0.43f, 0.37f, 0.53f, 0.61f, 0.47f, 0.71f, 0.89f};
+// The lines are not modulated: a fractional read (any interpolator short of an all-pass)
+// loses highs on every trip round the loop and would shorten the decay. The lengths are
+// integers except while Size glides, so the set RT60 holds exactly.
+
 // Input diffusion: four Schroeder all-passes on the mono sum.
 constexpr int kDiffusers = 4;
 constexpr float kDiffuserSamples48k[kDiffusers] = {131.0f, 191.0f, 263.0f, 347.0f};
@@ -119,13 +122,15 @@ constexpr float kDiffusion = 0.6f;
 // and the top decays faster: at Damping 1 the top's RT60 is 0.2x the set value.
 constexpr float kDampingCrossoverHz = 6000.0f;
 constexpr float kMaxDampingLoss = 0.8f;
-// Control tick: lengths, gains and modulation are computed every 32 samples and ramped
+// Control tick: lengths and gains are computed every 32 samples and ramped
 // linearly in between.
 constexpr int kTick = 32;
 constexpr float kSizeGlideSeconds = 0.1f;
 constexpr float kMaxSizeRate = 0.1f;  // line-length change per sample while gliding (<10% pitch)
 constexpr float kReverbParamSeconds = 0.003f;  // decay and damping smoothing (F0.7)
-constexpr float kInputGain = 0.5f;
+// About -3 dB of steady-state noise gain at the defaults (longer decays are louder: about
+// +5 dB at 20 s and Size 1).
+constexpr float kInputGain = 1.0f;
 constexpr float kOutputGain = 0.6f;
 
 bool isPrime(int n) {
@@ -340,7 +345,7 @@ void StereoDelay::process(const float* inL, const float* inR, float* outL, float
 // Reverb: 8-line feedback delay network
 //
 //   in L+R -> 4 series all-passes -> injected into 8 delay lines (signs kInSign)
-//   each line: read (modulated, interpolated) -> high-shelf damping with RT60 gains
+//   each line: read (interpolated only while Size glides) -> high-shelf damping with RT60 gains
 //   -> outputs tapped (kTapL / kTapR) -> 8x8 Hadamard (orthogonal, lossless) -> written back
 //
 // Per-line gains: g = 10^(-3 L / (fs T60)) for a line of L samples, so every path through the
@@ -368,10 +373,6 @@ struct Reverb::Impl {
     // Decay and damping, smoothed per tick: log(T60) and the shelf's top ratio.
     float logDecayTarget = 0.0f, logDecayNow = 0.0f;
     float hfTarget = 1.0f, hfNow = 1.0f;
-    // Modulation phase per line (cycles).
-    float modPhase[kLines] = {};
-    float modDepth = 0.0f;
-    float modIncPerTick[kLines] = {};
 
     // Per-tick linear ramps: value = start + step * j for j = 0..kTick-1.
     int tickPos = 0;
@@ -382,6 +383,7 @@ struct Reverb::Impl {
     float dampG = 0.0f;
 
     float sizeK = 0.0f, paramK = 0.0f, maxLenStepPerTick = 0.0f;
+    bool idle = true;  // every ramp sits at its final value: ticks have nothing to compute
 
     void updateSize() {
         const float scale = (kMinSizeScale + (1.0f - kMinSizeScale) * size) * fs / 48000.0f;
@@ -405,18 +407,25 @@ struct Reverb::Impl {
 
     // Computes the values the ramps reach at the end of the coming tick.
     void tick() {
-        smoothTick(logDecayNow, logDecayTarget, paramK);
-        smoothTick(hfNow, hfTarget, paramK);
+        smooth(logDecayNow, logDecayTarget, paramK);
+        smooth(hfNow, hfTarget, paramK);
+        bool still = logDecayNow == logDecayTarget && hfNow == hfTarget;
         for (int i = 0; i < kLines; ++i) {
             const float diff = lengthTarget[i] - baseLength[i];
             if (std::fabs(diff) < 1.0e-3f) {
                 baseLength[i] = lengthTarget[i];
             } else {
                 baseLength[i] += std::clamp(diff * sizeK, -maxLenStepPerTick, maxLenStepPerTick);
+                still = false;
             }
-            modPhase[i] += modIncPerTick[i];
-            if (modPhase[i] >= 1.0f) modPhase[i] -= 1.0f;
-            const float lenEnd = baseLength[i] + modDepth * dsp::sinCycle(modPhase[i]);
+        }
+        if (still && idle) {
+            for (int i = 0; i < kLines; ++i) lenStep[i] = loStep[i] = hiStep[i] = 0.0f;
+            return;
+        }
+        idle = still;  // this tick's ramps end on the final values
+        for (int i = 0; i < kLines; ++i) {
+            const float lenEnd = baseLength[i];
             float lo = 0.0f, hi = 0.0f;
             gainsFor(baseLength[i], lo, hi);
             const float inv = 1.0f / static_cast<float>(kTick);
@@ -433,23 +442,19 @@ struct Reverb::Impl {
             hiStart[i] += hiStep[i] * static_cast<float>(kTick);
         }
     }
-    static void smoothTick(float& now, float target, float k) {
-        const float d = target - now;
-        now = std::fabs(d) < 1.0e-6f ? target : now + d * k;
-    }
 
     // Lands every smoothed value on its target (fresh start).
     void snap() {
+        tickPos = 0;
+        idle = true;
         logDecayNow = logDecayTarget;
         hfNow = hfTarget;
         for (int i = 0; i < kLines; ++i) {
             baseLength[i] = lengthTarget[i];
-            modPhase[i] = static_cast<float>(i) / static_cast<float>(kLines);
-            lenStart[i] = baseLength[i] + modDepth * dsp::sinCycle(modPhase[i]);
+            lenStart[i] = baseLength[i];
             gainsFor(baseLength[i], loStart[i], hiStart[i]);
             lenStep[i] = loStep[i] = hiStep[i] = 0.0f;
         }
-        tickPos = 0;
     }
     void clear() {
         std::fill(lines.begin(), lines.end(), 0.0f);
@@ -472,9 +477,8 @@ void Reverb::prepare(float sampleRate) {
     Impl& r = *impl_;
     r.fs = validRate(sampleRate);
     const float ratio = r.fs / 48000.0f;
-    r.modDepth = kModDepthSeconds * r.fs;
-    const float longest = kLineSamples48k[kLines - 1] * ratio + 64.0f;  // primes, glide, modulation, taps
-    r.lineSize = nextPowerOfTwo(static_cast<uint32_t>(longest + r.modDepth) + 4u);
+    const float longest = kLineSamples48k[kLines - 1] * ratio + 64.0f;  // room for the primes and the taps
+    r.lineSize = nextPowerOfTwo(static_cast<uint32_t>(longest) + 4u);
     r.lineMask = r.lineSize - 1u;
     r.lines.assign(static_cast<std::size_t>(r.lineSize) * kLines, 0.0f);
     uint32_t longestDiffuser = 0;
@@ -485,7 +489,6 @@ void Reverb::prepare(float sampleRate) {
     r.diffuserSize = nextPowerOfTwo(longestDiffuser + 1u);
     r.diffuserMask = r.diffuserSize - 1u;
     r.diffusers.assign(static_cast<std::size_t>(r.diffuserSize) * kDiffusers, 0.0f);
-    for (int i = 0; i < kLines; ++i) r.modIncPerTick[i] = kModHz[i] * static_cast<float>(kTick) / r.fs;
     r.dampG = onePoleCoefficient(kDampingCrossoverHz, r.fs);
     r.sizeK = 1.0f - std::exp(-static_cast<float>(kTick) / (kSizeGlideSeconds * r.fs));
     r.paramK = 1.0f - std::exp(-static_cast<float>(kTick) / (kReverbParamSeconds * r.fs));

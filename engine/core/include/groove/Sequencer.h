@@ -130,6 +130,33 @@ public:
     // returns how many frames (1..maxFrames) the caller can render before the next event.
     int32_t advance(int64_t frame, int32_t maxFrames);
 
+    // --- audio thread: transport link for the tape (M3). Call after applyCommands() and
+    // before advance() in a render chunk. A bar is 4 beats (4/4), counted from Play. ---
+    struct PatternPass {
+        int64_t startFrame = 0;     // stream frame of the pass's first step
+        int64_t startPosition = 0;  // its exact musical position
+        int64_t units = 0;          // one pass of the pattern, in position units
+    };
+    bool isPlaying() const { return playing_; }
+    // Increments on every Play that starts the transport (stop + play in one chunk included).
+    uint32_t playCount() const { return playCount_; }
+    int64_t playFrame() const { return playFrame_; }
+    int64_t barUnits() const { return 4 * unitsPerBeat_; }
+    // One bar at the current tempo, rounded to the nearest frame.
+    int64_t roundedBarFrames() const;
+    // The first bar-line frame >= frame (bar lines are frameOf(k * barUnits) since Play).
+    // Only meaningful while playing.
+    int64_t nextBarFrame(int64_t frame) const;
+    // The slot's next pattern boundary (at or after the clock's next event) and one pass of
+    // the pattern that plays from there (a queued pattern takes over at the boundary).
+    PatternPass nextPatternPass(int slot) const;
+    // The pass of the slot's current pattern that is playing now (its start may be in the past).
+    PatternPass currentPatternPass(int slot) const;
+    // Frames between two positions at the current tempo (exact, as the clock lands them).
+    int64_t framesBetween(int64_t startPosition, int64_t units) const {
+        return frameOf(startPosition + units) - frameOf(startPosition);
+    }
+
     // --- tests only (audio thread not running) ---
     const Pattern& pattern(int slot, int pattern) const;
     int64_t unitsPerBeat() const { return unitsPerBeat_; }
@@ -187,6 +214,8 @@ private:
     bool motionRecording_ = false;
     int64_t anchorFrame_ = 0;
     int64_t anchorPosition_ = 0;
+    uint32_t playCount_ = 0;
+    int64_t playFrame_ = 0;
 
     // --- transport readout (written by the audio thread, read anywhere) ---
     std::atomic<bool> outPlaying_{false};
