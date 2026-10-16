@@ -2,10 +2,10 @@
 
 Last updated 16 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 
-## Next build
+## Shipped
 
-- [x] CX: strip values move to the top of the strip, under the label (ADR 0003).
-- [x] CX: Mixer level bars in the centre display select a channel (Shift + tap mutes) (ADR 0003).
+- [x] build-14: CX two-thumb fixes (ADR 0003): strip values under the label; Mixer bars select. Owner: works well.
+- [x] build-13: F8 key and scale.
 
 ## v1 close-out
 
@@ -20,7 +20,6 @@ Last updated 16 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 
 ## v1.1
 
-- [x] F8 Key and scale (build-13).
 - [ ] Tilt control (calibrate-and-hold, 1–2 parameters).
 - [ ] USB-MIDI in/out and MIDI clock sync (still open: which MIDI gear to test with).
 - [ ] Oscillator draw.
