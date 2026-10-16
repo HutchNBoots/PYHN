@@ -113,11 +113,13 @@ data class TapeState(
     val canUndo: Boolean,
     val canRedo: Boolean,
     val trackHasAudio: BooleanArray,
+    /** A saved tape is still loading in the background (F7.6). */
+    val loading: Boolean,
 ) {
     internal companion object {
         // Layout shared with engine/android/JniBridge.cpp:
-        // [lengthFrames, lengthBars, barFrames, headFrame, recordingTrack, armedTrack, canUndo, canRedo, hasAudio x4]
-        const val SIZE = 8 + NativeEngine.TAPE_TRACK_COUNT
+        // [lengthFrames, lengthBars, barFrames, headFrame, recordingTrack, armedTrack, canUndo, canRedo, hasAudio x4, loading]
+        const val SIZE = 9 + NativeEngine.TAPE_TRACK_COUNT
 
         fun from(v: DoubleArray) = TapeState(
             lengthFrames = v[0].toLong(),
@@ -129,6 +131,7 @@ data class TapeState(
             canUndo = v[6] != 0.0,
             canRedo = v[7] != 0.0,
             trackHasAudio = BooleanArray(NativeEngine.TAPE_TRACK_COUNT) { v[8 + it] != 0.0 },
+            loading = v[8 + NativeEngine.TAPE_TRACK_COUNT] != 0.0,
         )
     }
 }
@@ -335,6 +338,33 @@ object NativeEngine {
     /** Peak overview of one track, 0..255 per bin across the whole tape length (all zeros when empty). */
     fun tapeOverview(track: Int, out: ByteArray) = nativeTapeOverview(track, out)
 
+    // --- persistence and export (M4) ---
+
+    /** Directory for the tape's audio files. Call once, before the first start(). From then on the
+     *  engine streams every tape change to disk on its own writer thread (F7.5); the audio thread
+     *  never touches files. */
+    fun setTapeStorageDir(path: String) = nativeSetTapeStorageDir(path)
+
+    /** Starts loading the tape saved in the storage dir on a background thread (F7.6). Sound and
+     *  the rest of the app keep working; tapeState().loading stays true until the audio has landed.
+     *  Returns false (and loads nothing) if there is no valid saved tape. */
+    fun loadSavedTape(): Boolean = nativeLoadSavedTape()
+
+    /** Blocks until every tape change so far is on disk, for at most [timeoutMs]. Call on pause.
+     *  Returns false on timeout or I/O error. */
+    fun flushTape(timeoutMs: Int = 1000): Boolean = nativeFlushTape(timeoutMs)
+
+    /** Starts rendering the tape mix to a 24-bit stereo WAV at the stream rate, at [path], on a
+     *  background thread, faster than real time (F7.2): the four tracks at 1x forward through their
+     *  channel strips (volume, pan, mute), master volume and limiter; over the loop region, or the
+     *  whole tape when [wholeTape]. Playback carries on meanwhile. Returns false if the tape is
+     *  empty or an export is already running. */
+    fun startExport(path: String, wholeTape: Boolean): Boolean = nativeStartExport(path, wholeTape)
+
+    /** 0..1 while exporting, exactly 1 once the file is complete and closed, -1 if it failed,
+     *  NaN when no export has run. */
+    fun exportProgress(): Float = nativeExportProgress()
+
     // --- diagnostics ---
 
     fun setBufferBursts(bursts: Int) = nativeSetBufferBursts(bursts)
@@ -443,4 +473,9 @@ object NativeEngine {
     /** out = TapeState layout */
     private external fun nativeGetTapeState(out: DoubleArray)
     private external fun nativeTapeOverview(track: Int, out: ByteArray)
+    private external fun nativeSetTapeStorageDir(path: String)
+    private external fun nativeLoadSavedTape(): Boolean
+    private external fun nativeFlushTape(timeoutMs: Int): Boolean
+    private external fun nativeStartExport(path: String, wholeTape: Boolean): Boolean
+    private external fun nativeExportProgress(): Float
 }
