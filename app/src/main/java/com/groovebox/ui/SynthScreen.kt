@@ -47,6 +47,7 @@ fun SynthMiddleRow(
     debug: DebugSlot,
     modifier: Modifier = Modifier,
     keyName: String? = null,
+    onSlotSwipe: ((Int) -> Unit)? = null,
 ) {
     val d = LocalDesign.current
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
@@ -61,7 +62,10 @@ fun SynthMiddleRow(
             controller = controller,
             audioStarted = audioStarted,
             debug = debug,
-            modifier = Modifier.weight(1f).fillMaxHeight(),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .then(if (onSlotSwipe != null) Modifier.slotSwipe(onSlotSwipe) else Modifier),
             keyName = keyName,
         )
         StripRow(controller.strips, controller)

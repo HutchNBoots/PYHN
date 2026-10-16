@@ -80,7 +80,8 @@ fun SeqMiddleRow(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, mo
             )
             ClearButton(state, Modifier.fillMaxWidth().height(d.dp(40)))
         }
-        SeqDisplay(state, audioStarted, debug, Modifier.weight(1f).fillMaxHeight())
+        // ADR 0003: swipe the pattern display to step through the slots (the drum slot included).
+        SeqDisplay(state, audioStarted, debug, Modifier.weight(1f).fillMaxHeight().slotSwipe { state.swipeSlot(it, includeDrum = true) })
         val labels = if (layer == SeqLayer.Step) listOf("—", "—", "—", "Motion") else List(4) { "—" }
         val values = if (layer == SeqLayer.Step) listOf(null, null, null, "—") else List(4) { null }
         StripRow(seq.strips, seq, labels, values)

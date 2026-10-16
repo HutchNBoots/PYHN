@@ -92,6 +92,17 @@ object TapeView {
         else -> TapeRecordAction.None
     }
 
+    /**
+     * Double-tap a lane (ADR 0003: a thumb-reachable Record): when idle, arm that lane; when
+     * that lane is armed or recording, stop it. A double-tap on another lane while one is
+     * busy does nothing, so a stray tap never ends the take in progress.
+     */
+    fun laneDoubleTap(lane: Int, status: TapeRecordStatus, busyTrack: Int, canRecord: Boolean): TapeRecordAction = when {
+        status == TapeRecordStatus.Idle -> if (canRecord) TapeRecordAction.Arm(lane) else TapeRecordAction.None
+        lane == busyTrack -> TapeRecordAction.Stop
+        else -> TapeRecordAction.None
+    }
+
     /** The grey line under "Tape": length, loop, dub and speed. */
     fun subtitle(tapeBars: Int, region: LoopRegion?, dub: Double, speed: String, reverse: Boolean): String {
         if (tapeBars <= 0 || region == null) return "empty · the first take sets the length"

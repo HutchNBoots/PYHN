@@ -126,7 +126,8 @@ private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugS
 /**
  * The four lanes, drawn from the peak overviews, with the loop bracket above them and the
  * moving head. Everything that changes while playing is read in the draw phase, so the head
- * moving only redraws this canvas. Tap a lane to select its track; hold one to clear it.
+ * moving only redraws this canvas. Tap a lane to select its track, double-tap it to record
+ * onto it (or stop its take), hold it to clear it.
  */
 @Composable
 private fun TapeLanes(state: GrooveState, modifier: Modifier) {
@@ -140,7 +141,8 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
     val nameWidth = d.px(36f)
     val radius = CornerRadius(d.px(8f))
     val column = d.px(2f)
-    val description = "Tape tracks, ${TapeView.trackName(state.tapeTrack)} selected. Tap a lane to select it, hold to clear it"
+    val description = "Tape tracks, ${TapeView.trackName(state.tapeTrack)} selected. " +
+        "Tap a lane to select it, double-tap to record onto it, hold to clear it"
 
     Canvas(
         modifier
@@ -149,6 +151,8 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
                 fun laneAt(y: Float): Int? = TapeView.laneAt(y - top, size.height - top, MixLimits.TRACKS, gap)
                 detectTapGestures(
                     onPress = { p -> laneAt(p.y)?.let(state::selectTrack) },
+                    // ADR 0003: Record within the left thumb's reach (arm this lane, or stop its take).
+                    onDoubleTap = { p -> laneAt(p.y)?.let(state::tapeLaneDoubleTap) },
                     onLongPress = { p ->
                         val lane = laneAt(p.y)
                         if (lane != null && state.trackHasAudio(lane)) {
@@ -269,7 +273,7 @@ private fun TapeFooter(state: GrooveState) {
     }
     val (text, colour) = when (state.tapeStatus) {
         TapeRecordStatus.Recording ->
-            "recording ${TapeView.trackName(state.tapeRecordingTrack)} · Record stops on the next bar" to TapeColors.Record
+            "recording ${TapeView.trackName(state.tapeRecordingTrack)} · Record (or double-tap the lane) stops on the next bar" to TapeColors.Record
         TapeRecordStatus.Armed -> {
             val armed = TapeView.trackName(state.tapeArmedTrack)
             (if (state.playing) "$armed armed · starts on the next bar" else "$armed armed · starts on Play") to TapeColors.Record
@@ -277,8 +281,8 @@ private fun TapeFooter(state: GrooveState) {
         TapeRecordStatus.Idle -> when {
             !state.tapeCanRecord -> "record needs Speed 1× and Rev off" to GrooveColors.Warn
             state.tapeLoading -> "loading the saved tape · play on, it lands in a moment" to GrooveColors.TextDim
-            state.tapeBars == 0 -> "$track selected · Record to start a take" to GrooveColors.TextDim
-            else -> "$track selected · tap a lane to pick a track, hold to clear it" to GrooveColors.TextDim
+            state.tapeBars == 0 -> "$track selected · double-tap a lane or Record to start a take" to GrooveColors.TextDim
+            else -> "$track selected · tap a lane to pick it, double-tap to record, hold to clear" to GrooveColors.TextDim
         }
     }
     BasicText(text, style = d.value(13f, colour), maxLines = 1, overflow = TextOverflow.Ellipsis)

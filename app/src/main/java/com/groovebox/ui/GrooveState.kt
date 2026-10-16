@@ -35,6 +35,7 @@ import com.groovebox.ui.model.PatternStore
 import com.groovebox.ui.model.RecordButton
 import com.groovebox.ui.model.Scale
 import com.groovebox.ui.model.SeqLimits
+import com.groovebox.ui.model.SlotSwipe
 import com.groovebox.ui.model.Step
 import com.groovebox.ui.model.StepPads
 import com.groovebox.ui.model.TapeOverview
@@ -323,6 +324,11 @@ class GrooveState : KeyListener {
         }
     }
 
+    /** A swipe on the display (ADR 0003): [steps] slots on, clamped; see [SlotSwipe.target]. */
+    fun swipeSlot(steps: Int, includeDrum: Boolean) {
+        if (steps != 0) selectSlot(SlotSwipe.target(selectedSlot, steps, includeDrum))
+    }
+
     fun showSynth() = uiEdit {
         selectSlot(lastSynthSlot)
         screen = Screen.Synth
@@ -527,6 +533,20 @@ class GrooveState : KeyListener {
     fun tapeRecordPress() {
         when (val action = TapeView.recordPress(tapeStatus, tapeTrack, tapeCanRecord)) {
             is TapeRecordAction.Arm -> NativeEngine.tapeArmRecord(action.track)
+            TapeRecordAction.Stop -> NativeEngine.tapeStopRecord()
+            TapeRecordAction.None -> Unit
+        }
+    }
+
+    /** Double-tap a tape lane (ADR 0003): arm it, or stop its take; see [TapeView.laneDoubleTap]. */
+    fun tapeLaneDoubleTap(lane: Int) {
+        val status = tapeStatus
+        val busy = if (status == TapeRecordStatus.Recording) tapeRecordingTrack else tapeArmedTrack
+        when (val action = TapeView.laneDoubleTap(lane, status, busy, tapeCanRecord)) {
+            is TapeRecordAction.Arm -> {
+                selectTrack(action.track)
+                NativeEngine.tapeArmRecord(action.track)
+            }
             TapeRecordAction.Stop -> NativeEngine.tapeStopRecord()
             TapeRecordAction.None -> Unit
         }

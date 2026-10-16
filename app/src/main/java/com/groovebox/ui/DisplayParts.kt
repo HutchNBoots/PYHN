@@ -1,6 +1,7 @@
 package com.groovebox.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,12 +22,36 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import com.groovebox.engine.ParamSpec
+import com.groovebox.ui.model.SlotSwipe
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
 
 /** The debug overlay (F0.2, F0.4) as handed to a display: tapping the display's title toggles it. */
 @Immutable
 class DebugSlot(val open: Boolean, val toggle: () -> Unit, val panel: @Composable () -> Unit)
+
+/** Swipe travel per slot, in design units (about 58 dp on the S25+). */
+private const val SLOT_SWIPE_UNITS = 72f
+
+/**
+ * ADR 0003: a horizontal swipe on a display steps the selected slot ([SlotSwipe]), so the left
+ * thumb never has to reach the slot buttons at the top centre. Taps (the title's debug toggle)
+ * still work: the swipe only starts past the horizontal touch slop.
+ */
+@Composable
+fun Modifier.slotSwipe(onSteps: (Int) -> Unit): Modifier {
+    val d = LocalDesign.current
+    val steps by rememberUpdatedState(onSteps)
+    val stepPx = d.px(SLOT_SWIPE_UNITS)
+    return pointerInput(stepPx) {
+        val swipe = SlotSwipe(stepPx)
+        detectHorizontalDragGestures(onDragStart = { swipe.reset() }) { change, dx ->
+            change.consume()
+            val n = swipe.drag(dx)
+            if (n != 0) steps(n)
+        }
+    }
+}
 
 /** The display's big name ("Brook", "Kit", "Pattern 3"); a tap toggles the debug panel. */
 @Composable

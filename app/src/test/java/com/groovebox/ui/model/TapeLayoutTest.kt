@@ -100,6 +100,19 @@ class TapeLayoutTest {
     }
 
     @Test
+    fun laneDoubleTapArmsThatLaneOrStopsItsOwnTake() {
+        // Idle: arm the lane that was double-tapped (if the tape can record).
+        assertEquals(TapeRecordAction.Arm(3), TapeView.laneDoubleTap(3, TapeRecordStatus.Idle, -1, canRecord = true))
+        assertEquals(TapeRecordAction.None, TapeView.laneDoubleTap(3, TapeRecordStatus.Idle, -1, canRecord = false))
+        // Busy on this lane: stop the take, or cancel the arm.
+        assertEquals(TapeRecordAction.Stop, TapeView.laneDoubleTap(1, TapeRecordStatus.Recording, 1, canRecord = true))
+        assertEquals(TapeRecordAction.Stop, TapeView.laneDoubleTap(2, TapeRecordStatus.Armed, 2, canRecord = false))
+        // Busy on another lane: nothing, so a stray double-tap never ends someone else's take.
+        assertEquals(TapeRecordAction.None, TapeView.laneDoubleTap(0, TapeRecordStatus.Recording, 1, canRecord = true))
+        assertEquals(TapeRecordAction.None, TapeView.laneDoubleTap(3, TapeRecordStatus.Armed, 2, canRecord = true))
+    }
+
+    @Test
     fun subtitle() {
         assertEquals("empty · the first take sets the length", TapeView.subtitle(0, null, 1.0, "1×", false))
         val r = TapeView.loopRegion(0, 8, 16)

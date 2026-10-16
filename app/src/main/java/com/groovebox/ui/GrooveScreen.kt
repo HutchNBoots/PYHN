@@ -150,7 +150,10 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                     )
                     val middle = Modifier.fillMaxWidth().height(middleRowHeight())
                     when (state.screen) {
-                        Screen.Synth -> SynthMiddleRow(state.selectedSynth, audioStarted, debug, middle, state.keyScale.displayName)
+                        Screen.Synth -> SynthMiddleRow(
+                            state.selectedSynth, audioStarted, debug, middle, state.keyScale.displayName,
+                            onSlotSwipe = { state.swipeSlot(it, includeDrum = false) },
+                        )
                         Screen.Drum -> DrumMiddleRow(state.drum, audioStarted, debug, middle)
                         Screen.Seq -> SeqMiddleRow(state, audioStarted, debug, middle)
                         Screen.Tape -> TapeMiddleRow(state, audioStarted, debug, middle)
