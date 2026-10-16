@@ -133,8 +133,10 @@ TEST(DrumKit, SoundsAreDistinct) {
     }
     for (int a = 0; a < DrumKit::kSoundCount; ++a) {
         for (int b = a + 1; b < DrumKit::kSoundCount; ++b) {
+            const auto& sa = spectra[static_cast<std::size_t>(a)];
+            const auto& sb = spectra[static_cast<std::size_t>(b)];
             double dot = 0.0;
-            for (std::size_t i = 0; i < spectra[0].size(); ++i) dot += spectra[a][i] * spectra[b][i];
+            for (std::size_t i = 0; i < sa.size(); ++i) dot += sa[i] * sb[i];
             EXPECT_LT(dot, 0.96) << DrumKit::name(a) << " vs " << DrumKit::name(b);
         }
     }

@@ -20,8 +20,8 @@ sealed interface PadAction {
  *
  * - Without Shift a pad toggles its step when it is released, unless it took part in a step
  *   loop. Holding a second pad while one is held loops the range between the two (in either
- *   order); releasing either of them clears the loop. Pads touched while a loop is held do
- *   nothing, and nothing toggles until every pad of that gesture is up.
+ *   order); releasing either of them clears the loop. Other pads touched while a loop is held do
+ *   nothing (their release keeps the loop), and nothing toggles until every pad of that gesture is up.
  * - With Shift a pad selects its step at once, on touch-down; touching the selected step
  *   again deselects it. Each new touch changes the selection.
  *
@@ -32,6 +32,10 @@ class StepPads {
     private val held = LinkedHashMap<Int, Int>()
     private var loopActive = false
 
+    /** The pointers of the two pads that made the loop, and their steps. */
+    private var loopPointers: Pair<Int, Int>? = null
+    private var loopSteps: Pair<Int, Int>? = null
+
     /** True from the moment a loop forms until every pad of that gesture is up. */
     private var gestureUsed = false
 
@@ -40,7 +44,7 @@ class StepPads {
         private set
 
     val loop: Pair<Int, Int>?
-        get() = if (!loopActive) null else held.values.take(2).let { minOf(it[0], it[1]) to maxOf(it[0], it[1]) }
+        get() = if (loopActive) loopSteps else null
 
     fun down(pointerId: Int, step: Int, shifted: Boolean): PadAction? {
         if (shifted) {
@@ -52,7 +56,10 @@ class StepPads {
         if (held.size == 2) {
             loopActive = true
             gestureUsed = true
+            val (pa, pb) = held.keys.toList()
             val (a, b) = held.values.toList()
+            loopPointers = pa to pb
+            loopSteps = minOf(a, b) to maxOf(a, b)
             return PadAction.Loop(minOf(a, b), maxOf(a, b))
         }
         return null
@@ -60,8 +67,10 @@ class StepPads {
 
     fun up(pointerId: Int): PadAction? {
         val step = held.remove(pointerId) ?: return null
-        if (loopActive) {
+        val lp = loopPointers
+        if (loopActive && lp != null && (pointerId == lp.first || pointerId == lp.second)) {
             loopActive = false
+            loopPointers = null
             if (held.isEmpty()) gestureUsed = false
             return PadAction.ClearLoop
         }
@@ -77,6 +86,7 @@ class StepPads {
         val hadLoop = loopActive
         held.clear()
         loopActive = false
+        loopPointers = null
         gestureUsed = false
         return if (hadLoop) PadAction.ClearLoop else null
     }

@@ -171,6 +171,11 @@ struct DrumMachine::Impl {
         for (Voice& v : voices) v = Voice{};
         for (KeyState& k : keys) k = KeyState{};
         stamp = 0;
+        // Notes queued before the restart are stale: drop them (prepare() stands in for
+        // the audio thread, the queue's consumer).
+        NoteEvent stale;
+        while (events.pop(stale)) {
+        }
         frames.store(0, std::memory_order_relaxed);
     }
 

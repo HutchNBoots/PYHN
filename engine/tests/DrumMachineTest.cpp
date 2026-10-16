@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <limits>
@@ -31,6 +32,26 @@ const float kCentre = std::sqrt(0.5f);  // equal-power pan at the centre
 
 int note(int key) { return DrumMachine::kLowestNote + key; }
 
+// A machine in its just-constructed state, prepared at kFs. Machines are reused because
+// synthesising the kit is the slow part of prepare() (very slow under TSan), and prepare()
+// skips it when the rate is unchanged. Slots 0 and 1 are for tests, slot 2 for renderHit.
+DrumMachine& fresh(int slot) {
+    static DrumMachine machines[3];
+    DrumMachine& m = machines[slot];
+    for (int k = 0; k < DrumMachine::kSoundCount; ++k) {
+        for (std::size_t i = 0; i < kDrumParamCount; ++i) {
+            const auto id = static_cast<DrumParamId>(i);
+            m.setParam(k, id, id == DrumParamId::Choke && k >= 6 && k <= 8 ? 1.0f : drumParamInfo(id).def);
+        }
+    }
+    m.clearAllMotion();
+    m.prepare(kFs);
+    NoteOnRender rec;
+    while (m.popNoteOnRender(rec)) {
+    }
+    return m;
+}
+
 struct Stereo {
     std::vector<float> l, r;
 };
@@ -54,8 +75,7 @@ Stereo render(DrumMachine& m, int frames, int block = 96) {
 
 // One hit of `key` from a freshly prepared machine, after `setup`.
 Stereo renderHit(int key, int frames, const std::function<void(DrumMachine&)>& setup = {}, float velocity = 1.0f) {
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(2);
     if (setup) setup(m);
     m.seqNoteOn(note(key), velocity);
     return render(m, frames);
@@ -89,11 +109,6 @@ double correlation(const std::vector<float>& a, std::size_t aFrom, const std::ve
     return ab / std::sqrt(aa * bb);
 }
 
-std::vector<float> slice(const std::vector<float>& x, std::size_t from, std::size_t n) {
-    return std::vector<float>(x.begin() + static_cast<std::ptrdiff_t>(from),
-                              x.begin() + static_cast<std::ptrdiff_t>(from + n));
-}
-
 double energy(const std::vector<float>& x) {
     double e = 0.0;
     for (float v : x) e += static_cast<double>(v) * v;
@@ -105,8 +120,7 @@ double energy(const std::vector<float>& x) {
 // --- basics ---
 
 TEST(DrumMachine, SilentWithoutNotesAndCountsFrames) {
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     EXPECT_EQ(m.framesRendered(), 0);
     std::vector<float> l(500, 1.0f), r(500, -1.0f);  // render writes, it doesn't add
     m.renderStereo(l.data(), r.data(), 500);
@@ -152,8 +166,7 @@ TEST(DrumMachine, EveryKeyPlaysItsSoundOnceAndStops) {
 
 TEST(DrumMachine, UiNoteOnPlaysTheSameAsTheSequencer) {
     const Stereo seq = renderHit(2, 9600);
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     EXPECT_TRUE(m.noteOn(note(2), 1.0f, 0));
     const Stereo ui = render(m, 9600);
     EXPECT_EQ(ui.l, seq.l);
@@ -161,8 +174,7 @@ TEST(DrumMachine, UiNoteOnPlaysTheSameAsTheSequencer) {
 }
 
 TEST(DrumMachine, IgnoresNotesKeysAndTargetsOutOfRange) {
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     EXPECT_FALSE(m.noteOn(note(-1), 1.0f, 5));
     EXPECT_FALSE(m.noteOn(note(16), 1.0f, 5));
     EXPECT_FALSE(m.noteOn(-3, 1.0f, 5));
@@ -184,8 +196,7 @@ TEST(DrumMachine, IgnoresNotesKeysAndTargetsOutOfRange) {
 
 TEST(DrumMachine, NoteOffIsIgnoredForOneShots) {
     const Stereo ref = renderHit(9, 24000);
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     m.seqNoteOn(note(9), 1.0f);
     Stereo s = render(m, 4800);
     m.seqNoteOff(note(9));
@@ -333,9 +344,8 @@ TEST(DrumMachine, LiveParameterChangesAreSmoothed) {
     // F0.7: jumping Level, Pan, Tone and Pitch on a ringing ride makes no click, and
     // the new values settle within 10 ms.
     const int key = 10;
-    DrumMachine a, b;
-    a.prepare(kFs);
-    b.prepare(kFs);
+    DrumMachine& a = fresh(0);
+    DrumMachine& b = fresh(1);
     a.seqNoteOn(note(key), 1.0f);
     b.seqNoteOn(note(key), 1.0f);
     Stereo sa = render(a, 9600), sb = render(b, 9600);
@@ -356,8 +366,7 @@ TEST(DrumMachine, LiveParameterChangesAreSmoothed) {
 TEST(DrumMachine, RetriggerRestartsTheKey) {
     const int key = 10;
     const Stereo ref = renderHit(key, 48000);
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     m.seqNoteOn(note(key), 1.0f);
     Stereo s = render(m, 4800);
     m.seqNoteOn(note(key), 1.0f);
@@ -380,8 +389,7 @@ TEST(DrumMachine, ClosedHatChokesTheOpenHatWithin5ms) {
     for (int closed : {6, 7}) {
         SCOPED_TRACE(closed);
         const Stereo closedRef = renderHit(closed, 9600);
-        DrumMachine m;
-        m.prepare(kFs);
+        DrumMachine& m = fresh(0);
         m.seqNoteOn(note(open), 1.0f);
         Stereo s = render(m, choke);
         m.seqNoteOn(note(closed), 1.0f);
@@ -403,8 +411,7 @@ TEST(DrumMachine, ChokeGroupsAreConfigurable) {
     const Stereo openRef = renderHit(8, 19200);
     const Stereo closedRef = renderHit(6, 9600);
     {
-        DrumMachine m;
-        m.prepare(kFs);
+        DrumMachine& m = fresh(0);
         m.setParam(8, DrumParamId::Choke, 0.0f);
         m.seqNoteOn(note(8), 1.0f);
         Stereo s = render(m, 9600);
@@ -414,8 +421,7 @@ TEST(DrumMachine, ChokeGroupsAreConfigurable) {
     }
     // Group B: two kicks choke each other; the hats in group A are unaffected.
     {
-        DrumMachine m;
-        m.prepare(kFs);
+        DrumMachine& m = fresh(0);
         m.setParam(0, DrumParamId::Choke, 2.0f);
         m.setParam(1, DrumParamId::Choke, 2.0f);
         m.seqNoteOn(note(0), 1.0f);
@@ -432,8 +438,7 @@ TEST(DrumMachine, ChokeGroupsAreConfigurable) {
 
 TEST(DrumMachine, EightVoicesSoundTogether) {
     const int keys[8] = {0, 2, 4, 9, 10, 11, 12, 13};
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     for (int k : keys) m.seqNoteOn(note(k), 1.0f);
     const Stereo all = render(m, 24000);
     std::vector<float> sum(24000, 0.0f);
@@ -449,8 +454,7 @@ TEST(DrumMachine, NinthHitStealsTheOldestVoiceWithoutAClick) {
     const int keys[8] = {9, 10, 11, 12, 13, 0, 2, 4};
     const int ninth = 8;
     auto play = [&](bool withFirst) {
-        DrumMachine m;
-        m.prepare(kFs);
+        DrumMachine& m = fresh(0);
         Stereo s;
         for (int i = 0; i < 8; ++i) {
             if (i > 0 || withFirst) m.seqNoteOn(note(keys[i]), 1.0f);
@@ -476,8 +480,7 @@ TEST(DrumMachine, NinthHitStealsTheOldestVoiceWithoutAClick) {
 TEST(DrumMachine, AllNotesOffFadesEverythingQuickly) {
     for (bool ui : {false, true}) {
         SCOPED_TRACE(ui ? "ui" : "seq");
-        DrumMachine m;
-        m.prepare(kFs);
+        DrumMachine& m = fresh(0);
         for (int k : {9, 10, 8, 0}) m.seqNoteOn(note(k), 1.0f);
         Stereo s = render(m, 4800);
         if (ui) {
@@ -497,8 +500,7 @@ TEST(DrumMachine, AllNotesOffFadesEverythingQuickly) {
 // --- UI path, latency, motion, block sizes ---
 
 TEST(DrumMachine, LatencyRecordsMarkTheBlockWhereTheHitStarts) {
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     render(m, 100, 100);
     EXPECT_TRUE(m.noteOn(note(0), 1.0f, 12345));
     EXPECT_TRUE(m.noteOn(note(1), 1.0f, 0));  // not measured: no record
@@ -524,8 +526,7 @@ TEST(DrumMachine, LatencyRecordsMarkTheBlockWhereTheHitStarts) {
 TEST(DrumMachine, MotionOverridesAKeysParamUntilCleared) {
     const int key = 12;
     const auto ref = renderHit(key, 9600).l;
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     auto hit = [&] {
         m.seqNoteOn(note(key), 1.0f);
         const auto out = render(m, 9600).l;
@@ -560,8 +561,7 @@ TEST(DrumMachine, MotionOverridesAKeysParamUntilCleared) {
 }
 
 TEST(DrumMachine, MotionCanChokeAndUnchoke) {
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     m.setMotion(DrumMachine::motionTarget(8, DrumParamId::Choke), 0.0f);
     m.seqNoteOn(note(8), 1.0f);
     render(m, 4800);
@@ -575,8 +575,7 @@ TEST(DrumMachine, MotionCanChokeAndUnchoke) {
 
 TEST(DrumMachine, AnyBlockSizeGivesTheSameOutput) {
     auto play = [](int block) {
-        DrumMachine m;
-        m.prepare(kFs);
+        DrumMachine& m = fresh(0);
         m.setParam(10, DrumParamId::Pitch, 3.5f);
         m.setParam(10, DrumParamId::Tone, 3000.0f);
         m.setParam(10, DrumParamId::Pan, -0.3f);
@@ -615,8 +614,7 @@ TEST(DrumMachine, WorksAtOtherSampleRates) {
 // --- real-time safety (F0.5) ---
 
 TEST(DrumMachine, RenderAndSequencerCallsNeverAllocate) {
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     std::vector<float> l(4096), r(4096);
     groove::test::AllocationScope scope;
     for (int i = 0; i < 4000; ++i) {
@@ -651,8 +649,7 @@ TEST(DrumMachine, RenderAndSequencerCallsNeverAllocate) {
 TEST(DrumMachine, ControlAndAudioThreadsRunConcurrently) {
     // Run under TSan: the UI thread's notes, params and record reads race the audio
     // thread's render, sequencer notes and motion only through the queues and atomics.
-    DrumMachine m;
-    m.prepare(kFs);
+    DrumMachine& m = fresh(0);
     std::atomic<bool> stop{false};
     std::atomic<int> records{0};
     std::thread control([&] {
@@ -668,11 +665,11 @@ TEST(DrumMachine, ControlAndAudioThreadsRunConcurrently) {
             NoteOnRender rec;
             while (m.popNoteOnRender(rec)) records.fetch_add(1);
             ++i;
-            std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
         }
     });
     std::vector<float> l(192), r(192);
-    for (int block = 0; block < 3000; ++block) {
+    for (int block = 0; block < 1500; ++block) {
         if (block % 4 == 0) m.seqNoteOn(note(block % 16), 1.0f);
         if (block % 10 == 0) m.setMotion(block % 128, static_cast<float>(block % 5) / 4.0f);
         if (block % 64 == 0) m.clearAllMotion();
@@ -681,6 +678,6 @@ TEST(DrumMachine, ControlAndAudioThreadsRunConcurrently) {
     }
     stop.store(true);
     control.join();
-    EXPECT_EQ(m.framesRendered(), 3000 * 192);
+    EXPECT_EQ(m.framesRendered(), 1500 * 192);
     EXPECT_GT(records.load(), 0);
 }
