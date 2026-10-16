@@ -22,6 +22,9 @@ file(GLOB GROOVE_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cor
 add_library(groovecore STATIC ${GROOVE_CORE_SOURCES})
 target_include_directories(groovecore PUBLIC core/include)
 target_compile_options(groovecore PRIVATE ${GROOVE_WARNINGS})
+# The tape's writer, loader and exporter threads and the drum kit's render thread (M4).
+find_package(Threads REQUIRED)
+target_link_libraries(groovecore PUBLIC Threads::Threads)
 
 if(ANDROID)
     find_package(oboe REQUIRED CONFIG)

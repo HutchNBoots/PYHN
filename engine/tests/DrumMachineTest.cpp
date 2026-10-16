@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <memory>
 #include <limits>
 #include <thread>
 #include <vector>
@@ -46,6 +47,7 @@ DrumMachine& fresh(int slot) {
     }
     m.clearAllMotion();
     m.prepare(kFs);
+    EXPECT_TRUE(m.waitForKit(60000));  // the kit renders in the background (F2 decision)
     NoteOnRender rec;
     while (m.popNoteOnRender(rec)) {
     }
@@ -596,6 +598,7 @@ TEST(DrumMachine, WorksAtOtherSampleRates) {
     for (float rate : {44100.0f, 96000.0f}) {
         DrumMachine m;
         m.prepare(rate);
+        ASSERT_TRUE(m.waitForKit(60000));
         m.seqNoteOn(note(12), 1.0f);
         const int frames = static_cast<int>(rate * 0.5f);
         const auto s = render(m, frames).l;
@@ -607,6 +610,7 @@ TEST(DrumMachine, WorksAtOtherSampleRates) {
     }
     DrumMachine bad;
     bad.prepare(kNaN);  // falls back to 48 kHz rather than synthesising nonsense
+    ASSERT_TRUE(bad.waitForKit(60000));
     bad.seqNoteOn(note(0), 1.0f);
     EXPECT_GT(peakAbs(render(bad, 4800).l), 0.1f);
 }
@@ -680,4 +684,66 @@ TEST(DrumMachine, ControlAndAudioThreadsRunConcurrently) {
     control.join();
     EXPECT_EQ(m.framesRendered(), 1500 * 192);
     EXPECT_GT(records.load(), 0);
+}
+
+// --- kit off the startup path (F2 decision, F0.1) ---
+
+// prepare() returns at once; the slot is silent and ignores hits until the kit has rendered
+// on the background thread, then plays exactly as a machine whose kit was ready.
+TEST(DrumMachine, KitRendersInTheBackgroundAndHitsWaitForIt) {
+    const auto t0 = std::chrono::steady_clock::now();
+    auto m = std::make_unique<DrumMachine>();
+    m->prepare(44100.0f);  // another rate: a second render is requested, nothing waits for it
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    EXPECT_LT(ms, 50.0) << "construction and prepare() must not render the kit";
+    if (!m->kitReady()) {
+        m->seqNoteOn(note(0), 1.0f);
+        m->noteOn(note(1), 1.0f, 123);
+        std::vector<float> l(4800, 1.0f), r(4800, 1.0f);
+        m->renderStereo(l.data(), r.data(), 4800);
+        EXPECT_EQ(peakAbs(l), 0.0f);
+        EXPECT_EQ(peakAbs(r), 0.0f);
+        NoteOnRender rec;
+        EXPECT_FALSE(m->popNoteOnRender(rec)) << "an ignored hit has no latency record";
+    }
+    ASSERT_TRUE(m->waitForKit(60000));
+    EXPECT_TRUE(m->kitReady());
+    m->prepare(44100.0f);  // same rate: keeps the kit
+    EXPECT_TRUE(m->kitReady());
+    m->seqNoteOn(note(12), 1.0f);
+    const auto s = render(*m, 22050).l;
+    EXPECT_GT(peakAbs(s), 0.1f);
+    // A hit at 44.1 kHz has the 48 kHz hit's pitch: the kit really is the 44.1 kHz one.
+    const auto ref = renderHit(12, 24000).l;
+    const double hz = groove::test::zeroCrossingHz(s, 44100.0f, 4410, 17640);
+    const double hz48 = groove::test::zeroCrossingHz(ref, kFs, 4800, 19200);
+    EXPECT_NEAR(hz / hz48, 1.0, 0.01);
+}
+
+// Under TSan: the audio thread renders and hits while the kit is published from the
+// background thread (acquire/release on the kit pointer; the kit is never touched again).
+TEST(DrumMachine, KitArrivesWhileTheAudioThreadRuns) {
+    for (int round = 0; round < 2; ++round) {
+        auto m = std::make_unique<DrumMachine>();
+        m->prepare(round == 0 ? 48000.0f : 32000.0f);
+        std::atomic<bool> sounded{false};
+        std::thread audio([&] {
+            std::vector<float> l(256), r(256);
+            for (int block = 0; block < 200000 && !sounded.load(); ++block) {
+                m->seqNoteOn(note(block % 16), 1.0f);
+                m->renderStereo(l.data(), r.data(), 256);
+                if (peakAbs(l) > 0.0f) sounded.store(true);
+            }
+        });
+        std::thread control([&] {
+            for (int i = 0; i < 200 && !sounded.load(); ++i) {
+                (void)m->kitReady();
+                m->noteOn(note(i % 16), 0.5f, 0);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+        audio.join();
+        control.join();
+        EXPECT_TRUE(sounded.load());
+    }
 }

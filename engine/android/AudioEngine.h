@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 
 #include "groove/AudioGraph.h"
@@ -55,11 +56,28 @@ struct EngineStats {
 // once), and when the stream runs a full queue waits for the audio thread (it drains up to
 // 512 sequencer commands per 256-frame chunk; tape commands wait at most ~100 ms behind a
 // running undo, redo or clear) for up to ~250 ms before the command is logged and dropped.
+//
+// Tape persistence and export (M4): the graph's TapeStore runs its own writer, loader and
+// exporter threads. While no stream runs, the tape's audio-side hand-over (pending changes to
+// the persistence ring, a load landing, an export snapshot) is done under mutex_ by whoever
+// needs it: the main thread (applyCommandsIfStopped) or the writer thread (its offline pump,
+// so work left at stop() still reaches the disk). mutex_ serialises them, and a stream is only
+// opened under mutex_, so the audio thread never overlaps either.
 class AudioEngine : public oboe::AudioStreamDataCallback,
                     public oboe::AudioStreamErrorCallback {
 public:
+    AudioEngine();
     bool start();
+    // Closes the stream, then hands everything the tape still holds to the writer, which
+    // finishes in the background.
     void stop();
+
+    // --- tape persistence and export (main thread; see NativeEngine.kt) ---
+    void setTapeStorageDir(const std::string& dir);
+    bool loadSavedTape();
+    bool flushTape(int32_t timeoutMs);
+    bool startExport(const std::string& path, bool wholeTape);
+    float exportProgress();
 
     AudioGraph& graph() { return graph_; }
 
@@ -102,6 +120,8 @@ private:
     static constexpr int kSubmitAttempts = 250;
 
     void logDropped();
+    // Writer thread: the tape's offline hand-over while no stream runs.
+    void pumpTapeIfStopped();
     // Next pending note-on render record from any slot.
     bool popNoteOnRender(NoteOnRender& out);
     bool openAndStartLocked();

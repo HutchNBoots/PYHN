@@ -1,5 +1,7 @@
 #include "AudioEngine.h"
 
+#include "groove/TapeStore.h"
+
 #include <android/log.h>
 #include <oboe/OboeExtensions.h>
 
@@ -14,6 +16,8 @@ namespace {
 constexpr const char* kTag = "GrooveEngine";
 constexpr int32_t kMaxBufferBursts = 8;
 
+void logTape(const char* message) { __android_log_print(ANDROID_LOG_WARN, kTag, "%s", message); }
+
 // CLOCK_MONOTONIC via the vDSO: no syscall, no lock, safe on the audio thread.
 int64_t monotonicNs() {
     timespec ts{};
@@ -21,6 +25,11 @@ int64_t monotonicNs() {
     return static_cast<int64_t>(ts.tv_sec) * 1000000000LL + static_cast<int64_t>(ts.tv_nsec);
 }
 }  // namespace
+
+AudioEngine::AudioEngine() {
+    TapeStore::setLogger(&logTape);
+    graph_.tapeStore().setOfflinePump([this] { pumpTapeIfStopped(); });
+}
 
 bool AudioEngine::start() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -33,6 +42,35 @@ void AudioEngine::stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     wantRunning_ = false;
     closeLocked();
+    // Nothing renders now: hand the tape's pending changes over at once (the writer's pump
+    // keeps going with whatever didn't fit into the ring).
+    graph_.tape().applyPendingOffline();
+}
+
+void AudioEngine::pumpTapeIfStopped() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!stream_) graph_.tape().applyPendingOffline();
+}
+
+void AudioEngine::setTapeStorageDir(const std::string& dir) { graph_.setTapeStorageDir(dir); }
+
+bool AudioEngine::loadSavedTape() {
+    const bool started = graph_.loadSavedTape();
+    if (started) applyCommandsIfStopped();  // no stream: the tape lands as soon as it is read
+    return started;
+}
+
+bool AudioEngine::flushTape(int32_t timeoutMs) {
+    return graph_.flushTape(timeoutMs, [this] { applyCommandsIfStopped(); });
+}
+
+bool AudioEngine::startExport(const std::string& path, bool wholeTape) {
+    return graph_.startExport(path, wholeTape, [this] { applyCommandsIfStopped(); });
+}
+
+float AudioEngine::exportProgress() {
+    applyCommandsIfStopped();  // no stream: the snapshot is taken here
+    return graph_.exportProgress();
 }
 
 bool AudioEngine::openAndStartLocked() {

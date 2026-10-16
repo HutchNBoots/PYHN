@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <string>
 
 #include "AudioEngine.h"
 #include "groove/DrumMachine.h"
@@ -43,8 +44,8 @@ constexpr jsize kTransportSize = 3 + 3 * groove::kSlotCount;
 constexpr jsize kRecordSize = 6;
 constexpr int kMaxRecordsPerPoll = 64;
 // TapeState.SIZE: [lengthFrames, lengthBars, barFrames, headFrame, recordingTrack, armedTrack,
-// canUndo, canRedo, hasAudio x4].
-constexpr jsize kTapeStateSize = 8 + groove::Tape::kTracks;
+// canUndo, canRedo, hasAudio x4, loading].
+constexpr jsize kTapeStateSize = 9 + groove::Tape::kTracks;
 constexpr jsize kOverviewBins = groove::Tape::kOverviewBins;
 
 bool validParam(jint id) { return id >= 0 && id < static_cast<jint>(groove::kParamCount); }
@@ -60,6 +61,16 @@ bool validMixParam(jint id) { return id >= 0 && id < static_cast<jint>(groove::k
 bool validChannelParam(jint id) { return id >= 0 && id < static_cast<jint>(groove::kChannelParamCount); }
 bool validChannel(jint channel) { return channel >= 0 && channel < groove::kMixerChannelCount; }
 bool validTrack(jint track) { return track >= 0 && track < groove::Tape::kTracks; }
+
+// A Java string as UTF-8 ("" for null or on failure).
+std::string toString(JNIEnv* env, jstring s) {
+    if (s == nullptr) return {};
+    const char* chars = env->GetStringUTFChars(s, nullptr);
+    if (chars == nullptr) return {};
+    std::string out(chars);
+    env->ReleaseStringUTFChars(s, chars);
+    return out;
+}
 
 const groove::ParamInfo* mixParamInfo(jint id) {
     return validMixParam(id) ? &groove::mixParamInfo(static_cast<groove::MixParamId>(id)) : nullptr;
@@ -477,6 +488,7 @@ JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeGetTapeState
     for (std::size_t i = 0; i < static_cast<std::size_t>(groove::Tape::kTracks); ++i) {
         values[8 + i] = t.hasAudio[i] ? 1.0 : 0.0;
     }
+    values[8 + groove::Tape::kTracks] = t.loading ? 1.0 : 0.0;
     env->SetDoubleArrayRegion(out, 0, kTapeStateSize, values.data());
 }
 
@@ -489,6 +501,32 @@ JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeTapeOverview
     for (std::size_t i = 0; i < bins.size(); ++i) bytes[i] = static_cast<jbyte>(bins[i]);  // 0..255 as unsigned bytes
     const jsize count = std::min<jsize>(env->GetArrayLength(out), kOverviewBins);
     if (count > 0) env->SetByteArrayRegion(out, 0, count, bytes.data());
+}
+
+// --- persistence and export (M4) ---
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeSetTapeStorageDir(JNIEnv* env, jobject,
+                                                                                      jstring path) {
+    engine().setTapeStorageDir(toString(env, path));
+}
+
+JNIEXPORT jboolean JNICALL Java_com_groovebox_engine_NativeEngine_nativeLoadSavedTape(JNIEnv*, jobject) {
+    return engine().loadSavedTape() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_groovebox_engine_NativeEngine_nativeFlushTape(JNIEnv*, jobject, jint timeoutMs) {
+    return engine().flushTape(std::max<jint>(0, timeoutMs)) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_groovebox_engine_NativeEngine_nativeStartExport(JNIEnv* env, jobject, jstring path,
+                                                                                    jboolean wholeTape) {
+    const std::string p = toString(env, path);
+    if (p.empty()) return JNI_FALSE;
+    return engine().startExport(p, wholeTape == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jfloat JNICALL Java_com_groovebox_engine_NativeEngine_nativeExportProgress(JNIEnv*, jobject) {
+    return engine().exportProgress();
 }
 
 // --- diagnostics ---

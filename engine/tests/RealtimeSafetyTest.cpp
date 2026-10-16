@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "AllocationCounter.h"
+#include "TapeTestUtil.h"
 #include "groove/Adsr.h"
 #include "groove/AudioGraph.h"
 #include "groove/Filters.h"
@@ -219,4 +220,82 @@ TEST(RealtimeSafety, FullM3GraphWithTapeAndMixerTrafficNeverAllocates) {
     }
     EXPECT_EQ(scope.count(), 0u);
     EXPECT_GT(tape.state().lengthFrames, 0);  // the traffic really recorded
+}
+
+// F0.5, M4: the audio path with persistence active (every take, edit and undo streams into the
+// writer's ring, which overflows into pending ranges), a saved tape landing, and export
+// snapshots copying (with copy-on-write under takes) never allocates. Only render() is counted:
+// the control calls in between (flush, load, export) run on this thread too and may allocate.
+TEST(RealtimeSafety, TapePersistenceLoadAndExportNeverAllocateOnTheAudioThread) {
+    groove::test::TempDir dir;
+    {
+        auto saver = std::make_unique<AudioGraph>();
+        ASSERT_TRUE(saver->setTapeStorageDir(dir.path()));
+        saver->sequencer().setTempo(240.0f);
+        saver->sequencer().play();
+        saver->tape().armRecord(2);
+        saver->noteOn(3, 60, 1.0f, 0);
+        std::vector<float> o(512);
+        for (int i = 0; i < 48000 * 2 / 256; ++i) saver->render(o.data(), 256, 2);
+        saver->tape().stopRecord();
+        for (int i = 0; i < 48000 / 256; ++i) saver->render(o.data(), 256, 2);
+        ASSERT_TRUE(saver->flushTape(5000, {}));
+    }
+    auto owned = std::make_unique<AudioGraph>();
+    AudioGraph& g = *owned;
+    ASSERT_TRUE(g.setTapeStorageDir(dir.path()));
+    Sequencer& seq = g.sequencer();
+    Tape& tape = g.tape();
+    seq.setTempo(240.0f);
+    for (int s = 0; s < kSlotCount; ++s) {
+        for (int i = 0; i < 16; ++i) {
+            const int note = s == 0 ? 48 + i : 48 + i + s;
+            seq.setStep(s, 0, i, true, &note, 1, 0.8f, -1.0f, 1.0f);
+        }
+    }
+    std::vector<float> out(4096 * 2);
+    g.render(out.data(), 256, 2);
+    seq.play();
+    std::size_t allocations = 0;
+    int loads = 0, exports = 0, landed = 0, snapshots = 0;
+    for (int i = 0; i < 3000; ++i) {
+        switch (i % 50) {
+            case 0: tape.armRecord((i / 50) % 4); break;
+            case 20: tape.stopRecord(); break;
+            case 30: tape.commit((i / 50) % 4, (i / 50) % 9 - 1); break;
+            case 40: if (i % 150 == 40) tape.undo(); break;
+            case 45: if (i % 300 == 45) tape.redo(); break;
+            case 47: if (i % 700 == 47) tape.clearTrack((i / 700) % 4); break;
+            default: break;
+        }
+        if (i % 400 == 100) loads += g.loadSavedTape() ? 1 : 0;
+        if (i % 250 == 10) exports += g.startExport(dir.file("x" + std::to_string(i) + ".wav"), i % 500 == 10) ? 1 : 0;
+        if (i % 97 == 0) (void)g.flushTape(0, {});
+        if (i % 90 == 0) g.mixParams().set(MixParamId::TapeLoopLength, static_cast<float>((i / 90) % 3));
+        if (i % 5 == 0) g.noteOn(i % kSlotCount, 48 + i % 16, 0.8f, 0);
+        const bool wasLoading = tape.state().loading;
+        const bool wasCopying = tape.snapshotPhase() == TapeSnapshotPhase::Copying ||
+                                tape.snapshotPhase() == TapeSnapshotPhase::Requested;
+        const int32_t frames = (i % 9 == 0) ? 4096 : 64 + i % 200;
+        {
+            groove::test::AllocationScope scope;
+            g.render(out.data(), frames, 2);
+            allocations += scope.count();
+        }
+        landed += wasLoading && tape.loadPhase() == TapeLoadPhase::Done ? 1 : 0;
+        snapshots += wasCopying ? 1 : 0;
+        NoteOnRender rec;
+        for (int s = 1; s < kSlotCount; ++s) {
+            while (g.synth(s).popNoteOnRender(rec)) {
+            }
+        }
+        while (g.drums().popNoteOnRender(rec)) {
+        }
+    }
+    EXPECT_EQ(allocations, 0u);
+    EXPECT_GT(loads, 0);
+    EXPECT_GT(landed, 0) << "a load landed during the counted renders";
+    EXPECT_GT(exports, 0);
+    EXPECT_GT(snapshots, 0) << "a snapshot was copied during the counted renders";
+    EXPECT_GT(tape.persistPendingFrames() + static_cast<int64_t>(tape.changeSequence()), 0);
 }

@@ -21,9 +21,14 @@ namespace groove {
 //  - Control thread (exactly one): noteOn/noteOff/allNotesOff, popNoteOnRender,
 //    setParam/param, soundName.
 //  - Audio thread: the Instrument overrides.
-//  - prepare(): only while rendering cannot happen. This is where the kit is synthesised
-//    into preallocated buffers at the stream's sample rate (F2.4: no decoding or disk I/O
-//    ever happens on the audio thread).
+//  - prepare(): only while rendering cannot happen. It never waits for the kit.
+//
+// The kit (F2 decision, F0.1) is synthesised on the machine's own background thread, at
+// construction (48 kHz) and again whenever prepare() asks for another rate, into a new
+// DrumKit that is published to the audio thread with a release store of an atomic pointer.
+// Until it is there the slot renders silence and ignores hits; afterwards it is read-only.
+// A published kit is only freed by prepare() or the destructor, when nothing renders. (F2.4:
+// no decoding or disk I/O ever happens on the audio thread.)
 class DrumMachine final : public Instrument {
 public:
     static constexpr int kSoundCount = 16;
@@ -61,6 +66,11 @@ public:
 
     // Frames rendered since prepare(). Readable from any thread.
     int64_t framesRendered() const;
+
+    // Any thread: the kit for the prepared rate is ready (hits play).
+    bool kitReady() const;
+    // Control thread / tests: waits until kitReady(), at most timeoutMs.
+    bool waitForKit(int timeoutMs) const;
 
 private:
     struct Impl;

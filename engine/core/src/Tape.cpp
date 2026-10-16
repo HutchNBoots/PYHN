@@ -459,6 +459,14 @@ void Tape::startTail(int track, int64_t pos) {
         tailCount_ = 1;
     }
     tails_[static_cast<std::size_t>(tailCount_++)] = Tail{track, pos, 0};
+    // Keep the whole tail's old audio in the undo entry now: its writes alternate with the
+    // next pass's (a loop wrap), and saving them piece by piece would open a new segment
+    // each time and overflow the entry, which used to drop the whole undo history.
+    if (entryOpen_ && entryCount_ > 0 && entryAt(entryCount_ - 1).track == track) {
+        const int64_t lo = std::max(pos, -offset_);
+        const int64_t hi = std::min(pos + xfade_, trackFrames_ - offset_);
+        if (hi > lo) saveRange(lo, hi);
+    }
 }
 
 void Tape::runTails(int32_t pos, int32_t run) {
@@ -1509,6 +1517,14 @@ void Tape::releaseSnapshot() {
     const auto p = snapshotPhase();
     if (p == TapeSnapshotPhase::Ready || p == TapeSnapshotPhase::Failed) {
         snapPhase_.store(static_cast<int32_t>(TapeSnapshotPhase::Idle), std::memory_order_release);
+    }
+}
+
+void Tape::cancelSnapshot() {
+    const auto p = snapshotPhase();
+    if (p == TapeSnapshotPhase::Requested || p == TapeSnapshotPhase::Copying) {
+        snapActive_ = false;
+        snapPhase_.store(static_cast<int32_t>(TapeSnapshotPhase::Failed), std::memory_order_release);
     }
 }
 

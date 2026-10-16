@@ -3,7 +3,9 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <string>
 
 #include "groove/DrumMachine.h"
 #include "groove/FxBlocks.h"
@@ -16,6 +18,8 @@
 #include "groove/Tape.h"
 
 namespace groove {
+
+class TapeStore;
 
 // Everything the audio callback renders (docs/plans/2026-10-16-m3-tape-mixer-fx.md): the
 // sequencer clock, 8 instrument slots (slot 0 the DrumMachine, slots 1..7 SynthEngines), the
@@ -92,6 +96,18 @@ public:
     // of edits can't overflow the queues.
     void applyPendingCommands();
 
+    // --- control thread: tape persistence and export (M4, docs/feature-spec.md F7) ---
+    // See TapeStore. pumpIfStopped, when given, is called on the calling thread to apply the
+    // tape's pending audio-side work while nothing renders (applyPendingCommands() or the
+    // engine's equivalent); a stream that runs does that work itself.
+    bool setTapeStorageDir(const std::string& dir);
+    bool loadSavedTape();
+    bool flushTape(int timeoutMs, const std::function<void()>& pumpIfStopped = {});
+    // Captures the tape channel strips' settings and the master volume now.
+    bool startExport(const std::string& path, bool wholeTape, const std::function<void()>& pumpIfStopped = {});
+    float exportProgress() const;
+    TapeStore& tapeStore() { return *store_; }
+
     // Writes numFrames interleaved frames: channel 0 = left, 1 = right, any further
     // channels silent; a mono stream gets the average of left and right.
     void render(float* out, int32_t numFrames, int32_t channelCount);
@@ -129,6 +145,7 @@ private:
     SpscQueue<KeyNote, kNoteCapacity> notes_;
     MasterBus master_;
     std::unique_ptr<Tape> tape_;
+    std::unique_ptr<TapeStore> store_;  // after tape_: its threads stop before the tape goes
     std::array<std::unique_ptr<ChannelStrip>, kMixerChannelCount> strips_;
     std::unique_ptr<StereoDelay> delay_;
     std::unique_ptr<Reverb> reverb_;

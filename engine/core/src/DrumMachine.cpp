@@ -30,8 +30,13 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <limits>
+#include <memory>
+#include <mutex>
+#include <thread>
 
 #include "groove/DrumKit.h"
 #include "groove/DspMath.h"
@@ -131,8 +136,18 @@ struct DrumMachine::Impl {
     SpscQueue<NoteOnRender, kRecordCapacity> records;
     std::atomic<int64_t> frames{0};
 
+    // --- the kit: rendered by `worker`, published through `kit` (acquire on the audio thread) ---
+    std::atomic<const DrumKit*> kit{nullptr};
+    mutable std::mutex kitMutex;
+    mutable std::condition_variable kitCv;
+    std::unique_ptr<DrumKit> ownedKit;  // the published kit (kitMutex)
+    float wantRate = 48000.0f;          // kitMutex
+    uint64_t wantGen = 1;               // kitMutex: job number
+    uint64_t doneGen = 0;               // kitMutex
+    bool stopWorker = false;            // kitMutex
+    std::thread worker;
+
     // --- audio thread (and prepare) ---
-    DrumKit kit;
     float sampleRate = 48000.0f;
     float smoothingCoef = 1.0f;
     float cutStep = 1.0f;
@@ -148,6 +163,57 @@ struct DrumMachine::Impl {
             }
         }
         clearMotion();
+        worker = std::thread([this] { kitLoop(); });  // renders the 48 kHz kit at once
+    }
+
+    ~Impl() {
+        {
+            std::lock_guard<std::mutex> lock(kitMutex);
+            stopWorker = true;
+        }
+        kitCv.notify_all();
+        worker.join();
+    }
+
+    void kitLoop() {
+        std::unique_lock<std::mutex> lock(kitMutex);
+        for (;;) {
+            kitCv.wait(lock, [this] { return stopWorker || doneGen != wantGen; });
+            if (stopWorker) return;
+            const float rate = wantRate;
+            const uint64_t gen = wantGen;
+            lock.unlock();
+            auto rendered = std::make_unique<DrumKit>();
+            rendered->render(rate);  // slow: outside the lock, so prepare() never waits on it
+            lock.lock();
+            if (gen == wantGen && !stopWorker) {
+                ownedKit = std::move(rendered);
+                kit.store(ownedKit.get(), std::memory_order_release);
+            }
+            doneGen = gen;  // a newer request (wantGen moved on) runs on the next turn
+            kitCv.notify_all();
+        }
+    }
+
+    // Only while nothing renders.
+    void requestKit(float rate) {
+        {
+            std::lock_guard<std::mutex> lock(kitMutex);
+            const DrumKit* current = ownedKit.get();
+            if (current && current->sampleRate() == rate) return;  // ready at this rate
+            if (!current && wantRate == rate) return;              // already being rendered
+            kit.store(nullptr, std::memory_order_release);
+            ownedKit.reset();  // safe: the audio thread can't be reading it now
+            wantRate = rate;
+            ++wantGen;
+        }
+        kitCv.notify_all();
+    }
+
+    bool waitForKit(int timeoutMs) const {
+        std::unique_lock<std::mutex> lock(kitMutex);
+        return kitCv.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                              [this] { return kit.load(std::memory_order_acquire) != nullptr; });
     }
 
     void clearMotion() {
@@ -163,8 +229,8 @@ struct DrumMachine::Impl {
 
     void prepare(float rate) {
         if (!(rate >= 8000.0f && rate <= 384000.0f)) rate = 48000.0f;
-        // The kit takes a few ms to synthesise; skip it when the rate is unchanged.
-        if (!kit.ready() || kit.sampleRate() != rate) kit.render(rate);
+        // The kit renders in the background (and not at all when the rate is unchanged).
+        requestKit(rate);
         sampleRate = rate;
         smoothingCoef = 1.0f - std::exp(-static_cast<float>(kSubBlock) / (kSmoothingSeconds * rate));
         cutStep = 1.0f / (kCutSeconds * rate);
@@ -193,7 +259,9 @@ struct DrumMachine::Impl {
     }
 
     void trigger(int key, float velocity) {
-        if (!kit.ready() || velocity <= 0.0f) return;
+        const DrumKit* k = kit.load(std::memory_order_acquire);
+        if (!k || velocity <= 0.0f) return;  // no kit yet: hits are ignored (F2 decision)
+        const DrumKit& kitRef = *k;
         const int group = static_cast<int>(effective(key, DrumParamId::Choke));
         bool keySounding = false;
         int playing = 0;
@@ -226,7 +294,7 @@ struct DrumMachine::Impl {
         }
         if (!keySounding) keys[static_cast<std::size_t>(key)].snap = true;
 
-        const double length = static_cast<double>(kit.length(key));
+        const double length = static_cast<double>(kitRef.length(key));
         const double start = static_cast<double>(effective(key, DrumParamId::Start)) * length;
         const double available = length - start;
         const double decay = static_cast<double>(effective(key, DrumParamId::Decay));
@@ -243,7 +311,7 @@ struct DrumMachine::Impl {
         v.state = State::Playing;
         v.key = key;
         v.group = group;
-        v.data = kit.data(key);
+        v.data = kitRef.data(key);
         v.regionStart = start;
         v.regionEnd = start + region;
         v.invRegionLen = 1.0 / region;
@@ -260,7 +328,8 @@ struct DrumMachine::Impl {
         switch (e.type) {
             case NoteEvent::Type::NoteOn:
                 trigger(e.note - DrumMachine::kLowestNote, e.velocity);
-                if (e.tapTimeNs != 0) records.push({e.tapTimeNs, blockStart});  // dropped if full
+                // dropped if full; no record for a hit ignored before the kit is ready
+                if (e.tapTimeNs != 0 && kit.load(std::memory_order_relaxed)) records.push({e.tapTimeNs, blockStart});
                 break;
             case NoteEvent::Type::AllNotesOff:
                 cutAll();
@@ -459,5 +528,9 @@ void DrumMachine::renderStereo(float* left, float* right, int32_t numFrames) {
 }
 
 int64_t DrumMachine::framesRendered() const { return impl_->frames.load(std::memory_order_relaxed); }
+
+bool DrumMachine::kitReady() const { return impl_->kit.load(std::memory_order_acquire) != nullptr; }
+
+bool DrumMachine::waitForKit(int timeoutMs) const { return impl_->waitForKit(timeoutMs); }
 
 }  // namespace groove

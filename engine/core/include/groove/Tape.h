@@ -279,6 +279,8 @@ public:
     }
     // Exporter thread, once the snapshot is Ready or Failed: back to Idle (the buffers are free).
     void releaseSnapshot();
+    // Only while the audio thread can't run: an active snapshot fails (its buffers may go).
+    void cancelSnapshot();
 
     // The tape's 1x read path, shared with the offline export so both are bit-identical.
     static float tapeToFloat(int16_t s);

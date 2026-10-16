@@ -4,6 +4,8 @@
 #include <climits>
 #include <cmath>
 
+#include "groove/TapeStore.h"
+
 namespace groove {
 
 AudioGraph::AudioGraph()
@@ -12,6 +14,9 @@ AudioGraph::AudioGraph()
       tape_(std::make_unique<Tape>()),
       delay_(std::make_unique<StereoDelay>()),
       reverb_(std::make_unique<Reverb>()) {
+    TapeStore::Options storeOptions;
+    storeOptions.panMakeup = kPanMakeup;
+    store_ = std::make_unique<TapeStore>(*tape_, storeOptions);
     for (auto& s : strips_) s = std::make_unique<ChannelStrip>();
     for (std::size_t i = 0; i < kSlotCount; ++i) {
         srcL_[i + 1] = postL_[i].data();
@@ -32,7 +37,32 @@ AudioGraph::AudioGraph()
     prepare(48000.0f);
 }
 
-AudioGraph::~AudioGraph() = default;
+AudioGraph::~AudioGraph() {
+    // Writer, loader and exporter threads first: they use the tape.
+    store_->shutdown();
+}
+
+bool AudioGraph::setTapeStorageDir(const std::string& dir) { return store_->setStorageDir(dir); }
+
+bool AudioGraph::loadSavedTape() { return store_->loadSaved(); }
+
+bool AudioGraph::flushTape(int timeoutMs, const std::function<void()>& pumpIfStopped) {
+    return store_->flush(timeoutMs, pumpIfStopped);
+}
+
+bool AudioGraph::startExport(const std::string& path, bool wholeTape, const std::function<void()>& pumpIfStopped) {
+    TapeExportSettings s;
+    for (int t = 0; t < Tape::kTracks; ++t) {
+        const int ch = kFirstTapeChannel + t;
+        s.volumeDb[static_cast<std::size_t>(t)] = channelParams_.get(ch, ChannelParamId::Volume);
+        s.pan[static_cast<std::size_t>(t)] = channelParams_.get(ch, ChannelParamId::Pan);
+        s.mute[static_cast<std::size_t>(t)] = channelParams_.get(ch, ChannelParamId::Mute) >= 0.5f;
+    }
+    s.masterDb = mixParams_.get(MixParamId::MasterVolume);
+    return store_->startExport(path, wholeTape, s, pumpIfStopped);
+}
+
+float AudioGraph::exportProgress() const { return store_->exportProgress(); }
 
 void AudioGraph::prepare(float sampleRate) {
     for (Instrument* inst : instruments_) inst->prepare(sampleRate);
