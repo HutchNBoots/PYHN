@@ -13,6 +13,7 @@
 
 #include "Analysis.h"
 #include "EngineTestUtil.h"
+#include "groove/Presets.h"
 
 using namespace groove;
 using namespace groove::test;
@@ -221,4 +222,27 @@ TEST(AudioGraph, ControlAndAudioThreadsRunConcurrently) {
     done.store(true);
     audio.join();
     EXPECT_GT(recorded, 0);
+}
+
+// NativeEngine.stop()/start() closes and reopens the stream (prepare); the UI doesn't resend
+// anything, so every slot's parameters, the drum params, tempo and patterns must survive.
+TEST(AudioGraph, PrepareKeepsEverythingTheUiSet) {
+    auto g = std::make_unique<AudioGraph>();
+    g->synth(5).loadPreset(3);
+    g->synth(2).setParam(ParamId::FltCutoff, 777.0f);
+    g->drums().setParam(4, DrumParamId::Pitch, 5.0f);
+    g->sequencer().setTempo(150.5f);
+    const int note = 50;
+    g->sequencer().setStep(6, 9, 10, true, &note, 1, 0.3f, 0.7f, 0.4f);
+    g->applyPendingCommands();  // no stream yet: applied from the control thread
+    g->prepare(48000.0f);
+    g->prepare(44100.0f);
+    EXPECT_EQ(g->synth(5).param(ParamId::FltCutoff), preset(3).values[index(ParamId::FltCutoff)]);
+    EXPECT_FLOAT_EQ(g->synth(2).param(ParamId::FltCutoff), 777.0f);
+    EXPECT_FLOAT_EQ(g->drums().param(4, DrumParamId::Pitch), 5.0f);
+    EXPECT_NEAR(g->sequencer().transport().tempoBpm, 150.5f, 1e-4f);
+    EXPECT_FLOAT_EQ(g->synth(2).tempo(), 150.5f);
+    const Step& s = g->sequencer().pattern(6, 9).steps[10];
+    EXPECT_TRUE(s.on);
+    EXPECT_FLOAT_EQ(s.probability, 0.4f);
 }

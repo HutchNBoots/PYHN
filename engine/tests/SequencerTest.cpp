@@ -751,3 +751,64 @@ TEST(SequencerThreading, ControlAndAudioThreadsRunConcurrently) {
     EXPECT_GT(recorded, 0);
     EXPECT_TRUE(h.seq->transport().playing);
 }
+
+TEST(SequencerLoop, StopAndPatternSwitchClearTheLoop) {
+    SeqHarness h;
+    simplePattern(h);
+    h.fillSteps(1, 1, 80);
+    h.seq->play();
+    h.run(100);
+    h.seq->setStepLoop(1, 2, 3);
+    h.seq->selectPattern(1, 1);
+    h.run(6000 * 16);  // looping 2,3,... until the virtual boundary, then pattern 1 from step 0
+    h.slot(1).clear();
+    h.run(6000 * 3);
+    auto ons = h.slot(1).noteOns();
+    ASSERT_EQ(ons.size(), 3u);
+    EXPECT_EQ(ons[0].note, 81);  // 80 fired at the boundary; no loop now
+    EXPECT_EQ(ons[1].note, 82);
+    EXPECT_EQ(ons[2].note, 83);
+
+    h.seq->setStepLoop(1, 5, 5);
+    h.seq->stop();
+    h.seq->play();
+    h.slot(1).clear();
+    h.run(6000 * 3 - 1);
+    ons = h.slot(1).noteOns();
+    ASSERT_EQ(ons.size(), 3u);
+    EXPECT_EQ(ons[1].note, 81) << "Stop cleared the loop";
+}
+
+// The UI never resends its mirror: tempo and patterns live as long as the process, across
+// stream restarts (prepare).
+TEST(SequencerTransport, TempoAndPatternsSurviveAStreamRestart) {
+    SeqHarness h;
+    h.seq->setTempo(87.4f);
+    simplePattern(h, 4, 3, 0.2f, 7);
+    h.apply();
+    EXPECT_NEAR(h.seq->transport().tempoBpm, 87.4f, 1e-4f);  // stopped: still the real tempo
+    h.seq->prepare(48000.0f);
+    h.seq->prepare(44100.0f);
+    EXPECT_NEAR(h.seq->transport().tempoBpm, 87.4f, 1e-4f);
+    EXPECT_EQ(h.seq->pattern(4, 0).length, 7);
+    EXPECT_EQ(h.seq->pattern(4, 0).rate, StepRate::SixteenthTriplet);
+    EXPECT_EQ(h.seq->pattern(4, 0).shuffleMilli, 200);
+    EXPECT_TRUE(h.seq->pattern(4, 0).steps[6].on);
+}
+
+// The first-launch burst (and much more) fits the queue before any audio runs.
+TEST(SequencerCommands, QueueHoldsAFullSessionBurstBeforeTheStreamStarts) {
+    SeqHarness h;
+    int pushed = 0;
+    while (pushed < static_cast<int>(Sequencer::kCommandCapacity) &&
+           h.seq->setStep(1 + pushed % 7, pushed % 16, pushed % 64, true, &pushed, 0, 0.8f, -1.0f, 1.0f)) {
+        ++pushed;
+    }
+    EXPECT_EQ(pushed, static_cast<int>(Sequencer::kCommandCapacity));
+    EXPECT_FALSE(h.seq->setTempo(100.0f)) << "full: the caller is told, nothing is silently lost";
+    // Chunks drain at most kMaxCommandsPerChunk each, in order.
+    h.apply();
+    EXPECT_TRUE(h.seq->setTempo(100.0f));
+    h.seq->applyCommands(h.frame, 1 << 30);
+    EXPECT_NEAR(h.seq->transport().tempoBpm, 100.0f, 1e-4f);
+}

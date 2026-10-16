@@ -446,6 +446,7 @@ void Sequencer::doStop() {
         }
         if (s.queued >= 0) s.current = s.queued;
         s.queued = -1;
+        s.loopActive = false;  // the UI ends its step loops itself too; never leave one behind
         s.resetRuntime();
     }
     playing_ = false;
@@ -661,6 +662,7 @@ int Sequencer::nextPlayedStep(int slot) const {
 void Sequencer::switchPattern(int slot, int pattern) {
     SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
     s.current = pattern;
+    s.loopActive = false;  // a step loop belongs to the pattern it was set on
     // A pattern with no lane for a target clears that override.
     const Pattern& p = pat(slot, pattern);
     for (int i = s.overrideCount - 1; i >= 0; --i) {

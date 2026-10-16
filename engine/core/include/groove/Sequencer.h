@@ -103,7 +103,8 @@ public:
     bool setMotionValue(int slot, int pattern, int target, int step, float value);
     bool clearMotionLane(int slot, int pattern, int target);
     bool clearPattern(int slot, int pattern);
-    // start..end inclusive; start < 0 or end < 0 clears the loop.
+    // start..end inclusive; start < 0 or end < 0 clears the loop. Stop and a pattern
+    // switch also clear it.
     bool setStepLoop(int slot, int start, int end);
     // A parameter moved while motion recording (F3.7): written at the slot's current step
     // when recording is active and the transport is playing, ignored otherwise.
