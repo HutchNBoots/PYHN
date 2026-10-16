@@ -12,12 +12,12 @@ android {
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
-        applicationId = "com.groovebox.spike"
+        applicationId = "com.groovebox"
         minSdk = 31
         targetSdk = 36
         // CI run number, so every installed build upgrades the previous one.
         versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
-        versionName = "0.1.0-spike"
+        versionName = "0.4.0"
 
         ndk {
             // The Galaxy S25+ is the only v1 target.

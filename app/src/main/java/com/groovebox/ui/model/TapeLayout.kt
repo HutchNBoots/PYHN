@@ -107,6 +107,21 @@ object TapeView {
         return parts.joinToString(" · ")
     }
 
+    /** The subtitle while a saved tape loads (F7.6). */
+    const val LOADING = "loading tape…"
+
+    /** The footer line for Export WAV (F7.1), or null when idle. */
+    fun exportLine(status: ExportStatus, tapeBars: Int, loopStart: Int, loopLen: Int): String? = when (status) {
+        ExportStatus.Idle -> null
+        is ExportStatus.Rendering -> {
+            val region = loopRegion(loopStart, loopLen, tapeBars)
+            val what = if (status.wholeTape || region == null) "the whole tape" else "bars ${region.startBar + 1}–${region.endBar}"
+            "exporting $what · ${(status.progress.coerceIn(0f, 1f) * 100).toInt()}%"
+        }
+        ExportStatus.Shared -> "export ready · pick an app to send it to"
+        is ExportStatus.Failed -> status.message
+    }
+
     /** "T1".."T4". */
     fun trackName(track: Int): String = "T${track + 1}"
 }

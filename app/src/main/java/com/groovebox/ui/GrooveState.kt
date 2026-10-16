@@ -12,10 +12,18 @@ import com.groovebox.engine.ParamSpec
 import com.groovebox.engine.RecordedEvent
 import com.groovebox.engine.TapeState
 import com.groovebox.engine.TransportState
+import com.groovebox.storage.Session
+import com.groovebox.storage.UiSnapshot
+import com.groovebox.ui.model.ClearConfirm
 import com.groovebox.ui.model.DemoContent
+import com.groovebox.ui.model.ExportFiles
+import com.groovebox.ui.model.ExportHost
+import com.groovebox.ui.model.ExportStatus
+import com.groovebox.ui.model.ExportTracker
 import com.groovebox.ui.model.DrumLayout
 import com.groovebox.ui.model.MixKeys
 import com.groovebox.ui.model.MixLimits
+import com.groovebox.ui.model.MixerLayout
 import com.groovebox.ui.model.MixerPad
 import com.groovebox.ui.model.MotionLane
 import com.groovebox.ui.model.NoteMemory
@@ -58,6 +66,10 @@ private object NativePatternSink : PatternSink {
  * transport, the Record and Shift buttons, the tape and mixer, and where key and pad touches
  * go. The engine's transport and tape are polled once per display frame ([frame],
  * [tapeFrame]); the UI never drives timing (F3.10).
+ *
+ * Persistence (M4): [launch] puts a saved session (or the demo) into the engine before the
+ * stream starts; [snapshotSession] copies what is saved; [onSessionChange] is called after
+ * every change worth saving (the autosave hook).
  * Main thread only (NativeEngine's rule).
  */
 @Stable
@@ -65,15 +77,20 @@ class GrooveState : KeyListener {
     val shift = ShiftController()
     private val recordButton = RecordButton()
     private val stripEdited: () -> Unit = { stripMoved() }
+    private val edited: () -> Unit = { sessionChanged() }
+
+    /** Called after every change worth saving (F7.4); set by the app's autosave. */
+    var onSessionChange: (() -> Unit)? = null
 
     /** Engine slots 1..7. */
-    val synths: List<SynthController> = List(SeqLimits.SLOTS - 1) { SynthController(it + 1, shift, stripEdited) }
-    val drum = DrumController(shift, stripEdited)
+    val synths: List<SynthController> =
+        List(SeqLimits.SLOTS - 1) { SynthController(it + 1, shift, stripEdited, edited) { tempoBpm } }
+    val drum = DrumController(shift, stripEdited, edited)
     val store = PatternStore(NativePatternSink)
     private val noteMemory = NoteMemory { slot -> if (slot == NativeEngine.DRUM_SLOT) DrumLayout.LOWEST_NOTE else DEFAULT_SYNTH_NOTE }
     private val pads = StepPads()
     val seq = SeqController(this)
-    val mix = MixValues()
+    val mix = MixValues(edited)
     val tape = TapeController(this, mix)
     val mixer = MixerController(this, mix)
 
@@ -88,8 +105,17 @@ class GrooveState : KeyListener {
     var lastSynthSlot by mutableIntStateOf(1)
         private set
 
+    private var pageState by mutableIntStateOf(0)
+
     /** The step page (0..3) the pads show. */
-    var page by mutableIntStateOf(0)
+    var page: Int
+        get() = pageState
+        set(value) {
+            val p = value.coerceIn(0, PAGES - 1)
+            if (p == pageState) return
+            pageState = p
+            sessionChanged()
+        }
 
     /** The step selected with Shift + pad, or null. */
     var selectedStep by mutableStateOf<Int?>(null)
@@ -145,14 +171,55 @@ class GrooveState : KeyListener {
     private val overviewBuffer = ByteArray(MixLimits.OVERVIEW_BINS)
     private var framesSinceOverview = OVERVIEW_IDLE_FRAMES
 
+    /** A saved tape is still loading in the background (F7.6). */
+    var tapeLoading by mutableStateOf(false)
+        private set
+
+    // --- export (F7.1, F7.2) ---
+
+    /** Where exports go and the share sheet; set by the activity. */
+    var exportHost: ExportHost? = null
+    private val exportTracker = ExportTracker()
+    var exportStatus by mutableStateOf<ExportStatus>(ExportStatus.Idle)
+        private set
+
+    // --- clear pattern (Seq screen) ---
+
+    private val clearConfirm = ClearConfirm()
+
+    /** The Clear button was tapped once and waits for the confirming tap. */
+    var clearArmed by mutableStateOf(false)
+        private set
+
+    /** Monotonic time of the last display frame, ms (the clock for export and Clear). */
+    private var nowMs = 0L
+
     private val heldNoteSlot = HashMap<Int, Int>()
-    private var seeded = false
+    private var launched = false
+    private var startedOnce = false
 
     init {
-        store.onChange = { revision = store.revision }
+        store.onChange = {
+            revision = store.revision
+            sessionChanged()
+        }
         // Leaving the Shift layer ends step editing.
         shift.onChange = { on -> if (!on) deselectStep() }
     }
+
+    /** Something worth saving changed (autosave, F7.4). */
+    fun sessionChanged() {
+        onSessionChange?.invoke()
+    }
+
+    /** Runs a selection change and marks the session dirty if the screen or selection moved. */
+    private inline fun uiEdit(action: () -> Unit) {
+        val before = UiKey(screen, selectedSlot, lastSynthSlot, tapeTrack)
+        action()
+        if (UiKey(screen, selectedSlot, lastSynthSlot, tapeTrack) != before) sessionChanged()
+    }
+
+    private data class UiKey(val screen: Screen, val slot: Int, val lastSynth: Int, val track: Int)
 
     fun synth(slot: Int): SynthController = synths[(slot - 1).coerceIn(0, synths.lastIndex)]
 
@@ -215,8 +282,8 @@ class GrooveState : KeyListener {
      * A slot button: selects the slot and shows its instrument (or, from Seq, its sequencer;
      * from the Mixer, its channel).
      */
-    fun selectSlot(slot: Int) {
-        if (slot !in 0 until SeqLimits.SLOTS) return
+    fun selectSlot(slot: Int) = uiEdit {
+        if (slot !in 0 until SeqLimits.SLOTS) return@uiEdit
         if (slot != selectedSlot) leaveStepEditing()
         selectedSlot = slot
         if (!isDrum(slot)) lastSynthSlot = slot
@@ -227,26 +294,26 @@ class GrooveState : KeyListener {
         }
     }
 
-    fun showSynth() {
+    fun showSynth() = uiEdit {
         selectSlot(lastSynthSlot)
         screen = Screen.Synth
     }
 
-    fun showDrum() {
+    fun showDrum() = uiEdit {
         selectSlot(NativeEngine.DRUM_SLOT)
         screen = Screen.Drum
     }
 
-    fun showSeq() {
+    fun showSeq() = uiEdit {
         screen = Screen.Seq
     }
 
-    fun showTape() {
+    fun showTape() = uiEdit {
         if (screen != Screen.Tape) framesSinceOverview = OVERVIEW_IDLE_FRAMES // fresh lanes at once
         screen = Screen.Tape
     }
 
-    fun showMixer() {
+    fun showMixer() = uiEdit {
         screen = Screen.Mixer
     }
 
@@ -371,25 +438,50 @@ class GrooveState : KeyListener {
         val slot = selectedSlot
         if (p == patternOf(slot) && queuedOf(slot) < 0) return
         clearLoop()
+        clearConfirm.reset()
+        clearArmed = false
         NativeEngine.selectPattern(slot, p)
+    }
+
+    /**
+     * The Seq screen's Clear: the first tap arms it, a second tap within 2 s clears the
+     * selected slot's current pattern (steps, motion and settings; no undo, no dialog).
+     */
+    fun clearPress() {
+        val slot = selectedSlot
+        val pattern = editPattern
+        if (!clearConfirm.tap(slot * SeqLimits.PATTERNS + pattern, nowMs)) {
+            clearArmed = true
+            return
+        }
+        clearArmed = false
+        leaveStepEditing()
+        store.clearPattern(slot, pattern)
     }
 
     /** Once per display frame: the engine's transport and recorded writes. */
     fun frame(transport: TransportState, recorded: List<RecordedEvent>, frameTimeNanos: Long) {
+        nowMs = frameTimeNanos / 1_000_000
         playing = transport.playing
         if (transport.tempoBpm >= SeqLimits.MIN_TEMPO) tempoBpm = transport.tempoBpm
+        var patternsMoved = false
         for (s in 0 until SeqLimits.SLOTS) {
             currentStep[s].intValue = transport.currentStep.getOrElse(s) { -1 }
-            currentPattern[s].intValue = transport.currentPattern.getOrElse(s) { 0 }.coerceIn(0, SeqLimits.PATTERNS - 1)
-            queuedPattern[s].intValue = transport.queuedPattern.getOrElse(s) { -1 }
+            val pattern = transport.currentPattern.getOrElse(s) { 0 }.coerceIn(0, SeqLimits.PATTERNS - 1)
+            val queued = transport.queuedPattern.getOrElse(s) { -1 }
+            if (pattern != currentPattern[s].intValue || queued != queuedPattern[s].intValue) patternsMoved = true
+            currentPattern[s].intValue = pattern
+            queuedPattern[s].intValue = queued
         }
+        if (patternsMoved) sessionChanged()
         for (e in recorded) store.applyRecorded(e)
         blinkOn = (frameTimeNanos / BLINK_NS) % 2 == 0L
+        if (clearArmed && !clearConfirm.isArmed(selectedSlot * SeqLimits.PATTERNS + editPattern, nowMs)) clearArmed = false
     }
 
     // --- tape (F5) ---
 
-    fun selectTrack(track: Int) {
+    fun selectTrack(track: Int) = uiEdit {
         if (track in 0 until MixLimits.TRACKS) tapeTrack = track
     }
 
@@ -447,7 +539,9 @@ class GrooveState : KeyListener {
         tapeRecordingTrack = t.recordingTrack
         canUndo = t.canUndo
         canRedo = t.canRedo
+        tapeLoading = t.loading
         for (i in 0 until MixLimits.TRACKS) trackHasAudio[i].value = t.trackHasAudio.getOrElse(i) { false }
+        if (exportStatus != ExportStatus.Idle) pollExport()
 
         if (screen != Screen.Tape) return
         framesSinceOverview++
@@ -461,24 +555,138 @@ class GrooveState : KeyListener {
         }
     }
 
+    // --- export (F7.1, F7.2) ---
+
+    /** Export WAV can start: the tape has audio, it is not still loading, and no export runs. */
+    val canExport: Boolean
+        get() = tapeBars > 0 && (0 until MixLimits.TRACKS).any(::trackHasAudio) && !tapeLoading &&
+            exportStatus !is ExportStatus.Rendering
+
+    /**
+     * Tap 1 of 2 (F7.1): renders the loop region (or the whole tape when the loop covers it,
+     * see [ExportFiles.wholeTape]) to a WAV in the cache; the share sheet opens when it is
+     * done, and picking an app there is tap 2.
+     */
+    fun exportPress() {
+        if (!canExport) return
+        val host = exportHost ?: return
+        val region = TapeView.loopRegion(
+            mix.mix(MixKeys.LOOP_START).roundToInt(),
+            mix.mix(MixKeys.LOOP_LEN).roundToInt(),
+            tapeBars,
+        )
+        val whole = ExportFiles.wholeTape(region)
+        val path = host.newExportPath()
+        if (path == null) {
+            exportTracker.fail("export failed · no room for the file", nowMs)
+        } else {
+            exportTracker.start(NativeEngine.startExport(path, whole), path, whole, nowMs)
+        }
+        exportStatus = exportTracker.status
+    }
+
+    private fun pollExport() {
+        val done = exportTracker.poll(NativeEngine.exportProgress(), nowMs)
+        if (done != null && exportHost?.share(done) != true) exportTracker.shareFailed(nowMs)
+        exportStatus = exportTracker.status
+    }
+
+    // --- persistence (F7.4, F7.6) ---
+
+    /** Everything worth saving, as an immutable copy (taken on the main thread). */
+    fun snapshotSession(): Session = Session(
+        tempo = store.tempo,
+        ui = UiSnapshot(
+            screen = screen.name,
+            selectedSlot = selectedSlot,
+            lastSynthSlot = lastSynthSlot,
+            page = page,
+            tapeTrack = tapeTrack,
+            mixerPad = MixerLayout.shortName(mixer.selected),
+        ),
+        synths = synths.map { it.snapshot() },
+        drum = drum.snapshot(),
+        mix = mix.mixSnapshot(),
+        channels = mix.channelSnapshot(),
+        patterns = store.snapshot(),
+        // A queued switch counts as made: it is what the player chose.
+        currentPatterns = List(SeqLimits.SLOTS) { s -> queuedOf(s).takeIf { it >= 0 } ?: patternOf(s) },
+        locks = mapOf(LOCKS_SEQ to seq.locks.keys, LOCKS_TAPE to tape.locks.keys, LOCKS_MIXER to mixer.locks.keys),
+    )
+
+    /**
+     * Once per process, before the stream starts (F7.6, F0.1): the saved [session] goes to the
+     * engine (sounds, kit, mixer, patterns, tempo, current patterns) and the screens show it;
+     * with no session (first launch, or no intact save) the slots get the launch presets and
+     * the demo, exactly as before M4. Changes made here are not reported to [onSessionChange].
+     */
+    fun launch(session: Session?) {
+        if (launched) return
+        launched = true
+        if (session == null) seedDemo() else restore(session)
+    }
+
+    private fun seedDemo() {
+        val presets = DemoContent.presetIndexes(synths.first().presetNames)
+        synths.forEachIndexed { i, s -> presets.getOrNull(i)?.let(s::loadPreset) ?: s.refreshFromEngine() }
+        drum.refreshFromEngine()
+        mix.refreshFromEngine()
+        mix.seedSends(::instrumentName)
+        DemoContent.write(store)
+        tempoBpm = store.tempo
+    }
+
+    private fun restore(s: Session) {
+        val hook = onSessionChange
+        onSessionChange = null
+        try {
+            store.setTempo(s.tempo, force = true)
+            tempoBpm = store.tempo
+            synths.forEachIndexed { i, synth -> s.synths.getOrNull(i)?.let(synth::restore) ?: synth.refreshFromEngine() }
+            drum.restore(s.drum)
+            mix.restore(s.mix, s.channels)
+            store.restore(s.patterns)
+            for (slot in 0 until SeqLimits.SLOTS) {
+                val p = s.currentPatterns.getOrElse(slot) { 0 }.coerceIn(0, SeqLimits.PATTERNS - 1)
+                if (p != 0) NativeEngine.selectPattern(slot, p) // stopped, so it applies at once
+                currentPattern[slot].intValue = p
+            }
+
+            val ui = s.ui
+            lastSynthSlot = ui.lastSynthSlot.coerceIn(1, SeqLimits.SLOTS - 1)
+            selectedSlot = ui.selectedSlot.coerceIn(0, SeqLimits.SLOTS - 1)
+            screen = Screen.entries.firstOrNull { it.name == ui.screen } ?: Screen.Synth
+            when {
+                screen == Screen.Drum -> selectedSlot = NativeEngine.DRUM_SLOT
+                screen == Screen.Synth && isDrum(selectedSlot) -> selectedSlot = lastSynthSlot
+            }
+            if (!isDrum(selectedSlot)) lastSynthSlot = selectedSlot
+            pageState = ui.page.coerceIn(0, PAGES - 1)
+            tapeTrack = ui.tapeTrack.coerceIn(0, MixLimits.TRACKS - 1)
+            mixer.restoreSelection(MixerLayout.padNamed(ui.mixerPad) ?: MixerPad.Slot(1))
+            seq.locks.restore(s.locks[LOCKS_SEQ].orEmpty())
+            tape.locks.restore(s.locks[LOCKS_TAPE].orEmpty())
+            mixer.locks.restore(s.locks[LOCKS_MIXER].orEmpty())
+        } finally {
+            onSessionChange = hook
+        }
+    }
+
     // --- lifecycle ---
 
-    /** After the stream starts: the first time, the launch presets and demo; later, re-read the sounds. */
+    /**
+     * After the stream starts. The first time in the process (if the activity did not call
+     * [launch]) it seeds the demo; later starts re-read the sounds from the engine.
+     */
     fun onStart() {
-        if (!seeded) {
-            seeded = true
-            val presets = DemoContent.presetIndexes(synths.first().presetNames)
-            synths.forEachIndexed { i, s -> presets.getOrNull(i)?.let(s::loadPreset) ?: s.refreshFromEngine() }
-            drum.refreshFromEngine()
-            mix.refreshFromEngine()
-            mix.seedSends(::instrumentName)
-            DemoContent.write(store)
-            tempoBpm = store.tempo
-        } else {
-            synths.forEach { it.refreshFromEngine() }
-            drum.refreshFromEngine()
-            mix.refreshFromEngine()
+        if (!launched) launch(null)
+        if (!startedOnce) {
+            startedOnce = true
+            return
         }
+        synths.forEach { it.refreshFromEngine() }
+        drum.refreshFromEngine()
+        mix.refreshFromEngine()
     }
 
     /** Before the stream stops: let go of everything held. */
@@ -492,6 +700,10 @@ class GrooveState : KeyListener {
 
     private companion object {
         const val PADS = 16
+        const val PAGES = 4
+        const val LOCKS_SEQ = "seq"
+        const val LOCKS_TAPE = "tape"
+        const val LOCKS_MIXER = "mixer"
         const val DEFAULT_SYNTH_NOTE = 60
         const val BLINK_NS = 300_000_000L
 

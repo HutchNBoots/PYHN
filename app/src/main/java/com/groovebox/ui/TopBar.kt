@@ -45,6 +45,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.max
+import com.groovebox.ui.model.ExportStatus
 import com.groovebox.ui.model.SeqLimits
 import com.groovebox.ui.model.TapeRecordStatus
 import com.groovebox.ui.theme.Design
@@ -216,7 +217,8 @@ fun TopBar(
 
 /**
  * The Tape screen's Undo and Export WAV (ADR 0002). Undo undoes the last tape action; with
- * Shift it reads Redo and redoes. Export is M4: shown, dimmed and inert.
+ * Shift it reads Redo and redoes. Export WAV (F7.1) is live when the tape has audio: a tap
+ * renders the loop to a WAV (the button shows the progress) and then opens the share sheet.
  */
 @Composable
 private fun TapeButtons(state: GrooveState, height: Dp) {
@@ -246,15 +248,32 @@ private fun TapeButtons(state: GrooveState, height: Dp) {
                 BasicText(if (redo) "Redo" else "Undo", style = d.label(14f, GrooveColors.Text, FontWeight.Medium))
             }
         }
+        val status = state.exportStatus
+        val canExport = state.canExport
+        val rendering = status as? ExportStatus.Rendering
         BarButton(
             width = d.dp(128),
             height = height,
             background = GrooveColors.Strips[3],
-            modifier = Modifier.inert("Export WAV, not available yet"),
+            modifier = Modifier
+                .alpha(if (canExport || rendering != null) 1f else GrooveColors.INERT_ALPHA)
+                .semantics {
+                    contentDescription = when {
+                        rendering != null -> "Exporting, ${(rendering.progress * 100).toInt()} percent"
+                        canExport -> "Export WAV and share it"
+                        else -> "Export WAV, needs audio on the tape"
+                    }
+                    if (!canExport) disabled()
+                }
+                .pointerInput(Unit) { detectTapGestures(onTap = { state.exportPress() }) },
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
                 ExportIcon(GrooveColors.Ground, Modifier.size(d.dp(16)))
-                BasicText("Export WAV", style = d.label(14f, GrooveColors.Ground, FontWeight.Bold), maxLines = 1)
+                BasicText(
+                    if (rendering != null) "Export ${(rendering.progress * 100).toInt()}%" else "Export WAV",
+                    style = d.label(14f, GrooveColors.Ground, FontWeight.Bold),
+                    maxLines = 1,
+                )
             }
         }
     }

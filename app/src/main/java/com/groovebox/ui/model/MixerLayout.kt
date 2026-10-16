@@ -107,6 +107,9 @@ object MixerLayout {
     }
 
     /** The pad's short name: "1".."8", "T1".."T4", "DLY", "REV", "MST". */
+    /** The pad [shortName] names, or null (a saved session's selection). */
+    fun padNamed(name: String): MixerPad? = pads.firstOrNull { shortName(it) == name }
+
     fun shortName(pad: MixerPad): String = when (pad) {
         is MixerPad.Slot -> "${pad.slot + 1}"
         is MixerPad.Track -> TapeView.trackName(pad.track)

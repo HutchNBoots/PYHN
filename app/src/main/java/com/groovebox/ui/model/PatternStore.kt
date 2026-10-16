@@ -60,6 +60,25 @@ class MotionLane internal constructor(val target: Int) {
     }
 }
 
+/** One motion value of a saved lane; [stamp] orders values across lanes (latest wins on display). */
+data class LanePoint(val step: Int, val value: Float, val stamp: Long)
+
+/** A saved motion lane: its target and its values, by step. */
+data class LaneSnapshot(val target: Int, val points: List<LanePoint>)
+
+/**
+ * A saved copy of one pattern (M4 session store): settings, the steps that differ from an
+ * empty step, and the lanes that hold values, oldest lane first. Immutable, so it can cross
+ * threads.
+ */
+data class PatternSnapshot(
+    val slot: Int,
+    val pattern: Int,
+    val settings: PatternSettings,
+    val steps: Map<Int, Step>,
+    val lanes: List<LaneSnapshot>,
+)
+
 /** Where the store sends every edit: the engine in the app (NativeEngine), a recorder in tests. */
 interface PatternSink {
     fun setPatternSettings(slot: Int, pattern: Int, length: Int, rate: Int, shuffle: Float, gate: Float)
@@ -196,6 +215,82 @@ class PatternStore(private val sink: PatternSink) {
         changed()
     }
 
+    /**
+     * Every pattern that differs from an empty one, for saving (F7.4). Lanes without any
+     * value are left out: the engine cannot be given an empty lane, so a restored session
+     * has none either.
+     */
+    fun snapshot(): List<PatternSnapshot> {
+        val out = ArrayList<PatternSnapshot>()
+        for (slot in 0 until SeqLimits.SLOTS) {
+            for (pattern in 0 until SeqLimits.PATTERNS) {
+                val p = patterns[slot][pattern]
+                val steps = HashMap<Int, Step>()
+                for (i in 0 until SeqLimits.STEPS) if (p.steps[i] != EMPTY_STEP) steps[i] = p.steps[i]
+                val lanes = p.lanes.mapNotNull { lane ->
+                    val points = (0 until SeqLimits.STEPS).filter { lane.hasValueAt(it) }
+                        .map { LanePoint(it, lane.valueAt(it), lane.stamps[it]) }
+                    if (points.isEmpty()) null else LaneSnapshot(lane.target, points)
+                }
+                if (p.settings == DEFAULT_SETTINGS && steps.isEmpty() && lanes.isEmpty()) continue
+                out += PatternSnapshot(slot, pattern, p.settings, steps, lanes)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Replaces every pattern with [saved] (a relaunch, F7.6), sending the engine only what
+     * differs from an empty pattern, so a fresh engine ends up equal to the mirror. Patterns
+     * not in [saved] become empty. Everything is clamped as by the single edits; out-of-range
+     * slots, patterns, steps and lanes beyond 8 are ignored, as are duplicates after the first.
+     * Lane order and the stamps' order are kept, so the display picks the same latest lane.
+     */
+    fun restore(saved: List<PatternSnapshot>) {
+        for (slot in 0 until SeqLimits.SLOTS) {
+            for (pattern in 0 until SeqLimits.PATTERNS) {
+                val p = patterns[slot][pattern]
+                if (p.settings != DEFAULT_SETTINGS || p.lanes.isNotEmpty() || p.steps.any { it != EMPTY_STEP }) {
+                    p.settings = DEFAULT_SETTINGS
+                    p.steps.fill(EMPTY_STEP)
+                    p.lanes.clear()
+                    sink.clearPattern(slot, pattern)
+                }
+            }
+        }
+        val seen = HashSet<Int>()
+        for (snap in saved) {
+            val p = data(snap.slot, snap.pattern) ?: continue
+            if (!seen.add(snap.slot * SeqLimits.PATTERNS + snap.pattern)) continue
+            val s = snap.settings.clamped()
+            if (s != DEFAULT_SETTINGS) {
+                p.settings = s
+                sink.setPatternSettings(snap.slot, snap.pattern, s.length, s.rate, s.shuffle, s.gate)
+            }
+            for ((i, step) in snap.steps.toSortedMap()) {
+                if (i !in 0 until SeqLimits.STEPS) continue
+                val st = clampStep(step)
+                if (st == EMPTY_STEP) continue
+                p.steps[i] = st
+                sink.setStep(snap.slot, snap.pattern, i, st.on, st.notes.toIntArray(), st.velocity, st.gate, st.probability)
+            }
+            for (laneSnap in snap.lanes) {
+                if (p.lanes.size >= SeqLimits.LANES) break
+                if (p.lanes.any { it.target == laneSnap.target }) continue
+                val points = laneSnap.points.filter { it.step in 0 until SeqLimits.STEPS && !it.value.isNaN() && !it.value.isInfinite() }
+                if (points.isEmpty()) continue
+                val lane = MotionLane(laneSnap.target).also { p.lanes += it }
+                for (pt in points) {
+                    val stamp = pt.stamp.coerceAtLeast(1L)
+                    lane.set(pt.step, pt.value, stamp)
+                    if (stamp > stampCounter) stampCounter = stamp
+                    sink.setMotionValue(snap.slot, snap.pattern, laneSnap.target, pt.step, pt.value)
+                }
+            }
+        }
+        changed()
+    }
+
     /** Applies a write the engine made while recording. Mirror only: the engine already has it. */
     fun applyRecorded(event: RecordedEvent) {
         val p = data(event.slot, event.pattern) ?: return
@@ -231,6 +326,9 @@ class PatternStore(private val sink: PatternSink) {
     }
 
     companion object {
+        private val EMPTY_STEP = Step()
+        private val DEFAULT_SETTINGS = PatternSettings()
+
         /** 40.0..240.0 in 0.1 steps (F3.1). */
         fun clampTempo(bpm: Double): Double {
             val v = if (bpm.isNaN()) SeqLimits.DEFAULT_TEMPO else bpm.coerceIn(SeqLimits.MIN_TEMPO, SeqLimits.MAX_TEMPO)

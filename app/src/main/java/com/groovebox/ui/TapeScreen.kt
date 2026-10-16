@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,6 +20,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import com.groovebox.ui.model.ExportStatus
 import com.groovebox.ui.model.MixKeys
 import com.groovebox.ui.model.MixLimits
 import com.groovebox.ui.model.StripRef
@@ -87,7 +90,11 @@ private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugS
         mix.mix(MixKeys.LOOP_LEN).roundToInt(),
         state.tapeBars,
     )
-    val subtitle = TapeView.subtitle(state.tapeBars, region, mix.mix(MixKeys.DUB), speed, mix.mix(MixKeys.REVERSE) >= 0.5)
+    val subtitle = if (state.tapeLoading) {
+        TapeView.LOADING
+    } else {
+        TapeView.subtitle(state.tapeBars, region, mix.mix(MixKeys.DUB), speed, mix.mix(MixKeys.REVERSE) >= 0.5)
+    }
 
     Column(
         modifier
@@ -106,9 +113,12 @@ private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugS
             )
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
-            TapeLanes(state, Modifier.fillMaxSize())
+            // A saved tape still loading (F7.6): the lanes fill in as it lands, dimmed until then.
+            TapeLanes(state, Modifier.fillMaxSize().alpha(if (state.tapeLoading) 0.45f else 1f))
             if (debug.open) debug.panel()
         }
+        val export = state.exportStatus
+        if (export is ExportStatus.Rendering) ExportProgress(export.progress, Modifier.fillMaxWidth())
         TapeFooter(state)
     }
 }
@@ -230,11 +240,33 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
     }
 }
 
-/** One line under the lanes: what Record is doing, or how to use the lanes. */
+/** A thin bar under the lanes while Export WAV renders. */
+@Composable
+private fun ExportProgress(progress: Float, modifier: Modifier) {
+    val d = LocalDesign.current
+    Box(modifier.height(d.dp(4)).clip(RoundedCornerShape(d.dp(2))).background(TapeColors.Lane)) {
+        Box(
+            Modifier
+                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(d.dp(2)))
+                .background(GrooveColors.Strips[3]),
+        )
+    }
+}
+
+/** One line under the lanes: the export's progress or result, what Record is doing, or how to use the lanes. */
 @Composable
 private fun TapeFooter(state: GrooveState) {
     val d = LocalDesign.current
     val track = TapeView.trackName(state.tapeTrack)
+    val export = state.exportStatus
+    val exportLine = TapeView.exportLine(export, state.tapeBars, state.mix.mix(MixKeys.LOOP_START).roundToInt(), state.mix.mix(MixKeys.LOOP_LEN).roundToInt())
+    if (exportLine != null) {
+        val colour = if (export is ExportStatus.Failed) GrooveColors.Warn else GrooveColors.Strips[3]
+        BasicText(exportLine, style = d.value(13f, colour), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        return
+    }
     val (text, colour) = when (state.tapeStatus) {
         TapeRecordStatus.Recording ->
             "recording ${TapeView.trackName(state.tapeRecordingTrack)} · Record stops on the next bar" to TapeColors.Record
@@ -244,6 +276,7 @@ private fun TapeFooter(state: GrooveState) {
         }
         TapeRecordStatus.Idle -> when {
             !state.tapeCanRecord -> "record needs Speed 1× and Rev off" to GrooveColors.Warn
+            state.tapeLoading -> "loading the saved tape · play on, it lands in a moment" to GrooveColors.TextDim
             state.tapeBars == 0 -> "$track selected · Record to start a take" to GrooveColors.TextDim
             else -> "$track selected · tap a lane to pick a track, hold to clear it" to GrooveColors.TextDim
         }

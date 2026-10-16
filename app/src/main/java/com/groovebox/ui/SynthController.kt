@@ -8,6 +8,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.groovebox.engine.NativeEngine
 import com.groovebox.engine.ParamSpec
+import com.groovebox.storage.SynthSnapshot
+import com.groovebox.ui.model.LfoSync
+import com.groovebox.ui.model.ParamMapping
 import com.groovebox.ui.model.ShiftState
 import com.groovebox.ui.model.SynthLayout
 import com.groovebox.ui.model.SynthSection
@@ -41,22 +44,34 @@ class ShiftController {
  * values: a strip change updates it and calls NativeEngine.setParam at once; it is re-read
  * from the engine after start and after a preset load. Each slot keeps its own values,
  * locks, section and preset. Each parameter has its own state so a drag only recomposes
- * what shows that parameter. Main thread only (NativeEngine's rule).
+ * what shows that parameter. [onChange] runs after anything worth saving changes (autosave);
+ * [tempo] is the transport's, for the synced LFO rate's division. Main thread only
+ * (NativeEngine's rule).
  */
 @Stable
 class SynthController(
     val slot: Int,
     private val shift: ShiftController,
     private val onEdit: () -> Unit = {},
+    private val onChange: () -> Unit = {},
+    private val tempo: () -> Double = { 120.0 },
 ) : StripHost {
     val params: List<ParamSpec> = NativeEngine.params
     val presetNames: List<String> = NativeEngine.presetNames
 
     private val byKey = params.associateBy { it.key }
     private val values = params.map { mutableDoubleStateOf(it.default) }
-    private val locks = StripLocks()
+    private val locks = StripLocks(onChange)
 
-    var section by mutableStateOf(SynthSection.Osc)
+    private var sectionState by mutableStateOf(SynthSection.Osc)
+
+    var section: SynthSection
+        get() = sectionState
+        set(value) {
+            if (value == sectionState) return
+            sectionState = value
+            onChange()
+        }
 
     val shifted: Boolean
         get() = shift.shifted
@@ -87,7 +102,15 @@ class SynthController(
         if (state.doubleValue == v) return // e.g. an Int strip moving within one step
         state.doubleValue = v
         NativeEngine.setParam(slot, spec.id, v)
+        onChange()
     }
+
+    /** lfo.rate shows the beat division the engine plays when lfo.sync is "tempo". */
+    override fun format(spec: ParamSpec, value: Double): String =
+        if (spec.key == LFO_RATE && lfoSynced) LfoSync.label(value, tempo()) else ParamMapping.format(spec, value)
+
+    val lfoSynced: Boolean
+        get() = value(LFO_SYNC) >= 0.5
 
     override fun isLocked(spec: ParamSpec): Boolean = locks.isLocked(spec.key)
 
@@ -103,5 +126,44 @@ class SynthController(
         NativeEngine.loadPreset(slot, index)
         presetIndex = index
         refreshFromEngine()
+        onChange()
+    }
+
+    fun snapshot() = SynthSnapshot(
+        presetIndex = presetIndex,
+        presetName = presetNames.getOrNull(presetIndex) ?: "",
+        section = section.name,
+        values = params.associate { it.key to values[it.id].doubleValue },
+        locks = locks.keys,
+    )
+
+    /**
+     * A saved slot (F7.6): its preset loads first (so a parameter newer than the save gets
+     * the preset's value), then every saved value goes to the engine. A preset is found by
+     * name first, so a reordered preset list still finds it. No [onChange].
+     */
+    fun restore(saved: SynthSnapshot) {
+        val index = when {
+            saved.presetName.isEmpty() -> null // no preset was ever loaded
+            else -> presetNames.indexOf(saved.presetName).takeIf { it >= 0 } ?: saved.presetIndex.takeIf { it in presetNames.indices }
+        }
+        if (index != null) {
+            NativeEngine.loadPreset(slot, index)
+            presetIndex = index
+        }
+        refreshFromEngine()
+        for (p in params) {
+            val v = saved.values[p.key] ?: continue
+            val clamped = v.coerceIn(p.min, p.max)
+            values[p.id].doubleValue = clamped
+            NativeEngine.setParam(slot, p.id, clamped)
+        }
+        sectionState = SynthSection.entries.firstOrNull { it.name == saved.section } ?: SynthSection.Osc
+        locks.restore(saved.locks)
+    }
+
+    private companion object {
+        const val LFO_RATE = "lfo.rate"
+        const val LFO_SYNC = "lfo.sync"
     }
 }

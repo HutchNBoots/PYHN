@@ -56,18 +56,18 @@ jobs:
       - name: Kotlin tests and release APK
         run: ./gradlew --no-daemon test assembleRelease
       - name: Name APK
-        run: cp app/build/outputs/apk/release/app-release.apk "groovebox-spike-${{ github.run_number }}.apk"
+        run: cp app/build/outputs/apk/release/app-release.apk "groovebox-${{ github.run_number }}.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: groovebox-spike-${{ github.run_number }}
-          path: groovebox-spike-${{ github.run_number }}.apk
+          name: groovebox-${{ github.run_number }}
+          path: groovebox-${{ github.run_number }}.apk
       - name: Publish GitHub Release
         if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "build-${{ github.run_number }}" \
-            "groovebox-spike-${{ github.run_number }}.apk" \
+            "groovebox-${{ github.run_number }}.apk" \
             --prerelease \
             --target "${{ github.sha }}" \
             --title "Build ${{ github.run_number }} (${{ github.ref_name }})" \

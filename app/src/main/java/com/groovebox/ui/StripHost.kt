@@ -25,14 +25,26 @@ interface StripHost {
     val blinkOn: Boolean get() = true
 }
 
-/** Strip locks (F4.2) by parameter key, observable by Compose. */
+/** Strip locks (F4.2) by parameter key, observable by Compose. [onChange] runs after each change (autosave). */
 @Stable
-class StripLocks {
+class StripLocks(private val onChange: () -> Unit = {}) {
     private val locked = mutableStateMapOf<String, Boolean>()
 
     fun isLocked(key: String): Boolean = locked[key] == true
 
     fun set(key: String, value: Boolean) {
+        if (value == isLocked(key)) return
         if (value) locked[key] = true else locked.remove(key)
+        onChange()
+    }
+
+    /** The locked keys, for saving. */
+    val keys: Set<String>
+        get() = locked.keys.toSet()
+
+    /** Replaces every lock (a restored session); no [onChange]. */
+    fun restore(keys: Set<String>) {
+        locked.clear()
+        for (k in keys) locked[k] = true
     }
 }

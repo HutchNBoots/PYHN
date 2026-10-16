@@ -19,7 +19,7 @@ import kotlin.math.roundToInt
  */
 @Stable
 class SeqController(private val app: GrooveState) : StripHost {
-    private val locks = StripLocks()
+    val locks = StripLocks(app::sessionChanged)
 
     val layer: SeqLayer
         get() = SeqStrips.layer(app.shift.shifted, app.selectedStep != null)

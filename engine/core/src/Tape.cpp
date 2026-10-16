@@ -53,7 +53,39 @@ void designTaps(float* taps, int count, int centre, double frac, double fc) {
 
 bool validTrack(int track) { return track >= 0 && track < Tape::kTracks; }
 
+bool loadActive(int32_t phase) {
+    const auto p = static_cast<TapeLoadPhase>(phase);
+    return p == TapeLoadPhase::Reading || p == TapeLoadPhase::Ready || p == TapeLoadPhase::Landing;
+}
+
 }  // namespace
+
+// --- shared read path (live playback and offline export) ---
+
+float Tape::tapeToFloat(int16_t s) { return fromTape(s); }
+
+void Tape::loopFade(int64_t head2, int32_t step2, int64_t loopS, int64_t loopE, int64_t fade, float& cm, float& cp,
+                    int64_t& partner2) {
+    // Equal power, against the audio before the start (forward) or after the end (reverse).
+    cm = 1.0f;
+    cp = 0.0f;
+    const int64_t loopLen = loopE - loopS;
+    double u;
+    if (step2 > 0) {
+        u = static_cast<double>(head2 + 2 - 2 * (loopE - fade)) / static_cast<double>(2 * fade);
+        partner2 = head2 - 2 * loopLen;
+    } else {
+        u = static_cast<double>(2 * (loopS + fade) - head2) / static_cast<double>(2 * fade);
+        partner2 = head2 + 2 * loopLen;
+    }
+    if (u > 0.0) {
+        u = std::min(u, 1.0);
+        cm = static_cast<float>(std::cos(u * kPi * 0.5));
+        cp = static_cast<float>(std::sin(u * kPi * 0.5));
+    }
+}
+
+float Tape::blendLoop(float a, float partner, float cm, float cp) { return a * cm + partner * cp; }
 
 Tape::Tape() : Tape(Limits{}) {}
 
@@ -119,6 +151,18 @@ void Tape::prepare(float sampleRate) {
         takeEnded_ = true;
         deferred_ = Command{};
         for (auto& d : dirtyCount_) d = 0;
+        // M4: the new storage is empty; nothing pending for the files (they keep the old
+        // tape until a new change), an active load or snapshot no longer fits.
+        writtenLo_.fill(0);
+        writtenHi_.fill(0);
+        pdirtyCount_.fill(0);
+        preset_.fill(false);
+        cancelLoad();
+        const auto snap = static_cast<TapeSnapshotPhase>(snapPhase_.load(std::memory_order_acquire));
+        if (snap == TapeSnapshotPhase::Requested || snap == TapeSnapshotPhase::Copying) {
+            snapActive_ = false;
+            snapPhase_.store(static_cast<int32_t>(TapeSnapshotPhase::Failed), std::memory_order_release);
+        }
     }
     std::fill(history_.get(), history_.get() + kSources * 2 * historySize_, 0.0f);
     historyEnd_ = 0;
@@ -167,6 +211,7 @@ TapeState Tape::state() const {
     s.canUndo = outCanUndo_.load(std::memory_order_relaxed);
     s.canRedo = outCanRedo_.load(std::memory_order_relaxed);
     for (std::size_t t = 0; t < kTracks; ++t) s.hasAudio[t] = outHasAudio_[t].load(std::memory_order_relaxed);
+    s.loading = loadActive(loadPhase_.load(std::memory_order_acquire));
     return s;
 }
 
@@ -241,6 +286,12 @@ void Tape::beginChunk(int64_t chunkStart, const Transport& transport, const Para
     const bool forward1x = params_.speed == 1 && !params_.reverse;
     if ((take_ == TakeState::Armed || take_ == TakeState::CommitPending) && !forward1x) cancelPending();
 
+    // F7.6: a loaded tape lands once no edit is running.
+    if (!landing() && op_.type == OpType::None &&
+        loadPhase_.load(std::memory_order_acquire) == static_cast<int32_t>(TapeLoadPhase::Ready)) {
+        startLanding();
+    }
+
     if (deferred_.type != Command::Type::None && tryExecute(deferred_, false)) deferred_ = Command{};
     Command c;
     while (deferred_.type == Command::Type::None && commands_.pop(c)) {
@@ -248,6 +299,10 @@ void Tape::beginChunk(int64_t chunkStart, const Transport& transport, const Para
     }
     nextPass_ = CommitPass{};
     playPass_ = CommitPass{};
+
+    if (snapPhase_.load(std::memory_order_acquire) == static_cast<int32_t>(TapeSnapshotPhase::Requested)) {
+        acceptSnapshot();
+    }
 }
 
 bool Tape::commitPassRequest(int& slot) const {
@@ -272,6 +327,7 @@ bool Tape::tryExecute(const Command& c, bool offline) {
             return true;
         case T::Arm:
         case T::Commit: {
+            if (landing()) return false;  // wait for the loaded tape
             if (take_ == TakeState::Recording) return true;  // one take at a time
             if (params_.speed != 1 || params_.reverse) return true;  // F5.5
             take_ = c.type == T::Arm ? TakeState::Armed : TakeState::CommitPending;
@@ -288,6 +344,7 @@ bool Tape::tryExecute(const Command& c, bool offline) {
         case T::Clear:
         case T::Undo:
         case T::Redo: {
+            if (landing()) return false;  // wait for the loaded tape
             // An edit during a take ends the take first (it is then undoable like any other).
             if (take_ == TakeState::Recording) endTake();
             if (offline) {
@@ -344,7 +401,9 @@ void Tape::startTake(int32_t pos, int64_t retro) {
     takeSourceForTails_ = takeSource_;
     latched_ = params_;
     stopPending_ = false;
+    if (!hasAudio_[static_cast<std::size_t>(takeTrack_)]) persistReset(takeTrack_);  // its storage is all zero
     hasAudio_[static_cast<std::size_t>(takeTrack_)] = true;
+    persistChanged();
     retroOk_ = false;
 
     const int64_t head = floorDiv2(main_.head2);
@@ -367,6 +426,7 @@ void Tape::endTake() {
     takeEnded_ = true;
     stopPending_ = false;
     latched_ = params_;
+    persistChanged();
     startTail(takeTrack_, head);
     if (takeFirst_) {
         // The take's length in whole bars becomes the tape length (a commit or a transport
@@ -465,7 +525,9 @@ void Tape::writeRange(int track, int64_t start, int64_t frames, const float* inL
     }
     frames = std::min(frames, hi - start);
     if (frames <= 0) return;
+    snapBeforeWrite(track, start, start + frames);
     if (entryOpen_) saveRange(start, start + frames);
+    extendWritten(track, start, start + frames);
     int16_t* p = at(track, start);
     for (int64_t i = 0; i < frames; ++i) {
         const float w = std::clamp(w0 + dw * static_cast<float>(i), 0.0f, 1.0f);
@@ -597,6 +659,10 @@ void Tape::startOp(OpType type, int track) {
     } else {
         op_.entry = (entryStart_ + undoCount_) % kMaxUndo;
     }
+    if (type != OpType::Clear) {
+        const int t = entries_[static_cast<std::size_t>(op_.entry)].track;
+        if (!hasAudio_[static_cast<std::size_t>(t)]) persistReset(t);  // its storage is all zero
+    }
 }
 
 void Tape::runOp(int64_t budget) {
@@ -606,6 +672,8 @@ void Tape::runOp(int64_t budget) {
         const Segment& s = e.segs[static_cast<std::size_t>(op_.seg)];
         const int64_t k = std::min(s.frames - op_.done, budget);
         const int64_t start = s.start + op_.done;
+        snapBeforeWrite(e.track, start, start + k);
+        extendWritten(e.track, start, start + k);
         if (op_.type == OpType::Clear) {
             if (!e.overflow) copyToPool(e.track, start, k, (e.poolStart + op_.poolDone) % std::max<int64_t>(1, poolFrames_));
             std::fill(at(e.track, start), at(e.track, start + k), int16_t{0});
@@ -650,6 +718,7 @@ void Tape::finishOp() {
         }
     }
     op_ = Op{};
+    persistChanged();
     computeLoop();
     const int64_t head = floorDiv2(main_.head2);
     if (length_ == 0) {
@@ -859,8 +928,7 @@ void Tape::renderPlayback(int32_t pos, int32_t run) {
     const bool running = headRunning();
     const bool mainRead = running && length_ > 0;
     const bool oldRead = old_.active && length_ > 0;
-    const int64_t loopLen = loopE_ - loopS_;
-    const int64_t fade = std::max<int64_t>(1, std::min(xfade_, loopLen / 2));
+    const int64_t fade = std::max<int64_t>(1, std::min(xfade_, (loopE_ - loopS_) / 2));
     const int32_t mainAbs = std::abs(main_.step2);
     const int32_t oldAbs = std::abs(old_.step2);
     const int32_t o = pieceOffset_ + pos;
@@ -869,21 +937,7 @@ void Tape::renderPlayback(int32_t pos, int32_t run) {
         // or after the end (reverse).
         float cm = 1.0f, cp = 0.0f;
         int64_t partner = 0;
-        if (mainRead) {
-            double u;
-            if (main_.step2 > 0) {
-                u = static_cast<double>(main_.head2 + 2 - 2 * (loopE_ - fade)) / static_cast<double>(2 * fade);
-                partner = main_.head2 - 2 * loopLen;
-            } else {
-                u = static_cast<double>(2 * (loopS_ + fade) - main_.head2) / static_cast<double>(2 * fade);
-                partner = main_.head2 + 2 * loopLen;
-            }
-            if (u > 0.0) {
-                u = std::min(u, 1.0);
-                cm = static_cast<float>(std::cos(u * kPi * 0.5));
-                cp = static_cast<float>(std::sin(u * kPi * 0.5));
-            }
-        }
+        if (mainRead) loopFade(main_.head2, main_.step2, loopS_, loopE_, fade, cm, cp, partner);
         const float gm = main_.gain;
         const float go = old_.gain;
         for (int t = 0; t < kTracks; ++t) {
@@ -896,8 +950,8 @@ void Tape::renderPlayback(int32_t pos, int32_t run) {
                     if (cp > 0.0f) {
                         float pa, pb;
                         readFrame(base, partner, mainAbs, pa, pb);
-                        a = a * cm + pa * cp;
-                        b = b * cm + pb * cp;
+                        a = blendLoop(a, pa, cm, cp);
+                        b = blendLoop(b, pb, cm, cp);
                     }
                     l += gm * a;
                     r += gm * b;
@@ -950,6 +1004,8 @@ void Tape::processPiece(int32_t n) {
     }
     dub_ = target;
     if (op_.type != OpType::None) runOp(static_cast<int64_t>(n) * kOpFramesPerFrame);
+    if (landing()) runLanding(static_cast<int64_t>(n) * kOpFramesPerFrame);
+    if (snapActive_) runSnapshot(static_cast<int64_t>(n) * kOpFramesPerFrame);
     // Input history of every source, for lead-ins and starts at Play.
     for (int s = 0; s < kSources; ++s) {
         float* ringL = history_.get() + static_cast<std::size_t>(s) * 2 * static_cast<std::size_t>(historySize_);
@@ -964,6 +1020,7 @@ void Tape::processPiece(int32_t n) {
     }
     historyEnd_ += n;
     flushOverview();
+    persistPiece(kPersistFramesPerPiece);
     publish();
 }
 
@@ -980,19 +1037,33 @@ void Tape::applyPendingOffline() {
     tailCount_ = 0;
     finalizeEntryIfDone();
     if (op_.type != OpType::None) runOp(std::numeric_limits<int64_t>::max());
+    if (!landing() && loadPhase_.load(std::memory_order_acquire) == static_cast<int32_t>(TapeLoadPhase::Ready)) {
+        startLanding();
+    }
+    if (landing()) runLanding(std::numeric_limits<int64_t>::max());
     if (deferred_.type != Command::Type::None) {
         tryExecute(deferred_, true);
         deferred_ = Command{};
     }
     Command c;
     while (commands_.pop(c)) tryExecute(c, true);
+    if (snapPhase_.load(std::memory_order_acquire) == static_cast<int32_t>(TapeSnapshotPhase::Requested)) {
+        acceptSnapshot();
+    }
+    if (snapActive_) runSnapshot(std::numeric_limits<int64_t>::max());
     flushOverview();
+    persistPiece(std::numeric_limits<int64_t>::max());  // as much as the ring takes
     publish();
 }
 
 // --- overview ---
 
 void Tape::markDirty(int track, int64_t start, int64_t end) {
+    markOverview(track, start, end);
+    persistMark(track, start, end);
+}
+
+void Tape::markOverview(int track, int64_t start, int64_t end) {
     auto& list = dirty_[static_cast<std::size_t>(track)];
     int32_t& count = dirtyCount_[static_cast<std::size_t>(track)];
     for (int32_t i = 0; i < count; ++i) {
@@ -1099,6 +1170,433 @@ void Tape::publish() {
     outCanUndo_.store(undoCount_ > 0, std::memory_order_relaxed);
     outCanRedo_.store(entryCount_ > undoCount_, std::memory_order_relaxed);
     for (std::size_t t = 0; t < kTracks; ++t) outHasAudio_[t].store(hasAudio_[t], std::memory_order_relaxed);
+}
+
+// --- M4: persistence (audio thread unless noted) ---
+
+Tape::Layout Tape::layout() const {
+    Layout l;
+    l.sampleRate = sampleRate_;
+    l.offset = offset_;
+    l.trackFrames = trackFrames_;
+    l.maxFrames = maxFrames_;
+    l.crossfade = xfade_;
+    l.guard = guard_;
+    return l;
+}
+
+void Tape::attachPersistence(TapePersistPort* port) {
+    TapePersistPort* expected = nullptr;
+    port_.compare_exchange_strong(expected, port, std::memory_order_acq_rel);
+}
+
+void Tape::extendWritten(int track, int64_t start, int64_t end) {
+    const auto t = static_cast<std::size_t>(track);
+    if (writtenLo_[t] >= writtenHi_[t]) {
+        writtenLo_[t] = start;
+        writtenHi_[t] = end;
+    } else {
+        writtenLo_[t] = std::min(writtenLo_[t], start);
+        writtenHi_[t] = std::max(writtenHi_[t], end);
+    }
+}
+
+void Tape::persistMark(int track, int64_t start, int64_t end) {
+    if (!persistActive_ || end <= start) return;
+    ++changeSeq_;
+    auto& list = pdirty_[static_cast<std::size_t>(track)];
+    int32_t& count = pdirtyCount_[static_cast<std::size_t>(track)];
+    for (int32_t i = 0; i < count; ++i) {
+        Dirty& d = list[static_cast<std::size_t>(i)];
+        if (start <= d.end && end >= d.start) {
+            d.start = std::min(d.start, start);
+            d.end = std::max(d.end, end);
+            return;
+        }
+    }
+    if (count < kPersistRanges) {
+        list[static_cast<std::size_t>(count++)] = Dirty{start, end};
+        return;
+    }
+    Dirty& last = list[kPersistRanges - 1];  // full: widen the last one (sends a little extra)
+    last.start = std::min(last.start, start);
+    last.end = std::max(last.end, end);
+}
+
+void Tape::persistReset(int track) {
+    if (!persistActive_) return;
+    // The track's storage is all zero now (a track without audio always is): the file is
+    // zeroed instead, and older pending ranges on it are moot.
+    preset_[static_cast<std::size_t>(track)] = true;
+    pdirtyCount_[static_cast<std::size_t>(track)] = 0;
+    ++changeSeq_;
+}
+
+void Tape::persistResyncAll() {
+    for (int t = 0; t < kTracks; ++t) {
+        const auto ut = static_cast<std::size_t>(t);
+        preset_[ut] = true;
+        pdirtyCount_[ut] = 0;
+        const bool audio = hasAudio_[ut] || (take_ == TakeState::Recording && takeTrack_ == t);
+        if (audio && writtenLo_[ut] < writtenHi_[ut]) {
+            pdirty_[ut][0] = Dirty{writtenLo_[ut], writtenHi_[ut]};
+            pdirtyCount_[ut] = 1;
+        }
+    }
+    ++changeSeq_;
+}
+
+int64_t Tape::metaLength() const {
+    if (length_ > 0) return length_;
+    if (take_ != TakeState::Recording || !takeFirst_ || bar_ <= 0) return 0;
+    // A first take in progress: the whole bars recorded so far, so a crash keeps them.
+    const int64_t head = floorDiv2(main_.head2);
+    const int64_t maxBars = std::max<int64_t>(1, firstLimit_ / bar_);
+    return std::clamp<int64_t>(ceilDiv(std::max<int64_t>(head, 1), bar_), 1, maxBars) * bar_;
+}
+
+bool Tape::persistPush(TapePersistPort& port, TapePersistRecord& rec, const void* payload, std::size_t bytes) {
+    if (!port.ring.write(&rec, sizeof(rec), payload, bytes)) return false;
+    persistTouched_ = true;
+    return true;
+}
+
+void Tape::persistPiece(int64_t budget) {
+    TapePersistPort* port = port_.load(std::memory_order_acquire);
+    if (!port) return;
+    if (!persistActive_) {
+        if (landing()) return;  // attached mid-landing: start once the tape has landed
+        persistActive_ = true;
+        bool any = take_ == TakeState::Recording;
+        for (int t = 0; t < kTracks; ++t) any = any || hasAudio_[static_cast<std::size_t>(t)];
+        if (any) persistResyncAll();  // attached late: the files must catch up with the tape
+    }
+    if (!landing() && port->resyncRequested.load(std::memory_order_relaxed) &&
+        port->resyncRequested.exchange(false, std::memory_order_acq_rel)) {
+        persistResyncAll();
+    }
+
+    TapePersistRecord rec;
+    rec.preroll = offset_;
+    rec.fileFrames = trackFrames_;
+    rec.sampleRate = static_cast<uint32_t>(sampleRate_);
+    bool blocked = false;
+    for (int t = 0; t < kTracks && !blocked; ++t) {
+        if (!preset_[static_cast<std::size_t>(t)]) continue;
+        rec.type = TapePersistRecord::Reset;
+        rec.track = t;
+        if (persistPush(*port, rec, nullptr, 0)) {
+            preset_[static_cast<std::size_t>(t)] = false;
+        } else {
+            blocked = true;  // resets go before any data: wait for room
+        }
+    }
+    for (int t = 0; t < kTracks && !blocked; ++t) {
+        auto& list = pdirty_[static_cast<std::size_t>(t)];
+        int32_t& count = pdirtyCount_[static_cast<std::size_t>(t)];
+        while (count > 0 && budget > 0) {
+            Dirty& d = list[0];
+            d.start = std::max(d.start, -offset_);
+            d.end = std::min(d.end, trackFrames_ - offset_);
+            const auto room = (static_cast<int64_t>(port->ring.freeBytes()) - static_cast<int64_t>(sizeof(rec))) / 4;
+            if (d.end > d.start && room <= 0) {
+                blocked = true;  // stays pending: nothing is dropped
+                break;
+            }
+            const int64_t k = std::min({d.end - d.start, budget, room});
+            if (k > 0) {
+                rec.type = TapePersistRecord::Data;
+                rec.track = t;
+                rec.frame = d.start;
+                rec.frames = k;
+                persistPush(*port, rec, at(t, d.start), static_cast<std::size_t>(k) * 4);  // fits: room checked
+                d.start += k;
+                budget -= k;
+            }
+            if (d.start >= d.end) {
+                for (int32_t j = 0; j + 1 < count; ++j) list[static_cast<std::size_t>(j)] = list[static_cast<std::size_t>(j + 1)];
+                --count;
+            }
+        }
+    }
+    bool pending = blocked;
+    for (int t = 0; t < kTracks; ++t) {
+        pending = pending || pdirtyCount_[static_cast<std::size_t>(t)] > 0 || preset_[static_cast<std::size_t>(t)];
+    }
+    // A consistent point: everything changed so far is in the ring and no edit is half done.
+    if (!pending && op_.type == OpType::None && !landing() && emittedSeq_ != changeSeq_) {
+        rec = TapePersistRecord{};
+        rec.type = TapePersistRecord::Meta;
+        rec.preroll = offset_;
+        rec.fileFrames = trackFrames_;
+        rec.sampleRate = static_cast<uint32_t>(sampleRate_);
+        rec.length = metaLength();
+        rec.bar = rec.length > 0 ? bar_ : 0;
+        for (int t = 0; t < kTracks; ++t) {
+            if (rec.length > 0 && hasAudio_[static_cast<std::size_t>(t)]) rec.hasAudioMask |= 1u << t;
+        }
+        if (rec.hasAudioMask == 0) rec.length = rec.bar = 0;
+        rec.sequence = changeSeq_;
+        if (persistPush(*port, rec, nullptr, 0)) emittedSeq_ = changeSeq_;
+    }
+    outChangeSeq_.store(changeSeq_, std::memory_order_release);
+}
+
+int64_t Tape::persistPendingFrames() const {
+    int64_t n = 0;
+    for (int t = 0; t < kTracks; ++t) {
+        for (int32_t i = 0; i < pdirtyCount_[static_cast<std::size_t>(t)]; ++i) {
+            const Dirty& d = pdirty_[static_cast<std::size_t>(t)][static_cast<std::size_t>(i)];
+            n += std::max<int64_t>(0, d.end - d.start);
+        }
+    }
+    return n;
+}
+
+// --- M4: load ---
+
+bool Tape::beginLoad() {
+    int32_t cur = loadPhase_.load(std::memory_order_acquire);
+    for (;;) {
+        if (loadActive(cur)) return false;
+        if (loadPhase_.compare_exchange_weak(cur, static_cast<int32_t>(TapeLoadPhase::Reading), std::memory_order_acq_rel)) {
+            return true;
+        }
+    }
+}
+
+bool Tape::offerLoad(const TapeImage* image) {
+    image_ = image;
+    auto expected = static_cast<int32_t>(TapeLoadPhase::Reading);
+    return loadPhase_.compare_exchange_strong(expected, static_cast<int32_t>(TapeLoadPhase::Ready),
+                                              std::memory_order_acq_rel);
+}
+
+void Tape::failLoad() {
+    auto expected = static_cast<int32_t>(TapeLoadPhase::Reading);
+    loadPhase_.compare_exchange_strong(expected, static_cast<int32_t>(TapeLoadPhase::Failed), std::memory_order_acq_rel);
+}
+
+void Tape::cancelLoad() {
+    int32_t cur = loadPhase_.load(std::memory_order_acquire);
+    while (loadActive(cur) && !loadPhase_.compare_exchange_weak(cur, static_cast<int32_t>(TapeLoadPhase::Cancelled),
+                                                                std::memory_order_acq_rel)) {
+    }
+    landPhase_ = TapeLoadPhase::Idle;
+}
+
+void Tape::startLanding() {
+    const TapeImage& im = *image_;
+    const bool fits = im.lo >= -offset_ && im.hi <= trackFrames_ - offset_ && im.lo <= im.hi && im.lengthFrames >= 0 &&
+                      im.lengthFrames <= maxFrames_ && (im.lengthFrames == 0 || im.barFrames > 0);
+    if (!fits) {
+        image_ = nullptr;
+        loadPhase_.store(static_cast<int32_t>(TapeLoadPhase::Failed), std::memory_order_release);
+        return;
+    }
+    landPhase_ = TapeLoadPhase::Landing;
+    loadPhase_.store(static_cast<int32_t>(TapeLoadPhase::Landing), std::memory_order_release);
+    // The loaded tape replaces this one: a take or tail in progress is dropped, history too,
+    // and the tape is silent until the new audio has landed.
+    take_ = TakeState::None;
+    takeEnded_ = true;
+    stopPending_ = false;
+    tailCount_ = 0;
+    entryOpen_ = false;
+    clearHistory();
+    length_ = 0;
+    bar_ = 0;
+    hasAudio_.fill(false);
+    old_.active = false;
+    computeLoop();
+    main_.head2 = 0;
+    if (persistActive_ && persistTouched_) {
+        // The files saw this session's changes: rewrite them from the loaded tape.
+        landMark_ = true;
+        preset_.fill(true);
+        pdirtyCount_.fill(0);
+    } else {
+        // Nothing was ever sent, so the files still hold exactly the tape being loaded.
+        landMark_ = false;
+        preset_.fill(false);
+        pdirtyCount_.fill(0);
+        emittedSeq_ = changeSeq_;
+    }
+    landTrack_ = 0;
+    landPos_ = std::numeric_limits<int64_t>::min();
+}
+
+void Tape::runLanding(int64_t budget) {
+    const TapeImage& im = *image_;
+    while (budget > 0 && landTrack_ < kTracks) {
+        const int t = landTrack_;
+        const auto ut = static_cast<std::size_t>(t);
+        const bool img = ((im.hasAudioMask >> t) & 1u) != 0 && im.hi > im.lo;
+        // Everything that may be non-zero now, plus the image's range.
+        int64_t a = writtenLo_[ut], b = writtenHi_[ut];
+        if (a >= b) {
+            a = img ? im.lo : 0;
+            b = img ? im.hi : 0;
+        } else if (img) {
+            a = std::min(a, im.lo);
+            b = std::max(b, im.hi);
+        }
+        if (landPos_ < a) landPos_ = a;
+        if (landPos_ >= b) {
+            ++landTrack_;
+            landPos_ = std::numeric_limits<int64_t>::min();
+            continue;
+        }
+        int64_t e = std::min(b, landPos_ + budget);
+        const bool inImage = img && landPos_ >= im.lo && landPos_ < im.hi;
+        if (inImage) {
+            e = std::min(e, im.hi);
+        } else if (img && landPos_ < im.lo) {
+            e = std::min(e, im.lo);
+        }
+        snapBeforeWrite(t, landPos_, e);
+        if (inImage) {
+            std::memcpy(at(t, landPos_), im.data[ut].data() + (landPos_ - im.lo) * 2, static_cast<std::size_t>(e - landPos_) * 4);
+            if (landMark_) persistMark(t, landPos_, e);
+        } else {
+            std::fill(at(t, landPos_), at(t, e), int16_t{0});
+        }
+        markOverview(t, landPos_, e);
+        budget -= e - landPos_;
+        landPos_ = e;
+    }
+    if (landTrack_ >= kTracks) finishLanding();
+}
+
+void Tape::finishLanding() {
+    const TapeImage& im = *image_;
+    length_ = im.lengthFrames;
+    bar_ = length_ > 0 ? im.barFrames : 0;
+    for (int t = 0; t < kTracks; ++t) {
+        const auto ut = static_cast<std::size_t>(t);
+        const bool img = ((im.hasAudioMask >> t) & 1u) != 0 && im.hi > im.lo;
+        hasAudio_[ut] = length_ > 0 && ((im.hasAudioMask >> t) & 1u) != 0;
+        writtenLo_[ut] = img ? im.lo : 0;
+        writtenHi_[ut] = img ? im.hi : 0;
+    }
+    clearHistory();
+    computeLoop();
+    main_.head2 = 2 * loopS_;
+    if (main_.active) {
+        main_.step2 = effectiveStep2();
+        main_.gain = 0.0f;
+        main_.gainStep = 1.0f / static_cast<float>(startFade_);
+    }
+    retroOk_ = false;
+    recomputeAllBins();
+    if (landMark_) persistChanged();
+    image_ = nullptr;
+    landPhase_ = TapeLoadPhase::Idle;
+    loadPhase_.store(static_cast<int32_t>(TapeLoadPhase::Done), std::memory_order_release);
+}
+
+// --- M4: export snapshot ---
+
+bool Tape::requestSnapshot(TapeSnapshot* snapshot) {
+    if (!snapshot || !snapshot->data || snapshot->capacityFrames <= 0 || !snapshot->copied) return false;
+    if (snapPhase_.load(std::memory_order_acquire) != static_cast<int32_t>(TapeSnapshotPhase::Idle)) return false;
+    snap_ = snapshot;
+    snapPhase_.store(static_cast<int32_t>(TapeSnapshotPhase::Requested), std::memory_order_release);
+    return true;
+}
+
+void Tape::releaseSnapshot() {
+    const auto p = snapshotPhase();
+    if (p == TapeSnapshotPhase::Ready || p == TapeSnapshotPhase::Failed) {
+        snapPhase_.store(static_cast<int32_t>(TapeSnapshotPhase::Idle), std::memory_order_release);
+    }
+}
+
+void Tape::acceptSnapshot() {
+    TapeSnapshot& s = *snap_;
+    const auto fail = [this] {
+        snapActive_ = false;
+        snapPhase_.store(static_cast<int32_t>(TapeSnapshotPhase::Failed), std::memory_order_release);
+    };
+    if (length_ <= 0 || bar_ <= 0 || landing()) return fail();
+    const int64_t loopS = s.wholeTape ? 0 : loopS_;
+    const int64_t loopE = s.wholeTape ? length_ : loopE_;
+    if (loopE <= loopS) return fail();
+    s.sampleRate = sampleRate_;
+    s.lengthFrames = length_;
+    s.barFrames = bar_;
+    s.loopStart = loopS;
+    s.loopEnd = loopE;
+    s.fade = std::max<int64_t>(1, std::min(xfade_, (loopE - loopS) / 2));  // as renderPlayback
+    s.rangeStart = loopS - s.fade;
+    s.rangeFrames = loopE - s.rangeStart;
+    s.hasAudioMask = 0;
+    s.trackCount = 0;
+    for (int t = 0; t < kTracks; ++t) {
+        s.slotOfTrack[static_cast<std::size_t>(t)] = -1;
+        if (!hasAudio_[static_cast<std::size_t>(t)]) continue;
+        s.hasAudioMask |= 1u << t;
+        s.slotOfTrack[static_cast<std::size_t>(t)] = s.trackCount++;
+    }
+    if (s.trackCount == 0 || s.rangeStart < -offset_ || s.trackCount * s.rangeFrames > s.capacityFrames ||
+        s.trackCount * s.blocksPerTrack() > s.blockCapacity) {
+        return fail();
+    }
+    snapCursor_ = 0;
+    snapActive_ = true;
+    snapPhase_.store(static_cast<int32_t>(TapeSnapshotPhase::Copying), std::memory_order_relaxed);
+}
+
+void Tape::copySnapBlock(int slot, int64_t block) {
+    TapeSnapshot& s = *snap_;
+    const int64_t nb = s.blocksPerTrack();
+    uint8_t& done = s.copied[static_cast<std::size_t>(slot * nb + block)];
+    if (done) return;
+    int track = 0;
+    for (int t = 0; t < kTracks; ++t) {
+        if (s.slotOfTrack[static_cast<std::size_t>(t)] == slot) track = t;
+    }
+    const int64_t f0 = s.rangeStart + block * TapeSnapshot::kBlockFrames;
+    const int64_t n = std::min(TapeSnapshot::kBlockFrames, s.rangeFrames - block * TapeSnapshot::kBlockFrames);
+    std::memcpy(s.data + (slot * s.rangeFrames + block * TapeSnapshot::kBlockFrames) * 2, at(track, f0),
+                static_cast<std::size_t>(n) * 4);
+    done = 1;
+}
+
+void Tape::runSnapshot(int64_t budget) {
+    TapeSnapshot& s = *snap_;
+    const int64_t nb = s.blocksPerTrack();
+    const int64_t total = s.trackCount * nb;
+    while (budget > 0 && snapCursor_ < total) {
+        const auto slot = static_cast<int>(snapCursor_ / nb);
+        const int64_t block = snapCursor_ % nb;
+        if (!s.copied[static_cast<std::size_t>(snapCursor_)]) {
+            copySnapBlock(slot, block);
+            budget -= TapeSnapshot::kBlockFrames;
+        } else {
+            budget -= 16;  // skipping a block copied early still costs a little
+        }
+        ++snapCursor_;
+    }
+    if (snapCursor_ >= total) {
+        snapActive_ = false;
+        snapPhase_.store(static_cast<int32_t>(TapeSnapshotPhase::Ready), std::memory_order_release);
+    }
+}
+
+void Tape::snapBeforeWrite(int track, int64_t start, int64_t end) {
+    if (!snapActive_) return;
+    const TapeSnapshot& s = *snap_;
+    const int slot = s.slotOfTrack[static_cast<std::size_t>(track)];
+    if (slot < 0) return;
+    const int64_t a = std::max(start, s.rangeStart);
+    const int64_t e = std::min(end, s.rangeStart + s.rangeFrames);
+    if (a >= e) return;
+    // Copy-on-write: a block about to change is copied first, so the snapshot stays exact.
+    for (int64_t b = (a - s.rangeStart) / TapeSnapshot::kBlockFrames; b <= (e - 1 - s.rangeStart) / TapeSnapshot::kBlockFrames;
+         ++b) {
+        copySnapBlock(slot, b);
+    }
 }
 
 // --- tests ---

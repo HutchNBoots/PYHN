@@ -23,10 +23,10 @@ import kotlin.math.roundToInt
  * channel's settings (ChannelParams.def, 12 channels). Like the synth slots, it is the
  * source of truth for the strips: a change updates it and calls the engine at once; it is
  * re-read from the engine after start. One state per value, so a drag only recomposes what
- * shows it. Main thread only (NativeEngine's rule).
+ * shows it. [onChange] runs after each change (autosave). Main thread only (NativeEngine's rule).
  */
 @Stable
-class MixValues {
+class MixValues(private val onChange: () -> Unit = {}) {
     val mixParams: List<ParamSpec> = NativeEngine.mixParams
     val channelParams: List<ParamSpec> = NativeEngine.channelParams
 
@@ -49,6 +49,7 @@ class MixValues {
         if (state.doubleValue == v) return
         state.doubleValue = v
         NativeEngine.setMixParam(spec.id, v)
+        onChange()
     }
 
     fun channel(channel: Int, spec: ParamSpec): Double = channels[channel][spec.id].doubleValue
@@ -61,6 +62,7 @@ class MixValues {
         if (state.doubleValue == v) return
         state.doubleValue = v
         NativeEngine.setChannelParam(channel, spec.id, v)
+        onChange()
     }
 
     fun setChannel(channel: Int, key: String, value: Double) {
@@ -99,6 +101,28 @@ class MixValues {
             for (p in channelParams) channels[c][p.id].doubleValue = NativeEngine.getChannelParam(c, p.id)
         }
     }
+
+    fun mixSnapshot(): Map<String, Double> = mixParams.associate { it.key to mix[it.id].doubleValue }
+
+    fun channelSnapshot(): List<Map<String, Double>> =
+        List(MixLimits.CHANNELS) { c -> channelParams.associate { it.key to channels[c][it.id].doubleValue } }
+
+    /** Saved values (F7.6) go to the engine; missing ones keep the engine's. No [onChange]. */
+    fun restore(savedMix: Map<String, Double>, savedChannels: List<Map<String, Double>>) {
+        refreshFromEngine()
+        for (p in mixParams) {
+            val v = savedMix[p.key]?.coerceIn(p.min, p.max) ?: continue
+            mix[p.id].doubleValue = v
+            NativeEngine.setMixParam(p.id, v)
+        }
+        for (c in 0 until minOf(MixLimits.CHANNELS, savedChannels.size)) {
+            for (p in channelParams) {
+                val v = savedChannels[c][p.key]?.coerceIn(p.min, p.max) ?: continue
+                channels[c][p.id].doubleValue = v
+                NativeEngine.setChannelParam(c, p.id, v)
+            }
+        }
+    }
 }
 
 /** Turns strip references into specs for one screen, with an optional label override. */
@@ -115,7 +139,7 @@ private fun MixValues.resolve(ref: StripRef?): ParamSpec? = when (ref) {
  */
 @Stable
 class TapeController(private val app: GrooveState, private val values: MixValues) : StripHost {
-    private val locks = StripLocks()
+    val locks = StripLocks(app::sessionChanged)
 
     val refs: List<StripRef>
         get() = TapeStrips.strips(app.shift.shifted)
@@ -146,7 +170,7 @@ class TapeController(private val app: GrooveState, private val values: MixValues
  */
 @Stable
 class MixerController(private val app: GrooveState, private val values: MixValues) : StripHost {
-    private val locks = StripLocks()
+    val locks = StripLocks(app::sessionChanged)
 
     var selected: MixerPad by mutableStateOf(MixerPad.Slot(1))
         private set
@@ -154,14 +178,21 @@ class MixerController(private val app: GrooveState, private val values: MixValue
     val strips: List<ParamSpec?>
         get() = MixerLayout.strips(selected, app.shift.shifted, values.delaySynced).map { values.resolve(it) }
 
-    fun select(pad: MixerPad) {
+    /** A saved session's selection; no autosave mark. */
+    fun restoreSelection(pad: MixerPad) {
         selected = pad
+    }
+
+    fun select(pad: MixerPad) {
+        if (pad == selected) return
+        selected = pad
+        app.sessionChanged()
     }
 
     /** A pad touched: select it, or with Shift toggle its channel's mute. */
     fun tap(pad: MixerPad) {
         when (val action = MixerLayout.tap(pad, app.shift.shifted)) {
-            is MixerPadAction.Select -> selected = action.pad
+            is MixerPadAction.Select -> select(action.pad)
             is MixerPadAction.ToggleMute -> values.toggleMute(action.channel)
         }
     }

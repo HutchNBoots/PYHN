@@ -69,14 +69,17 @@ fun SeqMiddleRow(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, mo
     val seq = state.seq
     val layer = seq.layer
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
-        Rail(
-            labels = List(PAGES) { "${it + 1}" },
-            selected = state.page,
-            description = { "Page ${it + 1}, steps ${it * PADS + 1} to ${it * PADS + PADS}" },
-            onSelect = { state.page = it },
-            modifier = Modifier.width(d.dp(64)).fillMaxHeight(),
-            mono = true,
-        )
+        Column(Modifier.width(d.dp(64)).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(d.dp(4))) {
+            Rail(
+                labels = List(PAGES) { "${it + 1}" },
+                selected = state.page,
+                description = { "Page ${it + 1}, steps ${it * PADS + 1} to ${it * PADS + PADS}" },
+                onSelect = { state.page = it },
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                mono = true,
+            )
+            ClearButton(state, Modifier.fillMaxWidth().height(d.dp(40)))
+        }
         SeqDisplay(state, audioStarted, debug, Modifier.weight(1f).fillMaxHeight())
         val labels = if (layer == SeqLayer.Step) listOf("—", "—", "—", "Motion") else List(4) { "—" }
         val values = if (layer == SeqLayer.Step) listOf(null, null, null, "—") else List(4) { null }
@@ -198,6 +201,38 @@ private fun Overview(state: GrooveState, modifier: Modifier) {
     }
 }
 
+/**
+ * Clears the selected slot's current pattern (steps, motion, settings). No dialog and no
+ * undo, so it takes two taps: the first arms it (coral, "Clear?"), a second within 2 s clears.
+ */
+@Composable
+private fun ClearButton(state: GrooveState, modifier: Modifier) {
+    val d = LocalDesign.current
+    val armed = state.clearArmed
+    val pattern = state.editPattern + 1
+    Box(
+        modifier
+            .clip(RoundedCornerShape(d.dp(10)))
+            .background(if (armed) SeqColors.Motion else GrooveColors.Panel)
+            .semantics {
+                contentDescription = if (armed) "Tap again to clear pattern $pattern" else "Clear pattern $pattern. Tap twice"
+            }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown()
+                    state.clearPress()
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(
+            if (armed) "Clear?" else "Clear",
+            style = d.label(13f, if (armed) GrooveColors.Ground else GrooveColors.TextDim, if (armed) FontWeight.Bold else FontWeight.Medium),
+            maxLines = 1,
+        )
+    }
+}
+
 /** The selected step's values and motion lane (or the pattern's settings when none is selected). */
 @Composable
 private fun Footer(state: GrooveState) {
@@ -206,7 +241,14 @@ private fun Footer(state: GrooveState) {
     val selected = state.selectedStep
     val style = d.value(13f, GrooveColors.TextDim)
     Row(horizontalArrangement = Arrangement.spacedBy(d.dp(18))) {
-        if (selected != null) {
+        if (state.clearArmed) {
+            BasicText(
+                "tap Clear again to empty pattern ${state.editPattern + 1} of slot ${slot + 1} · no undo",
+                style = d.value(13f, SeqColors.Motion),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else if (selected != null) {
             val step = state.step(selected)
             val notes = if (step.notes.isEmpty()) {
                 "no note"
