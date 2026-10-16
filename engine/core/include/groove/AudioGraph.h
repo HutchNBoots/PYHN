@@ -39,9 +39,10 @@ public:
     static constexpr int kSlots = kSlotCount;
     static constexpr int kFirstSynthSlot = 1;
     static constexpr int kSynthCount = kSlots - kFirstSynthSlot;
-    // Equal, fixed gain per slot (M2 has no mixer). 8 x 0.35 leaves the master limiter
-    // little to do in normal use while a single slot still plays at a healthy level.
-    static constexpr float kSlotGain = 0.35f;
+    // Equal, fixed gain per slot (M2 has no mixer; M3 adds per-slot volume). A single slot
+    // plays about 6 dB below M1's lone synth; when many slots peak together the master
+    // limiter catches it (F0.6).
+    static constexpr float kSlotGain = 0.5f;
     static constexpr std::size_t kNoteCapacity = SynthEngine::kEventCapacity;
 
     AudioGraph();
