@@ -84,6 +84,10 @@ public:
     void process(const float* inL, const float* inR, int32_t numFrames, float* mixL, float* mixR,
                  float* delayL, float* delayR, float* reverbL, float* reverbR);
 
+    // The largest |sample| (left or right) this strip added to the mix in the last process()
+    // call: the channel's post-fader, post-mute, post-pan peak, for the level meters.
+    float lastPeak() const;
+
 private:
     struct Impl;
     Impl* impl_;

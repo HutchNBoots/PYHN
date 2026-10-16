@@ -72,6 +72,7 @@ void AudioGraph::prepare(float sampleRate) {
     reverb_->prepare(sampleRate);
     sequencer_->prepare(sampleRate);  // after the instruments: it sends them the tempo
     tape_->prepare(sampleRate);       // keeps the tape at the same rate
+    meters_.prepare(sampleRate);
     gainsInitialized_ = false;
     frame_.store(0, std::memory_order_relaxed);
 }
@@ -225,6 +226,7 @@ void AudioGraph::mix(int32_t n) {
         std::fill(postR_[s].begin(), postR_[s].begin() + n, 0.0f);
         strips_[s]->process(slotL_[s].data(), slotR_[s].data(), n, postL_[s].data(), postR_[s].data(), dlyL_.data(),
                             dlyR_.data(), revL_.data(), revR_.data());
+        peaks_[s] = strips_[s]->lastPeak();
         for (std::size_t i = 0; i < un; ++i) {
             left_[i] += postL_[s][i];
             right_[i] += postR_[s][i];
@@ -242,20 +244,27 @@ void AudioGraph::mix(int32_t n) {
         gainsInitialized_ = true;
     }
     const float inv = 1.0f / static_cast<float>(n);
+    // The meters read the returns as added (the mix expressions stay exactly as they were).
+    float dlyPeak = 0.0f;
     delay_->process(dlyL_.data(), dlyR_.data(), wetL_.data(), wetR_.data(), n);
     for (std::size_t i = 0; i < un; ++i) {
         const float g = delayReturn_ + (dlyTarget - delayReturn_) * static_cast<float>(i + 1) * inv;
         left_[i] += g * wetL_[i];
         right_[i] += g * wetR_[i];
+        dlyPeak = std::max(dlyPeak, g * std::max(std::fabs(wetL_[i]), std::fabs(wetR_[i])));
     }
     delayReturn_ = dlyTarget;
+    float revPeak = 0.0f;
     reverb_->process(revL_.data(), revR_.data(), wetL_.data(), wetR_.data(), n);
     for (std::size_t i = 0; i < un; ++i) {
         const float g = reverbReturn_ + (revTarget - reverbReturn_) * static_cast<float>(i + 1) * inv;
         left_[i] += g * wetL_[i];
         right_[i] += g * wetR_[i];
+        revPeak = std::max(revPeak, g * std::max(std::fabs(wetL_[i]), std::fabs(wetR_[i])));
     }
     reverbReturn_ = revTarget;
+    peaks_[LevelMeters::kDelay] = dlyPeak;
+    peaks_[LevelMeters::kReverb] = revPeak;
 
     // The tape records the slot mix with FX (or one slot's channel, for a commit) and plays
     // its 4 tracks back through their channel strips into the master mix (dry: F5).
@@ -267,14 +276,22 @@ void AudioGraph::mix(int32_t n) {
         }
         strips_[kFirstTapeChannel + t]->process(trackL_[t].data(), trackR_[t].data(), n, left_.data(), right_.data(),
                                                 nullptr, nullptr, nullptr, nullptr);
+        peaks_[kFirstTapeChannel + t] = strips_[kFirstTapeChannel + t]->lastPeak();
     }
 
+    float preLimiter = 0.0f;
     for (std::size_t i = 0; i < un; ++i) {
         const float g = masterGain_ + (masterTarget - masterGain_) * static_cast<float>(i + 1) * inv;
         left_[i] *= g;
         right_[i] *= g;
+        preLimiter = std::max(preLimiter, std::max(std::fabs(left_[i]), std::fabs(right_[i])));
     }
     masterGain_ = masterTarget;
+
+    for (std::size_t m = 0; m < static_cast<std::size_t>(LevelMeters::kMaster); ++m) clips_[m] = peaks_[m] >= 1.0f;
+    // The master's clip: the mix reached full scale before the limiter caught it (an infinite
+    // sample counts; NaN, which the limiter silences, doesn't).
+    clips_[LevelMeters::kMaster] = preLimiter >= 1.0f;
 }
 
 void AudioGraph::render(float* out, int32_t numFrames, int32_t channelCount) {
@@ -297,9 +314,11 @@ void AudioGraph::render(float* out, int32_t numFrames, int32_t channelCount) {
         mix(n);
         master_.process(left_.data(), right_.data(), n);
 
+        float masterPeak = 0.0f;
         for (int32_t i = 0; i < n; ++i) {
             const float l = left_[static_cast<std::size_t>(i)];
             const float r = right_[static_cast<std::size_t>(i)];
+            masterPeak = std::max(masterPeak, std::max(std::fabs(l), std::fabs(r)));
             if (channelCount == 1) {
                 *out++ = 0.5f * (l + r);
                 continue;
@@ -308,6 +327,8 @@ void AudioGraph::render(float* out, int32_t numFrames, int32_t channelCount) {
             *out++ = r;
             for (int32_t ch = 2; ch < channelCount; ++ch) *out++ = 0.0f;
         }
+        peaks_[LevelMeters::kMaster] = masterPeak;  // after the limiter
+        meters_.update(peaks_.data(), clips_.data(), n);
         // Single writer (this thread).
         frame_.store(chunkStart + n, std::memory_order_relaxed);
         done += n;
@@ -318,7 +339,10 @@ AudioGraph::Buses AudioGraph::buses() const {
     Buses b{};
     b.delaySendL = dlyL_.data();
     b.reverbSendL = revL_.data();
-    for (std::size_t s = 0; s < kSlotCount; ++s) b.slotPostL[s] = postL_[s].data();
+    for (std::size_t s = 0; s < kSlotCount; ++s) {
+        b.slotPostL[s] = postL_[s].data();
+        b.slotPostR[s] = postR_[s].data();
+    }
     for (std::size_t t = 0; t < Tape::kTracks; ++t) b.trackL[t] = trackL_[t].data();
     return b;
 }

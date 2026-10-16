@@ -44,6 +44,9 @@ struct EngineStats {
 //  - The graph's control side (key notes, sequencer and tape commands, synth, drum, mixer and
 //    channel parameters, presets, render records, transport and tape readouts) is used only
 //    from the main thread, apart from reopen, which runs while no callback can be running.
+//  - The level meters (graph().meters()) are read lock-free from the main thread (relaxed
+//    atomics, no mutex_); they are reset when the stream closes (stop, or a stream error),
+//    when no callback can run.
 //
 // Lifetime: stop() only closes the stream. Patterns, pattern settings, parameters, presets,
 // drum parameters, mixer settings, the tempo and the tape (audio and undo history) live in

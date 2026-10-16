@@ -16,6 +16,7 @@
 #include "AudioEngine.h"
 #include "groove/DrumMachine.h"
 #include "groove/DrumParams.h"
+#include "groove/LevelMeters.h"
 #include "groove/MixParams.h"
 #include "groove/Pattern.h"
 #include "groove/Presets.h"
@@ -47,6 +48,11 @@ constexpr int kMaxRecordsPerPoll = 64;
 // canUndo, canRedo, hasAudio x4, loading].
 constexpr jsize kTapeStateSize = 9 + groove::Tape::kTracks;
 constexpr jsize kOverviewBins = groove::Tape::kOverviewBins;
+// NativeEngine.METER_BUFFER_SIZE: [level x15 (channels 0..11, delay, reverb, master), reserved,
+// clip x15 (1 or 0, same order), reserved]. Levels are linear peak amplitudes.
+constexpr jsize kMeterSlots = 16;
+constexpr jsize kMeterSize = 2 * kMeterSlots;
+static_assert(groove::LevelMeters::kCount < kMeterSlots, "meter layout has room for every meter");
 
 bool validParam(jint id) { return id >= 0 && id < static_cast<jint>(groove::kParamCount); }
 bool validDrumParam(jint id) { return id >= 0 && id < static_cast<jint>(groove::kDrumParamCount); }
@@ -527,6 +533,22 @@ JNIEXPORT jboolean JNICALL Java_com_groovebox_engine_NativeEngine_nativeStartExp
 
 JNIEXPORT jfloat JNICALL Java_com_groovebox_engine_NativeEngine_nativeExportProgress(JNIEnv*, jobject) {
     return engine().exportProgress();
+}
+
+// --- level meters ---
+
+JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeMeters(JNIEnv* env, jobject, jfloatArray out) {
+    if (out == nullptr || env->GetArrayLength(out) < kMeterSize) return;
+    // Lock-free reads of the audio thread's relaxed atomics: no mutex, no wait.
+    std::array<float, groove::LevelMeters::kCount> levels{};
+    std::array<bool, groove::LevelMeters::kCount> clips{};
+    engine().graph().meters().read(levels.data(), clips.data());
+    std::array<jfloat, kMeterSize> values{};
+    for (std::size_t i = 0; i < levels.size(); ++i) {
+        values[i] = static_cast<jfloat>(levels[i]);
+        values[static_cast<std::size_t>(kMeterSlots) + i] = clips[i] ? 1.0f : 0.0f;
+    }
+    env->SetFloatArrayRegion(out, 0, kMeterSize, values.data());
 }
 
 // --- diagnostics ---

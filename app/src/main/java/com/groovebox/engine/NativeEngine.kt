@@ -365,6 +365,35 @@ object NativeEngine {
      *  NaN when no export has run. */
     fun exportProgress(): Float = nativeExportProgress()
 
+    // --- level meters (v1 close-out) ---
+
+    /** Meters, in this order: mixer channels 0..11 (= their channel numbers), then the delay
+     *  return, the reverb return and the master. */
+    const val METER_COUNT = 15
+    const val METER_DELAY = 12
+    const val METER_REVERB = 13
+    const val METER_MASTER = 14
+    /** Index of the first clip flag in the [meters] buffer. */
+    const val METER_CLIP_OFFSET = 16
+    /** Size of the buffer [meters] fills (layout shared with engine/android/JniBridge.cpp). */
+    const val METER_BUFFER_SIZE = 32
+
+    /**
+     * Live peak levels, read lock-free from the audio thread (cheap: poll it every frame).
+     * Fills [out] (at least [METER_BUFFER_SIZE] long, else it is left untouched):
+     *  - out[0 until METER_COUNT]: each meter's level as a linear peak amplitude (1.0 = 0 dBFS;
+     *    capped at 16), with an instant attack and a 300 ms exponential release. Channels read
+     *    their strip's output (post-fader, post-mute, post-pan, the louder of L and R), the FX
+     *    returns read after their return level, the master after the limiter.
+     *  - out[METER_COUNT]: reserved (0).
+     *  - out[METER_CLIP_OFFSET + i]: 1 while meter i clipped in the last ~1 s, else 0. A channel
+     *    or return clips at full scale (|sample| >= 1); the master when its mix reached full
+     *    scale before the limiter.
+     *  - out[METER_BUFFER_SIZE - 1]: reserved (0).
+     * Every meter reads 0 while the stream is stopped.
+     */
+    fun meters(out: FloatArray) = nativeMeters(out)
+
     // --- diagnostics ---
 
     fun setBufferBursts(bursts: Int) = nativeSetBufferBursts(bursts)
@@ -478,4 +507,6 @@ object NativeEngine {
     private external fun nativeFlushTape(timeoutMs: Int): Boolean
     private external fun nativeStartExport(path: String, wholeTape: Boolean): Boolean
     private external fun nativeExportProgress(): Float
+    /** out = [level x15, reserved, clip x15, reserved]; see [meters] */
+    private external fun nativeMeters(out: FloatArray)
 }

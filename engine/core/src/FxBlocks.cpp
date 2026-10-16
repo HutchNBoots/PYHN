@@ -613,6 +613,7 @@ struct ChannelStrip::Impl {
     float panLTarget = 0.0f, panL = 0.0f, panRTarget = 0.0f, panR = 0.0f;
     float dlyTarget = 0.0f, dly = 0.0f, revTarget = 0.0f, rev = 0.0f;
     float open = 1.0f, openTarget = 1.0f;  // the mute ramp: 1 = playing, 0 = muted
+    float peak = 0.0f;                     // of the last process() output
 
     bool settled() const {
         return vol == volTarget && panL == panLTarget && panR == panRTarget && dly == dlyTarget && rev == revTarget &&
@@ -673,12 +674,15 @@ void ChannelStrip::process(const float* inL, const float* inR, int32_t numFrames
         const float m = s.open * s.open * (3.0f - 2.0f * s.open);
         const float gl = s.vol * m * s.panL;
         const float gr = s.vol * m * s.panR;
+        s.peak = 0.0f;
         if (gl == 0.0f && gr == 0.0f) return;  // adds nothing
+        float peak = 0.0f;
         for (int32_t i = 0; i < numFrames; ++i) {
             const float l = inL[i] * gl;
             const float r = inR[i] * gr;
             mixL[i] += l;
             mixR[i] += r;
+            peak = std::max(peak, std::max(std::fabs(l), std::fabs(r)));
             if (sendDelay) {
                 delayL[i] += l * s.dly;
                 delayR[i] += r * s.dly;
@@ -688,10 +692,12 @@ void ChannelStrip::process(const float* inL, const float* inR, int32_t numFrames
                 reverbR[i] += r * s.rev;
             }
         }
+        s.peak = peak;
         return;
     }
 
     const float k = s.k;
+    float peak = 0.0f;
     for (int32_t i = 0; i < numFrames; ++i) {
         smooth(s.vol, s.volTarget, k);
         smooth(s.panL, s.panLTarget, k);
@@ -709,6 +715,7 @@ void ChannelStrip::process(const float* inL, const float* inR, int32_t numFrames
         const float r = inR[i] * (s.vol * m * s.panR);
         mixL[i] += l;
         mixR[i] += r;
+        peak = std::max(peak, std::max(std::fabs(l), std::fabs(r)));
         if (sendDelay) {
             delayL[i] += l * s.dly;
             delayR[i] += r * s.dly;
@@ -718,6 +725,9 @@ void ChannelStrip::process(const float* inL, const float* inR, int32_t numFrames
             reverbR[i] += r * s.rev;
         }
     }
+    s.peak = peak;
 }
+
+float ChannelStrip::lastPeak() const { return impl_->peak; }
 
 }  // namespace groove

@@ -9,6 +9,7 @@
 
 #include "groove/DrumMachine.h"
 #include "groove/FxBlocks.h"
+#include "groove/LevelMeters.h"
 #include "groove/MasterBus.h"
 #include "groove/MixStore.h"
 #include "groove/Pattern.h"
@@ -33,6 +34,12 @@ class TapeStore;
 //   -> x mst.volume -> MasterBus limiter -> out
 //
 // Each slot's post-fader output alone is also a tape source (commit of one slot, F5.6).
+//
+// Level meters (meters()): per chunk, the peak of each channel strip's output (post-fader,
+// post-mute, post-pan; max of L and R), of each FX return after its return level, and of the
+// master after the limiter; a channel or return clips at |sample| >= 1, the master when the
+// mix reaches 1 before the limiter. The peaks come from the samples the mix already computes,
+// so metering never changes the sound.
 // Mixer, FX and tape settings come from lock-free stores (mixParams(), channelParams()),
 // read once per chunk; the tape's commands go through its own SPSC queue (tape()).
 //
@@ -115,11 +122,17 @@ public:
     // Frames rendered since prepare(). Readable from any thread.
     int64_t framesRendered() const { return frame_.load(std::memory_order_relaxed); }
 
+    // Level meters (see the class comment), updated once per chunk by render(). Readable from
+    // any thread; prepare() resets them, and so does meters().reset() while render() cannot run.
+    const LevelMeters& meters() const { return meters_; }
+    LevelMeters& meters() { return meters_; }
+
     // --- tests only: the buses of the last rendered chunk (valid for its first n frames) ---
     struct Buses {
         const float* delaySendL;
         const float* reverbSendL;
         const float* slotPostL[kSlotCount];
+        const float* slotPostR[kSlotCount];
         const float* trackL[Tape::kTracks];
     };
     Buses buses() const;
@@ -152,6 +165,7 @@ private:
     MixParamStore mixParams_;
     ChannelParamStore channelParams_;
     std::atomic<int64_t> frame_{0};
+    LevelMeters meters_;
 
     // --- audio-thread state ---
     float masterGain_ = 1.0f;
@@ -159,6 +173,9 @@ private:
     float reverbReturn_ = 0.0f;
     bool gainsInitialized_ = false;
     Tape::Params tapeParams_;
+    // This chunk's meter readings (LevelMeters order), filled by mix() and render().
+    std::array<float, LevelMeters::kCount> peaks_{};
+    std::array<bool, LevelMeters::kCount> clips_{};
 
     // Buffers (one chunk each).
     Chunk left_{}, right_{};                          // slot mix, then the master mix

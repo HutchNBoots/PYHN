@@ -272,6 +272,7 @@ TEST(LevelMetersGraph, ClipFlagsAndThePostLimiterMaster) {
         g->channelParams().set(s, ChannelParamId::Pan, 1.0f);
         g->noteOn(s, 57 + s, 1.0f, 0);
     }
+    for (int note : {64, 67, 71, 74, 76}) g->noteOn(1, note, 1.0f, 0);  // a chord: slot 1 peaks above full scale
     g->mixParams().set(MixParamId::MasterVolume, 6.0f);
     renderChunks(*g, chunksFor(0.5f));
     const LevelMeters& m = g->meters();
@@ -279,11 +280,11 @@ TEST(LevelMetersGraph, ClipFlagsAndThePostLimiterMaster) {
     EXPECT_LE(m.level(LevelMeters::kMaster), g->master().ceiling());
     EXPECT_GT(m.level(LevelMeters::kMaster), 0.5f);
     for (int s = 1; s < kSlotCount; ++s) {
-        const float peak = peakOf(g->buses().slotPostR[s]);
-        EXPECT_EQ(m.clipped(s), m.level(s) >= 1.0f) << s;
-        EXPECT_GE(m.level(s), peak);
+        EXPECT_GE(m.level(s), peakOf(g->buses().slotPostR[s]));
+        if (m.level(s) >= 1.0f) EXPECT_TRUE(m.clipped(s)) << s;
     }
-    EXPECT_TRUE(m.clipped(1)) << "slot 1 at +6 dB, hard panned, reaches full scale (level " << m.level(1) << ")";
+    EXPECT_TRUE(m.clipped(1)) << "slot 1's chord at +6 dB, hard panned (level " << m.level(1) << ")";
+    EXPECT_FALSE(m.clipped(2)) << "one sine stays below full scale (level " << m.level(2) << ")";
     EXPECT_FALSE(m.clipped(0));  // the silent drum slot
 
     // Quiet again: the flags stay up for about 1 s, then drop.

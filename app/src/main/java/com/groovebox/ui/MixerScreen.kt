@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -33,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.groovebox.engine.ParamSpec
+import com.groovebox.ui.model.MeterScale
 import com.groovebox.ui.model.MixFormat
 import com.groovebox.ui.model.MixKeys
 import com.groovebox.ui.model.MixerLayout
@@ -40,6 +43,7 @@ import com.groovebox.ui.model.MixerPad
 import com.groovebox.ui.model.ParamMapping
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
+import kotlinx.coroutines.isActive
 
 private object MixerColors {
     val Mute = GrooveColors.Strips[0]
@@ -48,6 +52,9 @@ private object MixerColors {
     val Master = GrooveColors.Strips[1]
     val PadEdge = Color(0xFF26262C)
     val Sub = Color(0xFF7A7872)
+    val Clip = GrooveColors.Warn
+    val ClipOff = GrooveColors.Divider
+    val Marker = GrooveColors.Text
 }
 
 private fun padColour(pad: MixerPad): Color = when (pad) {
@@ -109,9 +116,14 @@ private fun MixerDisplay(state: GrooveState, audioStarted: Boolean, debug: Debug
 }
 
 /**
- * One column per pad: its fader level as a bar (set by the faders, not metered: the engine
- * has no metering API), the value above and the name below. Muted channels are greyed with
- * a coral M. Tapping a column selects that channel (Shift + tap mutes), like the pads.
+ * One column per pad: the live peak level (NativeEngine.meters, dB-scaled like the fader:
+ * -60..+6 dB) as a bar, the fader setting as a marker line across it, a clip light on top
+ * (coral for ~1 s after the channel reached full scale), the setting's value above and the name
+ * below. Muted channels are greyed with a coral M. Tapping a column selects that channel
+ * (Shift + tap mutes), like the pads.
+ *
+ * The meters are polled every frame while this shows; only the bars' draw phase reads them,
+ * so a new reading redraws the bars without recomposing anything.
  */
 @Composable
 private fun Levels(state: GrooveState, modifier: Modifier) {
@@ -119,6 +131,10 @@ private fun Levels(state: GrooveState, modifier: Modifier) {
     val mix = state.mix
     val selected = state.mixer.selected
     val volume = mix.channelSpec(MixKeys.VOLUME)
+    val meters = state.mixer.meters
+    LaunchedEffect(meters) {
+        while (isActive) withFrameNanos { meters.poll() }
+    }
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(4))) {
         for (pad in MixerLayout.pads) {
             val channel = MixerLayout.channelOf(pad)
@@ -133,7 +149,7 @@ private fun Levels(state: GrooveState, modifier: Modifier) {
                 channel != null -> mix.channel(channel, spec)
                 else -> mix.mix(spec)
             }
-            val level = spec?.let { ParamMapping.toNormalized(it, value).toFloat() } ?: 0f
+            val setting = spec?.let { ParamMapping.toNormalized(it, value).toFloat() } ?: 0f
             val muted = channel != null && mix.muted(channel)
             val text = when {
                 spec == null -> "—"
@@ -173,10 +189,35 @@ private fun Levels(state: GrooveState, modifier: Modifier) {
                         .weight(1f)
                         .fillMaxWidth(0.55f)
                         .drawBehind {
+                            meters.version  // read here, so each new reading redraws this bar
                             val r = CornerRadius(d.px(3f))
-                            drawRoundRect(GrooveColors.Ground, cornerRadius = r)
-                            val h = size.height * level.coerceIn(0f, 1f)
+                            // Clip light on top, then the meter well below it.
+                            val clipH = d.px(5f)
+                            val top = clipH + d.px(3f)
+                            val well = (size.height - top).coerceAtLeast(0f)
+                            drawRoundRect(
+                                if (meters.readings.clipped(pad)) MixerColors.Clip else MixerColors.ClipOff,
+                                size = Size(size.width, clipH),
+                                cornerRadius = CornerRadius(d.px(2f)),
+                            )
+                            drawRoundRect(GrooveColors.Ground, Offset(0f, top), Size(size.width, well), r)
+                            val h = well * meters.readings.height(pad)
                             if (h > 0f) drawRoundRect(colour, Offset(0f, size.height - h), Size(size.width, h), r)
+                            // The fader setting: a line across the bar, with a ground-coloured
+                            // edge so it reads over the meter.
+                            val y = top + well * (1f - setting.coerceIn(0f, 1f))
+                            val over = d.px(3f)
+                            val line = d.px(2f)
+                            drawRect(
+                                GrooveColors.Ground,
+                                Offset(-over, y - line),
+                                Size(size.width + 2 * over, 2 * line),
+                            )
+                            drawRect(
+                                if (muted) GrooveColors.TextDim else MixerColors.Marker,
+                                Offset(-over, y - line / 2),
+                                Size(size.width + 2 * over, line),
+                            )
                             if (isSelected) {
                                 drawRoundRect(
                                     GrooveColors.Shift,

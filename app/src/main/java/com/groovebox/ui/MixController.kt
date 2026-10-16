@@ -4,10 +4,12 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import com.groovebox.engine.NativeEngine
 import com.groovebox.engine.ParamSpec
 import com.groovebox.ui.model.DemoContent
+import com.groovebox.ui.model.MeterReadings
 import com.groovebox.ui.model.MixFormat
 import com.groovebox.ui.model.MixKeys
 import com.groovebox.ui.model.MixLimits
@@ -172,6 +174,9 @@ class TapeController(private val app: GrooveState, private val values: MixValues
 class MixerController(private val app: GrooveState, private val values: MixValues) : StripHost {
     val locks = StripLocks(app::sessionChanged)
 
+    /** The live level meters, polled by the Mixer screen while it shows. */
+    val meters = MixerMeters()
+
     var selected: MixerPad by mutableStateOf(MixerPad.Slot(1))
         private set
 
@@ -220,4 +225,24 @@ class MixerController(private val app: GrooveState, private val values: MixValue
     override fun isLocked(spec: ParamSpec): Boolean = locks.isLocked(lockKey(spec))
     override fun setLocked(spec: ParamSpec, locked: Boolean) = locks.set(lockKey(spec), locked)
     override fun format(spec: ParamSpec, value: Double): String = MixFormat.format(spec, value)
+}
+
+/**
+ * The Mixer screen's live level meters. [poll] reads the engine's meters (lock-free, cheap) and
+ * is called once per frame while the Mixer screen shows. [version] changes whenever a reading
+ * did: read it only in the draw phase, so new readings redraw the bars without recomposing the
+ * screen. Main thread only.
+ */
+@Stable
+class MixerMeters {
+    private val buffer = FloatArray(NativeEngine.METER_BUFFER_SIZE)
+    val readings = MeterReadings()
+
+    var version by mutableIntStateOf(0)
+        private set
+
+    fun poll() {
+        NativeEngine.meters(buffer)
+        if (readings.read(buffer)) version++
+    }
 }

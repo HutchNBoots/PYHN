@@ -13,6 +13,7 @@
 #include "groove/Adsr.h"
 #include "groove/AudioGraph.h"
 #include "groove/Filters.h"
+#include "groove/LevelMeters.h"
 #include "groove/Lfo.h"
 #include "groove/Oscillator.h"
 #include "groove/Presets.h"
@@ -298,4 +299,48 @@ TEST(RealtimeSafety, TapePersistenceLoadAndExportNeverAllocateOnTheAudioThread) 
     EXPECT_GT(exports, 0);
     EXPECT_GT(snapshots, 0) << "a snapshot was copied during the counted renders";
     EXPECT_GT(tape.persistPendingFrames() + static_cast<int64_t>(tape.changeSequence()), 0);
+}
+
+// Level meters (v1 close-out): metering every channel, both returns and the master, through
+// clips (channels and pre-limiter master), mutes, holds and releases, at odd chunk sizes, with
+// the control side reading the meters between callbacks, never allocates.
+TEST(RealtimeSafety, LevelMeteringUnderLoudTrafficNeverAllocates) {
+    auto owned = std::make_unique<AudioGraph>();
+    AudioGraph& g = *owned;
+    g.prepare(48000.0f);
+    ChannelParamStore& ch = g.channelParams();
+    for (int s = 0; s < kSlotCount; ++s) {
+        ch.set(s, ChannelParamId::DelaySend, 0.7f);
+        ch.set(s, ChannelParamId::ReverbSend, 0.7f);
+    }
+    std::vector<float> out(4096 * 2);
+    std::array<float, LevelMeters::kCount> levels{};
+    std::array<bool, LevelMeters::kCount> clips{};
+    g.render(out.data(), 256, 2);
+    int clipped = 0;
+
+    groove::test::AllocationScope scope;
+    for (int i = 0; i < 2000; ++i) {
+        const int slot = i % kSlotCount;
+        if (i % 3 == 0) g.noteOn(slot, slot == 0 ? 48 + i % 16 : 40 + i % 36, 1.0f, 0);
+        if (i % 7 == 0) g.noteOff(slot, slot == 0 ? 48 + (i - 3) % 16 : 40 + (i - 3) % 36);
+        if (i % 11 == 0) ch.set(slot, ChannelParamId::Volume, i % 22 == 0 ? 6.0f : -12.0f);
+        if (i % 13 == 0) ch.set(slot, ChannelParamId::Mute, static_cast<float>((i / 13) % 2));
+        if (i % 17 == 0) ch.set(slot, ChannelParamId::Pan, static_cast<float>(i % 3) - 1.0f);
+        if (i % 19 == 0) g.mixParams().set(MixParamId::MasterVolume, i % 38 == 0 ? 6.0f : -6.0f);
+        if (i % 300 == 299) g.allNotesOff();
+        const int32_t frames = (i % 9 == 0) ? 4096 : 1 + (i * 37) % 300;
+        g.render(out.data(), frames, i % 2 == 0 ? 2 : 1);
+        g.meters().read(levels.data(), clips.data());
+        clipped += clips[LevelMeters::kMaster] ? 1 : 0;
+        NoteOnRender rec;
+        while (g.drums().popNoteOnRender(rec)) {
+        }
+        for (int s = 1; s < kSlotCount; ++s) {
+            while (g.synth(s).popNoteOnRender(rec)) {
+            }
+        }
+    }
+    EXPECT_EQ(scope.count(), 0u);
+    EXPECT_GT(clipped, 0) << "the traffic really clipped the master";
 }

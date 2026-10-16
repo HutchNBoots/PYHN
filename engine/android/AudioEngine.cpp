@@ -42,6 +42,8 @@ void AudioEngine::stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     wantRunning_ = false;
     closeLocked();
+    // No callback can run now: drop the meters to silence rather than freeze the last reading.
+    graph_.meters().reset();
     // Nothing renders now: hand the tape's pending changes over at once (the writer's pump
     // keeps going with whatever didn't fit into the ring).
     graph_.tape().applyPendingOffline();
@@ -251,6 +253,7 @@ void AudioEngine::onErrorAfterClose(oboe::AudioStream* stream, oboe::Result erro
     std::lock_guard<std::mutex> lock(mutex_);
     if (stream != stream_.get()) return;  // a stream we already replaced or closed
     stream_.reset();
+    graph_.meters().reset();  // the stream is closed, so no callback runs (a reopen prepares anyway)
     __android_log_print(ANDROID_LOG_WARN, kTag, "stream closed: %s", oboe::convertToText(error));
     if (wantRunning_ && error == oboe::Result::ErrorDisconnected) openAndStartLocked();
 }
