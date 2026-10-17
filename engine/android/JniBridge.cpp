@@ -126,6 +126,12 @@ JNIEXPORT jboolean JNICALL Java_com_groovebox_engine_NativeEngine_nativeNoteOn(J
     return engine().graph().noteOn(slot, note, velocity, tapTimeNs) ? JNI_TRUE : JNI_FALSE;
 }
 
+// Build-20: an audition (picking a drum lane): plays like a key, never recorded.
+JNIEXPORT jboolean JNICALL Java_com_groovebox_engine_NativeEngine_nativeAuditionOn(JNIEnv*, jobject, jint slot, jint note,
+                                                                                   jfloat velocity) {
+    return engine().graph().noteOn(slot, note, velocity, 0, /*record=*/false) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL Java_com_groovebox_engine_NativeEngine_nativeNoteOff(JNIEnv*, jobject, jint slot,
                                                                                 jint note) {
     return engine().graph().noteOff(slot, note) ? JNI_TRUE : JNI_FALSE;

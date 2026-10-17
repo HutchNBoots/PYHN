@@ -75,7 +75,8 @@ Step { hitCount 0..8; hits[8] }      // a step is on when it has a hit
 - Live record adds a hit (note, played velocity, pattern gate, 1, 0) unless that note is
   there; when 8 hits are there, the last is replaced (same rule as now, at 8).
 - Session format **v3**: v2 steps migrate as one hit per note with the step's velocity,
-  gate (gate 0.05..1 kept as length; −1 stays pattern gate), probability, nudge 0. Steps that
+  gate (gate 0.05..1 kept as length; −1 stays pattern gate; a gate below 1/16 of a step,
+  i.e. 0.05..0.0625, loads as 1/16, the shortest length), probability, nudge 0. Steps that
   were off are dropped.
 
 ### JNI contract (fixed now so engine and UI can work in parallel)

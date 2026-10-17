@@ -192,6 +192,9 @@ object NativeEngine {
      *  into the slot's current pattern at the nearest step (reported via [pollRecorded]). */
     fun noteOn(slot: Int, note: Int, velocity: Float, tapTimeNs: Long): Boolean =
         nativeNoteOn(slot, note, velocity, tapTimeNs)
+    /** Plays [note] like a key but never records it, even armed (build-20: picking a drum lane).
+     *  End it with [noteOff]. */
+    fun auditionOn(slot: Int, note: Int, velocity: Float): Boolean = nativeAuditionOn(slot, note, velocity)
     fun noteOff(slot: Int, note: Int): Boolean = nativeNoteOff(slot, note)
     /** Every slot. */
     fun allNotesOff() = nativeAllNotesOff()
@@ -450,6 +453,7 @@ object NativeEngine {
     private external fun nativeStart(): Boolean
     private external fun nativeStop()
     private external fun nativeNoteOn(slot: Int, note: Int, velocity: Float, tapTimeNs: Long): Boolean
+    private external fun nativeAuditionOn(slot: Int, note: Int, velocity: Float): Boolean
     private external fun nativeNoteOff(slot: Int, note: Int): Boolean
     private external fun nativeAllNotesOff()
     private external fun nativeParamCount(): Int

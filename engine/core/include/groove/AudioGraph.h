@@ -82,8 +82,10 @@ public:
     void prepare(float sampleRate);
 
     // --- control thread: notes from the keys ---
-    // slot 0..7, note 0..127 (others are rejected); false if the queue is full.
-    bool noteOn(int slot, int note, float velocity, int64_t tapTimeNs);
+    // slot 0..7, note 0..127 (others are rejected); false if the queue is full. With
+    // record false (an audition, e.g. picking a drum lane) the note plays but live recording
+    // never writes it, even while armed and playing.
+    bool noteOn(int slot, int note, float velocity, int64_t tapTimeNs, bool record = true);
     bool noteOff(int slot, int note);
     bool allNotesOff();  // every slot
 
@@ -141,6 +143,7 @@ private:
     struct KeyNote {
         int32_t slot = 0;  // -1: every slot (all notes off)
         NoteEvent event;
+        bool record = true;  // a note-on live recording may write (false: an audition)
     };
 
     using Chunk = std::array<float, kChunkFrames>;

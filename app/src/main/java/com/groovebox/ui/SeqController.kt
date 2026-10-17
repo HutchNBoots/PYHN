@@ -63,9 +63,17 @@ class SeqController(private val app: GrooveState) : StripHost {
     /** A step strip over a step without that hit: dimmed; moving it creates the hit. */
     override fun dimmed(spec: ParamSpec): Boolean = spec in SeqStrips.step && focusHit() == null
 
-    override fun gestureStart(spec: ParamSpec) = app.history.begin()
+    /** Open strip drags: spec key → their undo group's token. */
+    private val drags = HashMap<String, Int>()
 
-    override fun gestureEnd(spec: ParamSpec) = app.history.end()
+    override fun gestureStart(spec: ParamSpec) {
+        drags.remove(spec.key)?.let(app.history::end)
+        drags[spec.key] = app.history.begin()
+    }
+
+    override fun gestureEnd(spec: ParamSpec) {
+        drags.remove(spec.key)?.let(app.history::end)
+    }
 
     override fun value(spec: ParamSpec): Double {
         val settings = app.settings()

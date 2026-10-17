@@ -35,6 +35,7 @@ import com.groovebox.ui.model.PatternSettings
 import com.groovebox.ui.model.PatternSink
 import com.groovebox.ui.model.PatternStore
 import com.groovebox.ui.model.RecordButton
+import com.groovebox.ui.model.RecordTake
 import com.groovebox.ui.model.Scale
 import com.groovebox.ui.model.SeqLimits
 import com.groovebox.ui.model.SlotSwipe
@@ -253,10 +254,11 @@ class GrooveState : KeyListener {
     var clearArmedLane by mutableStateOf(false)
         private set
 
-    // Open undo groups (each a begin() the matching end() closes).
-    private var takeGroup = false
-    private var motionGroup = false
-    private var keyGroup = false
+    // Open undo groups: the token of each begin(), for the matching end().
+    private val take = RecordTake()
+    private var takeToken = 0
+    private var motionToken: Int? = null
+    private var keyToken: Int? = null
 
     /** Monotonic time of the last display frame, ms (the clock for export and Clear). */
     private var nowMs = 0L
@@ -418,10 +420,7 @@ class GrooveState : KeyListener {
         // one undo step for the chord).
         val steps = editingSteps
         if (steps.isNotEmpty()) {
-            if (!keyGroup) {
-                keyGroup = true
-                history.begin()
-            }
+            if (keyToken == null) keyToken = history.begin()
             val pattern = editPattern
             for (step in steps) history.edit(slot, pattern) { store.setStepNotes(slot, pattern, step, chord, velocity) }
         }
@@ -431,13 +430,12 @@ class GrooveState : KeyListener {
         val slot = heldNoteSlot.remove(note) ?: selectedSlot
         NativeEngine.noteOff(slot, note)
         noteMemory.keyUp(slot, note)
-        if (keyGroup && heldNoteSlot.isEmpty()) endKeyGroup()
+        if (heldNoteSlot.isEmpty()) endKeyGroup()
     }
 
     private fun endKeyGroup() {
-        if (!keyGroup) return
-        keyGroup = false
-        history.end()
+        keyToken?.let(history::end)
+        keyToken = null
     }
 
     /** The steps keys write into: synth steps selected on the Sequencer screen. */
@@ -446,15 +444,18 @@ class GrooveState : KeyListener {
 
     // --- drum lanes (build-20) ---
 
-    /** A sound of the Seq screen's 4 x 4 grid touched: it becomes the lane and plays (like its key). */
+    /**
+     * A sound of the Seq screen's 4 x 4 grid touched: it becomes the lane and is auditioned,
+     * never recorded, even with Record armed (picking a lane is not playing).
+     */
     fun laneDown(key: Int, velocity: Float = SeqLimits.DEFAULT_VELOCITY) {
         if (key !in 0 until DrumLayout.KEY_COUNT || !isDrum(selectedSlot)) return
         drum.select(key)
-        keyDown(DrumLayout.noteOf(key), velocity, 0L)
+        NativeEngine.auditionOn(NativeEngine.DRUM_SLOT, DrumLayout.noteOf(key), velocity)
     }
 
     fun laneUp(key: Int) {
-        if (key in 0 until DrumLayout.KEY_COUNT) keyUp(DrumLayout.noteOf(key))
+        if (key in 0 until DrumLayout.KEY_COUNT) NativeEngine.noteOff(NativeEngine.DRUM_SLOT, DrumLayout.noteOf(key))
     }
 
     /** The notes some step of the shown pattern plays (the sound grid marks them). */
@@ -487,9 +488,20 @@ class GrooveState : KeyListener {
 
     // --- undo (build-20) ---
 
-    /** The Seq footer's Undo chip: undo, or redo with Shift. */
+    /**
+     * The Seq footer's Undo chip: undo, or redo with Shift. Recorded writes the engine has
+     * already reported are applied first, so the restore sees them. A tiny window remains: a
+     * note the engine records after this poll but before the restore's commands reach the
+     * audio thread arrives in a later frame, after the restore (it then lands on the restored
+     * mirror; if the restore also rewrote that step, the engine's copy lacks the note).
+     */
     fun seqUndoPress() {
+        applyRecorded(NativeEngine.pollRecorded())
         if (shift.shifted) history.redo() else history.undo()
+    }
+
+    private fun applyRecorded(recorded: List<RecordedEvent>) {
+        for (e in recorded) history.edit(e.slot, e.pattern) { store.applyRecorded(e) }
     }
 
     // --- step pads ---
@@ -558,10 +570,7 @@ class GrooveState : KeyListener {
         NativeEngine.setMotionRecording(true)
         motionHeld = true
         // Motion recorded while Record is held is one undo step.
-        if (!motionGroup) {
-            motionGroup = true
-            history.begin()
-        }
+        if (motionToken == null) motionToken = history.begin()
     }
 
     fun recordRelease(timeMs: Long) {
@@ -571,13 +580,15 @@ class GrooveState : KeyListener {
         if (armChanged) {
             armed = recordButton.armed
             NativeEngine.setRecordArmed(armed)
-            // A live-record take, Record on to Record off, is one undo step.
-            if (armed && !takeGroup) {
-                takeGroup = true
-                history.begin()
-            } else if (!armed && takeGroup) {
-                takeGroup = false
-                history.end()
+            // A live-record take, Record on to Record off, is one undo step. It closes in
+            // [frame], once the engine reports itself disarmed and its last notes are in.
+            when (take.armed(armed)) {
+                RecordTake.Action.Open -> takeToken = history.begin()
+                RecordTake.Action.CloseAndOpen -> {
+                    history.end(takeToken)
+                    takeToken = history.begin()
+                }
+                RecordTake.Action.None -> Unit
             }
         }
         endMotionGroup()
@@ -591,9 +602,8 @@ class GrooveState : KeyListener {
     }
 
     private fun endMotionGroup() {
-        if (!motionGroup) return
-        motionGroup = false
-        history.end()
+        motionToken?.let(history::end)
+        motionToken = null
     }
 
     fun setTempo(bpm: Double) {
@@ -658,7 +668,8 @@ class GrooveState : KeyListener {
             queuedPattern[s].intValue = queued
         }
         if (patternsMoved) sessionChanged()
-        for (e in recorded) history.edit(e.slot, e.pattern) { store.applyRecorded(e) }
+        applyRecorded(recorded)
+        if (take.frameApplied(transport.recordArmed)) history.end(takeToken)
         blinkOn = (frameTimeNanos / BLINK_NS) % 2 == 0L
         if (clearArmed && !clearConfirm.isArmed(clearTarget(clearArmedLane), nowMs)) clearArmed = false
     }
@@ -909,6 +920,7 @@ class GrooveState : KeyListener {
         heldNoteSlot.clear()
         noteMemory.releaseAll()
         endKeyGroup()
+        if (take.forceClose()) history.end(takeToken)
     }
 
     private companion object {

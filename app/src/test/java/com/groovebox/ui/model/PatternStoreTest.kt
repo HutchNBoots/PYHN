@@ -232,7 +232,7 @@ class PatternStoreTest {
     // --- one pattern's copy (undo) ---
 
     @Test
-    fun restorePatternPutsBackOnePatternAndResendsIt() {
+    fun restorePatternPutsBackOnePatternAndSendsWhatDiffers() {
         store.setSettings(1, 2, PatternSettings(length = 12, gate = 0.3f))
         store.toggleStep(1, 2, 0, listOf(60), 1f)
         store.setMotionValue(1, 2, 8, 0, 900f)
@@ -245,7 +245,8 @@ class PatternStoreTest {
         store.restorePattern(saved)
         assertEquals(saved, store.patternSnapshot(1, 2))
         assertEquals(
-            listOf("clear 1 2", "settings 1 2 12 1 0.0 0.3", "step 1 2 0 [60 1.0 -1.0 1.0 0.0]", "motion 1 2 8 0 900.0"),
+            // Only what differs, never a clear (it would reset a playing pattern's length and position).
+            listOf("step 1 2 0 [60 1.0 -1.0 1.0 0.0]", "step 1 2 5", "motion 1 2 8 0 900.0"),
             sink.calls,
         )
         assertTrue("other patterns untouched", store.step(1, 3, 0).on)

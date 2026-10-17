@@ -6,9 +6,17 @@ package com.groovebox.ui.model
  *
  * Edits go through [edit], naming the pattern they touch. Between [begin] and [end] (one strip
  * drag, one live-record take from Record on to off, one chord played into selected steps)
- * every edit joins one step; groups nest. An edit or group that changes nothing leaves no step.
- * Undo and redo put whole patterns back through [PatternStore.restorePattern], which re-sends
- * them to the engine. Pure Kotlin, main thread only.
+ * every edit joins one step; groups nest. Any edit made while a group is open joins it, e.g.
+ * a pad tap with the other thumb during a strip drag (accepted: both are one gesture's worth
+ * of editing). An edit or group that changes nothing leaves no step.
+ *
+ * [undo] and [redo] end every open group (it becomes a step first, if it changed anything).
+ * The [begin] tokens of those groups go stale: their [end] does nothing, and their later edits
+ * are single steps, so a drag that keeps moving after an undo neither merges into nor wipes
+ * the redo just made by its lift.
+ *
+ * Undo and redo put patterns back through [PatternStore.restorePattern], which sends the
+ * engine only what differs. Pure Kotlin, main thread only.
  */
 class PatternHistory(private val store: PatternStore) {
     private class Entry(val before: List<PatternSnapshot>)
@@ -16,8 +24,10 @@ class PatternHistory(private val store: PatternStore) {
     private val undoStack = ArrayDeque<Entry>()
     private val redoStack = ArrayDeque<Entry>()
 
-    /** Open group: the patterns it touched, as they were when first touched. */
+    /** Open group: its nesting depth, its generation (the [begin] token), and the patterns it
+     *  touched, as they were when first touched. */
     private var depth = 0
+    private var generation = 0
     private val captured = LinkedHashMap<Int, PatternSnapshot>()
 
     /** Called after anything that changes [canUndo] or [canRedo]. */
@@ -43,19 +53,22 @@ class PatternHistory(private val store: PatternStore) {
         return result
     }
 
-    fun begin() {
+    /** Opens (or nests into) a group; pass the token to [end]. */
+    fun begin(): Int {
         depth++
+        return generation
     }
 
-    fun end() {
-        if (depth == 0) return
+    /** Ends the group [token] opened; a stale token (an undo or redo came between) does nothing. */
+    fun end(token: Int) {
+        if (token != generation || depth == 0) return
         depth--
         if (depth == 0) closeGroup()
     }
 
-    /** Undoes the last step (closing an open group first); false when there is none. */
+    /** Undoes the last step (ending any open group first); false when there is none. */
     fun undo(): Boolean {
-        if (depth > 0) closeGroup()
+        endAllGroups()
         val entry = undoStack.removeLastOrNull() ?: return false
         redoStack.addLast(apply(entry))
         onChange?.invoke()
@@ -63,15 +76,23 @@ class PatternHistory(private val store: PatternStore) {
     }
 
     fun redo(): Boolean {
-        if (depth > 0) closeGroup()
+        endAllGroups()
         val entry = redoStack.removeLastOrNull() ?: return false
         undoStack.addLast(apply(entry))
         onChange?.invoke()
         return true
     }
 
+    private fun endAllGroups() {
+        if (depth == 0) return
+        depth = 0
+        generation++
+        closeGroup()
+    }
+
     /** Forgets every step (e.g. a restored session). */
     fun clear() {
+        endAllGroups()
         undoStack.clear()
         redoStack.clear()
         captured.clear()

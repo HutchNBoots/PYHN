@@ -86,11 +86,11 @@ Instrument& AudioGraph::instrument(int slot) {
     return *instruments_[static_cast<std::size_t>(std::clamp(slot, 0, kSlots - 1))];
 }
 
-bool AudioGraph::noteOn(int slot, int note, float velocity, int64_t tapTimeNs) {
+bool AudioGraph::noteOn(int slot, int note, float velocity, int64_t tapTimeNs, bool record) {
     if (slot < 0 || slot >= kSlots || note < 0 || note > 127) return false;
     if (std::isnan(velocity)) velocity = 1.0f;
     velocity = std::clamp(velocity, 0.0f, 1.0f);
-    return notes_.push({slot, {NoteEvent::Type::NoteOn, note, velocity, tapTimeNs}});
+    return notes_.push({slot, {NoteEvent::Type::NoteOn, note, velocity, tapTimeNs}, record});
 }
 
 bool AudioGraph::noteOff(int slot, int note) {
@@ -122,7 +122,7 @@ void AudioGraph::forwardNotes(int64_t frame) {
         if (e.type == NoteEvent::Type::NoteOn) {
             const bool queued = k.slot == kDrumSlot ? drums_->noteOn(e.note, e.velocity, e.tapTimeNs)
                                                     : synth(k.slot).noteOn(e.note, e.velocity, e.tapTimeNs);
-            if (queued) sequencer_->recordLiveNote(k.slot, e.note, e.velocity, frame);
+            if (queued && k.record) sequencer_->recordLiveNote(k.slot, e.note, e.velocity, frame);
         } else if (k.slot == kDrumSlot) {
             drums_->noteOff(e.note);
         } else {

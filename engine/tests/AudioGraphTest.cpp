@@ -172,6 +172,26 @@ TEST(AudioGraph, LiveRecordingUsesTheFrameTheNoteIsApplied) {
     EXPECT_TRUE(seq.pattern(2, 0).steps[0].hasNote(60));
 }
 
+// Build-20: picking a drum lane auditions the sound; it plays but never records, even armed.
+TEST(AudioGraph, AnAuditionPlaysButIsNotRecorded) {
+    auto g = std::make_unique<AudioGraph>();
+    Sequencer& seq = g->sequencer();
+    seq.setRecordArmed(true);
+    seq.play();
+    renderGraph(*g, 960);
+    EXPECT_TRUE(g->noteOn(0, 50, 1.0f, 0, /*record=*/false));
+    EXPECT_TRUE(g->noteOn(2, 60, 1.0f, 0, /*record=*/false));
+    EXPECT_GT(peakAbs(renderGraph(*g, 4800)), 0.01f);  // it sounds
+    RecordedEvent e;
+    EXPECT_FALSE(seq.popRecorded(e));
+    EXPECT_FALSE(seq.pattern(0, 0).steps[0].hasNote(50));
+    EXPECT_FALSE(seq.pattern(2, 0).steps[0].hasNote(60));
+    // A recording note-on still records.
+    EXPECT_TRUE(g->noteOn(0, 50, 1.0f, 0));
+    renderGraph(*g, 96);
+    EXPECT_TRUE(seq.popRecorded(e));
+}
+
 TEST(AudioGraph, KeysPlayEverySlotAndAllNotesOffStopsThem) {
     auto g = std::make_unique<AudioGraph>();
     EXPECT_FALSE(g->noteOn(8, 60, 1.0f, 0));

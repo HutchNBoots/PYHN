@@ -316,17 +316,70 @@ class PatternStore(private val sink: PatternSink) {
     }
 
     /**
-     * Puts one pattern back as [snap] holds it (undo, redo): the engine's copy is cleared and
-     * sent the whole pattern again, so it ends up equal to the mirror.
+     * Puts one pattern back as [snap] holds it (undo, redo), sending the engine only what
+     * differs: settings if they differ, each step that differs (an empty one included), a
+     * clear for each lane the snapshot lacks, and each lane value that differs. Never a
+     * clearPattern: that would reset a playing pattern's length (and so its position) and the
+     * engine's motion overrides, and could flood the command queue.
      */
     fun restorePattern(snap: PatternSnapshot) {
         val p = data(snap.slot, snap.pattern) ?: return
-        p.settings = DEFAULT_SETTINGS
-        p.steps.fill(EMPTY_STEP)
-        p.lanes.clear()
-        sink.clearPattern(snap.slot, snap.pattern)
-        load(p, snap)
-        changed()
+        val slot = snap.slot
+        val pattern = snap.pattern
+        var any = false
+        val s = snap.settings.clamped()
+        if (s != p.settings) {
+            p.settings = s
+            sink.setPatternSettings(slot, pattern, s.length, s.rate, s.shuffle, s.gate)
+            any = true
+        }
+        for (i in 0 until SeqLimits.STEPS) {
+            val want = snap.steps[i]?.let(::clampStep) ?: EMPTY_STEP
+            if (want == p.steps[i]) continue
+            p.steps[i] = want
+            send(slot, pattern, i, want)
+            any = true
+        }
+        // The lanes the snapshot holds (as [load] accepts them), in its order.
+        val wanted = ArrayList<LaneSnapshot>()
+        for (laneSnap in snap.lanes) {
+            if (wanted.size >= SeqLimits.LANES) break
+            if (wanted.any { it.target == laneSnap.target }) continue
+            val points = laneSnap.points.filter { it.step in 0 until SeqLimits.STEPS && !it.value.isNaN() && !it.value.isInfinite() }
+            if (points.isNotEmpty()) wanted += LaneSnapshot(laneSnap.target, points)
+        }
+        val gone = p.lanes.filter { lane -> wanted.none { it.target == lane.target } }
+        for (lane in gone) {
+            p.lanes.remove(lane)
+            sink.clearMotionLane(slot, pattern, lane.target)
+            any = true
+        }
+        val ordered = ArrayList<MotionLane>(wanted.size)
+        for (laneSnap in wanted) {
+            val lane = p.lanes.firstOrNull { it.target == laneSnap.target } ?: MotionLane(laneSnap.target)
+            ordered += lane
+            val values = arrayOfNulls<LanePoint>(SeqLimits.STEPS)
+            for (pt in laneSnap.points) values[pt.step] = pt
+            for (i in 0 until SeqLimits.STEPS) {
+                val pt = values[i]
+                val v = pt?.value ?: Float.NaN
+                val stamp = pt?.stamp?.coerceAtLeast(1L) ?: 0L
+                if (stamp > stampCounter) stampCounter = stamp
+                if (lane.valueAt(i).sameAs(v)) {
+                    lane.stamps[i] = stamp // the mirror's display order only; the engine has the value
+                    continue
+                }
+                lane.set(i, v, stamp)
+                sink.setMotionValue(slot, pattern, laneSnap.target, i, v)
+                any = true
+            }
+        }
+        if (ordered != p.lanes) {
+            p.lanes.clear()
+            p.lanes.addAll(ordered)
+            any = true
+        }
+        if (any) changed()
     }
 
     private fun snapshotOf(slot: Int, pattern: Int, p: PatternData): PatternSnapshot {
