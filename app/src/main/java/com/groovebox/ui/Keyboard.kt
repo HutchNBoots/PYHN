@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.IntSize
 import com.groovebox.ui.model.KeyTouchTracker
 import com.groovebox.ui.model.KeyboardLayout
 import com.groovebox.ui.theme.GrooveColors
+import com.groovebox.ui.theme.GrooveRadius
 import com.groovebox.ui.theme.LocalDesign
 
 /** The keyboard's size as last laid out; read only by the touch handler, so not Compose state. */
@@ -86,9 +87,8 @@ fun Keyboard(
     // Keys still held when the keyboard leaves the screen are released.
     DisposableEffect(tracker) { onDispose { tracker.cancel() } }
     val textMeasurer = rememberTextMeasurer()
-    val labelStyle = d.value(11f, GrooveColors.TextDim)
-    val smallLabelStyle = d.value(9f, GrooveColors.TextDim)
-    val blackLabelStyle = d.value(9f, GrooveColors.TextDim)
+    // CX review R12: every key label at the caption size (10 u), none smaller.
+    val labelStyle = d.caption()
 
     Spacer(
         modifier
@@ -161,12 +161,7 @@ fun Keyboard(
                         !key.isBlack && key.note % 12 == 0 -> "C${key.note / 12 - 1}"
                         else -> null
                     } ?: return@forEachIndexed
-                    val style = when {
-                        keyLabels == null -> labelStyle
-                        key.isBlack -> blackLabelStyle
-                        else -> smallLabelStyle
-                    }
-                    val measured = textMeasurer.measure(text, style)
+                    val measured = textMeasurer.measure(text, labelStyle)
                     val r = rects[i]
                     val top = r.bottom + d.px(1f)
                     labels[i] = measured to Offset(r.center.x - measured.size.width / 2f, top)
@@ -199,7 +194,7 @@ fun Keyboard(
 private const val DIM = 0.5f
 
 // Capsule-pad geometry (design units, or fractions of the tray's inner height) and finish.
-private const val TRAY_RADIUS = 18f
+private const val TRAY_RADIUS = GrooveRadius.PANEL
 private const val TRAY_INSET = 6f
 private const val PAD_WIDTH = 0.56f
 private val TOP_ROW = 0.03f to 0.45f

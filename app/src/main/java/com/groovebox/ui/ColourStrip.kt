@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,8 +34,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.groovebox.engine.ParamSpec
 import com.groovebox.ui.model.ParamMapping
 import com.groovebox.ui.model.StripAction
+import com.groovebox.ui.model.StripFill
 import com.groovebox.ui.model.StripGesture
 import com.groovebox.ui.theme.GrooveColors
+import com.groovebox.ui.theme.GrooveRadius
+import com.groovebox.ui.theme.GrooveSpace
 import com.groovebox.ui.theme.LocalDesign
 
 /**
@@ -58,7 +60,7 @@ fun ColourStrip(
 ) {
     val d = LocalDesign.current
     val colour = GrooveColors.Strips[position]
-    val shape = RoundedCornerShape(d.dp(14))
+    val shape = d.shape(GrooveRadius.STRIP)
 
     if (spec == null) {
         Column(
@@ -67,12 +69,12 @@ fun ColourStrip(
                 .clip(shape)
                 .background(GrooveColors.Panel)
                 .semantics { contentDescription = "Strip ${position + 1}, ${if (disabledLabel == "—") "unused" else "$disabledLabel, none"}" }
-                .padding(horizontal = d.dp(6), vertical = d.dp(10)),
+                .padding(horizontal = d.dp(GrooveSpace.PAD), vertical = d.dp(GrooveSpace.ZONE)),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            BasicText(disabledLabel, style = d.label(14f, colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
+            BasicText(disabledLabel, style = d.buttonLabel(colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
             if (disabledValue != null) {
-                BasicText(disabledValue, Modifier.padding(top = d.dp(4)), style = d.value(13f, GrooveColors.White), maxLines = 1)
+                BasicText(disabledValue, Modifier.padding(top = d.dp(GrooveSpace.GROUP)), style = d.valueText(GrooveColors.White), maxLines = 1)
             }
             Spacer(Modifier.weight(1f))
         }
@@ -87,13 +89,14 @@ fun ColourStrip(
     val dimmed = host.dimmed(spec)
     // Only a pending strip reads the blink phase, so only it recomposes as it blinks.
     val textAlpha = when {
-        pending && !host.blinkOn -> 0.25f
-        dimmed -> 0.4f
+        pending && !host.blinkOn -> GrooveColors.BLINK_ALPHA
+        dimmed -> GrooveColors.INERT_ALPHA
         else -> 1f
     }
     val currentNormalized by rememberUpdatedState(normalized)
     val currentLocked by rememberUpdatedState(locked)
     val edge = d.px(3f)
+    val header = d.px(StripFill.HEADER_UNITS)
 
     Box(
         modifier
@@ -164,8 +167,9 @@ fun ColourStrip(
                 }
             }
             .drawBehind {
-                // The edge stays visible at the bottom when the value is at its minimum.
-                val top = (size.height * (1f - normalized.toFloat())).coerceIn(0f, size.height - edge)
+                // CX review R5: the fill tops out below the label band, so the edge never
+                // crosses the label or value; at the minimum it stays visible at the bottom.
+                val top = StripFill.edgeTop(normalized, size.height, header, edge)
                 drawRect(colour.copy(alpha = 0x38 / 255f), Offset(0f, top), Size(size.width, size.height - top))
                 drawRect(colour, Offset(0f, top), Size(size.width, edge))
                 // A queued change: outlined in the strip colour until it takes effect.
@@ -174,7 +178,7 @@ fun ColourStrip(
                         colour,
                         topLeft = Offset(edge / 2, edge / 2),
                         size = Size(size.width - edge, size.height - edge),
-                        cornerRadius = CornerRadius(d.px(14f)),
+                        cornerRadius = CornerRadius(d.px(GrooveRadius.STRIP)),
                         style = Stroke(edge * 0.67f),
                     )
                 }
@@ -183,14 +187,14 @@ fun ColourStrip(
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(horizontal = d.dp(6), vertical = d.dp(10)),
+                .padding(horizontal = d.dp(GrooveSpace.PAD), vertical = d.dp(GrooveSpace.ZONE)),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            BasicText(spec.label, style = d.label(14f, colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
+            BasicText(spec.label, style = d.buttonLabel(colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
             BasicText(
                 text,
-                Modifier.padding(top = d.dp(4)).alpha(textAlpha),
-                style = d.value(13f, GrooveColors.White),
+                Modifier.padding(top = d.dp(GrooveSpace.GROUP)).alpha(textAlpha),
+                style = d.valueText(GrooveColors.White),
                 maxLines = 1,
                 overflow = TextOverflow.Clip,
             )

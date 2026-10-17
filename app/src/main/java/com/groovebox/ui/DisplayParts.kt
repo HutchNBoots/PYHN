@@ -1,6 +1,7 @@
 package com.groovebox.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
@@ -11,8 +12,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -20,7 +22,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
@@ -28,8 +32,12 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import com.groovebox.engine.ParamSpec
+import com.groovebox.ui.model.LayerText
 import com.groovebox.ui.model.SlotSwipe
 import com.groovebox.ui.theme.GrooveColors
+import com.groovebox.ui.theme.GrooveRadius
+import com.groovebox.ui.theme.GrooveSpace
+import com.groovebox.ui.theme.GrooveText
 import com.groovebox.ui.theme.LocalDesign
 
 /** The debug overlay (F0.2, F0.4) as handed to a display: tapping the display's title toggles it. */
@@ -105,7 +113,7 @@ fun DisplayTitle(text: String, debug: DebugSlot, modifier: Modifier = Modifier) 
     BasicText(
         text,
         modifier.pointerInput(Unit) { detectTapGestures(onTap = { toggle() }) },
-        style = d.label(20f, GrooveColors.Text, FontWeight.Bold),
+        style = d.title(),
         maxLines = 1,
     )
 }
@@ -117,48 +125,114 @@ fun DisplaySubtitle(text: String, audioStarted: Boolean, modifier: Modifier = Mo
     BasicText(
         if (audioStarted) text else "audio stream failed to open",
         modifier,
-        style = d.label(13f, if (audioStarted) GrooveColors.TextDim else GrooveColors.Warn),
+        style = d.body(if (audioStarted) GrooveColors.TextDim else GrooveColors.Warn),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
 }
 
-/** The display's corner label naming the active layer; amber on the Shift layer. */
+/**
+ * The display's corner label (CX review R8), one form on every screen: [layer]
+ * ([LayerText.MAIN], [LayerText.SHIFT], [LayerText.STEP]) and what the strips edit, as
+ * "MAIN · osc" or "STEP · step 5". Amber on the Shift layer (amber = Shift only). Hints go to
+ * the footers, not here.
+ */
+@Composable
+fun LayerLabel(layer: String, focus: String, modifier: Modifier = Modifier) {
+    val d = LocalDesign.current
+    BasicText(
+        LayerText.of(layer, focus),
+        modifier,
+        style = d.meta(if (layer == LayerText.SHIFT) GrooveColors.Shift else GrooveColors.TextDim),
+        maxLines = 1,
+    )
+}
+
+/** MAIN or SHIFT by the Shift state: `LayerLabel(shifted, "osc")`. */
+@Composable
+fun LayerLabel(shifted: Boolean, focus: String, modifier: Modifier = Modifier) =
+    LayerLabel(if (shifted) LayerText.SHIFT else LayerText.MAIN, focus, modifier)
+
+/** Pre-build-22 form (free text): kept so screens migrate one at a time; same style as the others. */
+@Deprecated("Use LayerLabel(layer, focus) or LayerLabel(shifted, focus): one form, MAIN · osc")
 @Composable
 fun LayerLabel(text: String, shifted: Boolean, modifier: Modifier = Modifier) {
     val d = LocalDesign.current
-    BasicText(text, modifier, style = d.value(12f, if (shifted) GrooveColors.Shift else GrooveColors.TextDim), maxLines = 1)
+    BasicText(text, modifier, style = d.meta(if (shifted) GrooveColors.Shift else GrooveColors.TextDim), maxLines = 1)
 }
 
 /** The session's key and scale ("A minor") on a display while a scale is on (F8). */
 @Composable
 fun KeyName(text: String, modifier: Modifier = Modifier) {
     val d = LocalDesign.current
-    BasicText(text, modifier, style = d.value(13f, GrooveColors.Shift, FontWeight.Medium), maxLines = 1)
+    BasicText(text, modifier, style = d.valueText(GrooveColors.Shift, FontWeight.Medium), maxLines = 1)
 }
 
 /** One line under the picture: each strip's colour, label and value. */
 @Composable
 fun Legend(strips: List<ParamSpec?>, host: StripHost) {
     val d = LocalDesign.current
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.ROW))) {
         strips.forEachIndexed { i, spec ->
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
                         .size(d.dp(10))
-                        .clip(RoundedCornerShape(d.dp(3)))
+                        .clip(d.shape(GrooveRadius.CELL))
                         .background(GrooveColors.Strips[i]),
                 )
-                Spacer(Modifier.size(d.dp(6)))
+                Spacer(Modifier.size(d.dp(GrooveSpace.PAD)))
                 val text = spec?.let { "${it.label} ${host.format(it, host.value(it))}" } ?: "—"
                 BasicText(
                     text,
-                    style = d.value(13f, GrooveColors.Text),
+                    style = d.valueText(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
     }
+}
+
+/**
+ * A chip at the left of a display's footer (build-22: Tape's Undo, the Mixer's Mute and Solo),
+ * where the left thumb reaches it. [active] shows it on: tinted, outlined and lettered in
+ * [activeColour]. Touch handling comes in with [modifier]; [enabled] false dims it.
+ */
+@Composable
+fun FooterChip(
+    text: String,
+    modifier: Modifier = Modifier,
+    active: Boolean = false,
+    activeColour: Color = GrooveColors.Select,
+    enabled: Boolean = true,
+    leading: (@Composable (Color) -> Unit)? = null,
+) {
+    val d = LocalDesign.current
+    val shape = d.shape(GrooveRadius.CHIP)
+    val ink = if (active) activeColour else GrooveColors.Text
+    Row(
+        modifier
+            .height(d.dp(FOOTER_CHIP_HEIGHT))
+            .alpha(if (enabled) 1f else GrooveColors.INERT_ALPHA)
+            .clip(shape)
+            .background(if (active) activeColour.copy(alpha = 0.14f) else GrooveColors.ChipFill)
+            .then(if (active) Modifier.border(d.dp(1.5f), activeColour, shape) else Modifier)
+            .padding(horizontal = d.dp(12)),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.PAD)),
+    ) {
+        leading?.invoke(ink)
+        BasicText(text, style = d.label(GrooveText.BODY, ink, FontWeight.Bold), maxLines = 1)
+    }
+}
+
+/** A footer chip's height in design units (the mockups' 30, plus a little for the thumb). */
+const val FOOTER_CHIP_HEIGHT = 32f
+
+/** A footer's hint line: what the gestures do (layer labels stay short). */
+@Composable
+fun FooterHint(text: String, modifier: Modifier = Modifier, colour: Color = GrooveColors.TextDim) {
+    val d = LocalDesign.current
+    BasicText(text, modifier, style = d.meta(colour), maxLines = 1, overflow = TextOverflow.Ellipsis)
 }

@@ -123,8 +123,23 @@ object TapeView {
         else -> TapeRecordAction.None
     }
 
-    /** The grey line under "Tape": length, loop, dub and speed. */
-    fun subtitle(tapeBars: Int, region: LoopRegion?, dub: Double, speed: String, reverse: Boolean): String {
+    /** tape.speed's options as play rates: 0.5x, 1x, 2x. */
+    private val speedFactors = doubleArrayOf(0.5, 1.0, 2.0)
+
+    /**
+     * Build-22: at a tempo other than the tape's (F5.5) the tape plays varispeed. The subtitle's
+     * speed part then reads the actual play rate, the Speed strip included, and the tape's own
+     * tempo: "0.92× · tape 130.0". Null at the tape's tempo or on an empty tape (no tempo yet).
+     */
+    fun varispeed(speedIndex: Int, tempoBpm: Double, tapeTempoBpm: Float, tempoMatches: Boolean): String? {
+        if (tempoMatches || tapeTempoBpm <= 0f || tempoBpm <= 0.0) return null
+        val factor = speedFactors[speedIndex.coerceIn(0, speedFactors.size - 1)]
+        val rate = String.format(Locale.ROOT, "%.2f", factor * tempoBpm / tapeTempoBpm).trimEnd('0').trimEnd('.')
+        return "$rate× · tape ${bpm(tapeTempoBpm)}"
+    }
+
+    /** The grey line under "Tape": length, loop, dub and speed ([varispeed] in place of the speed when set). */
+    fun subtitle(tapeBars: Int, region: LoopRegion?, dub: Double, speed: String, reverse: Boolean, varispeed: String? = null): String {
         if (tapeBars <= 0 || region == null) return "empty · the first take sets the length"
         val parts = ArrayList<String>(4)
         parts += MixFormat.bars(tapeBars)
@@ -134,7 +149,11 @@ object TapeView {
             dub <= 0.005 -> "replace"
             else -> "dub ${(dub * 100).toInt()}%"
         }
-        if (speed != "1×" || reverse) parts += speed + if (reverse) " reverse" else ""
+        if (varispeed != null) {
+            parts += varispeed + if (reverse) " reverse" else ""
+        } else if (speed != "1×" || reverse) {
+            parts += speed + if (reverse) " reverse" else ""
+        }
         return parts.joinToString(" · ")
     }
 

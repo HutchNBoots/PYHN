@@ -25,8 +25,12 @@ sealed interface StripAction {
  *   If the first finger lifts, the remaining one carries on driving at normal speed.
  * - Two taps (down/up with no drag, single finger), the second starting within [doubleTapMs]
  *   of the first one's release, reset to the default.
- * - Holding one finger still for [longPressMs] toggles [locked]. The UI should call [timeout]
- *   at [longPressDeadline]; a release after the deadline also counts, in case the timer is late.
+ * - Holding one finger still for [longPressMs] (1 s, build-22: owner decision 1-2c) toggles
+ *   [locked]; any movement past the slop before then, a second finger or a lift cancels it and
+ *   the drag works as normal. From [ringDelayMs] into the hold the UI draws a filling ring
+ *   ([lockProgress]) and wakes at [nextWake]; it should call [timeout] at [longPressDeadline]
+ *   (a release after the deadline also counts, in case the timer is late) and give a haptic
+ *   tick on the [StripAction.Lock].
  * - A locked strip ignores drags and double-taps; only a long-press unlocks it.
  *
  * Main thread only.
@@ -36,7 +40,8 @@ class StripGesture(
     private val fullRangeHeights: Double = 1.5,
     private val fineFactor: Double = 0.25,
     private val doubleTapMs: Long = 300,
-    private val longPressMs: Long = 500,
+    private val longPressMs: Long = LOCK_HOLD_MS,
+    private val ringDelayMs: Long = RING_DELAY_MS,
 ) {
     /** Locked strips ignore drags and taps. The UI may set it to mirror its own lock state. */
     var locked: Boolean = false
@@ -59,6 +64,30 @@ class StripGesture(
     /** When [timeout] should be called to fire the long-press, or null if none is pending. */
     val longPressDeadline: Long?
         get() = if (longPressPending()) downTimeMs + longPressMs else null
+
+    /**
+     * How far the lock hold has filled (0..1) at [timeMs], for the ring; null when no hold is
+     * pending or it is younger than [ringDelayMs] (so taps and the start of a drag show nothing).
+     */
+    fun lockProgress(timeMs: Long): Float? {
+        if (!longPressPending()) return null
+        val held = timeMs - downTimeMs
+        if (held < ringDelayMs) return null
+        val span = (longPressMs - ringDelayMs).coerceAtLeast(1L)
+        return ((held - ringDelayMs).toFloat() / span).coerceIn(0f, 1f)
+    }
+
+    /**
+     * When the UI should next wake while the finger rests ([timeout], and a ring frame): the
+     * ring's start, then every [FRAME_MS], never past [longPressDeadline]. Null with no hold pending.
+     */
+    fun nextWake(timeMs: Long): Long? {
+        if (!longPressPending()) return null
+        val deadline = downTimeMs + longPressMs
+        val ringStart = downTimeMs + ringDelayMs
+        if (timeMs < ringStart) return minOf(ringStart, deadline)
+        return minOf(timeMs + FRAME_MS, deadline)
+    }
 
     /**
      * A finger touched the strip. [height] is the strip's height in the same units as y;
@@ -161,7 +190,16 @@ class StripGesture(
         return StripAction.Lock(locked)
     }
 
-    private companion object {
-        const val NONE = -1
+    companion object {
+        private const val NONE = -1
+
+        /** The still hold that locks or unlocks a strip (owner decision 1-2c). */
+        const val LOCK_HOLD_MS = 1000L
+
+        /** The ring appears this far into the hold. */
+        const val RING_DELAY_MS = 250L
+
+        /** The ring's redraw interval while it fills. */
+        const val FRAME_MS = 16L
     }
 }

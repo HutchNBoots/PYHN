@@ -113,27 +113,29 @@ class StripGestureTest {
     @Test
     fun longPressTogglesLockAtTheDeadline() {
         assertNull(g.down(0, 1000, 100f, height, 0.3))
-        assertEquals(1500L, g.longPressDeadline)
-        assertNull(g.timeout(1499))
-        assertEquals(StripAction.Lock(true), g.timeout(1500))
+        assertEquals(2000L, g.longPressDeadline)
+        assertNull(g.timeout(1999))
+        assertEquals(StripAction.Lock(true), g.timeout(2000))
         assertTrue(g.locked)
         assertNull(g.longPressDeadline)
         // Fires once; lifting afterwards is not a tap.
-        assertNull(g.timeout(1700))
-        assertNull(g.up(0, 1800))
+        assertNull(g.timeout(2200))
+        assertNull(g.up(0, 2300))
     }
 
     @Test
     fun longPressIsAlsoCaughtOnReleaseIfTheTimerWasLate() {
         g.down(0, 0, 100f, height, 0.3)
-        assertEquals(StripAction.Lock(true), g.up(0, 650))
+        assertNull(g.up(0, 650).also { g.cancel() }) // half a second is no longer a lock (build-22)
+        g.down(0, 1000, 100f, height, 0.3)
+        assertEquals(StripAction.Lock(true), g.up(0, 2150))
     }
 
     @Test
     fun movingCancelsTheLongPress() {
         startDrag(0.3)
         assertNull(g.longPressDeadline)
-        assertNull(g.timeout(600))
+        assertNull(g.timeout(1100))
         assertFalse(g.locked)
     }
 
@@ -142,29 +144,29 @@ class StripGestureTest {
         g.down(0, 0, 100f, height, 0.3)
         g.down(1, 100, 100f, height, 0.3)
         assertNull(g.longPressDeadline)
-        assertNull(g.timeout(600))
+        assertNull(g.timeout(1100))
     }
 
     @Test
     fun lockedStripIgnoresDragsAndDoubleTapsUntilLongPressed() {
         g.down(0, 0, 100f, height, 0.3)
-        g.timeout(500)
-        g.up(0, 600)
+        g.timeout(1000)
+        g.up(0, 1100)
         assertTrue(g.locked)
 
-        startDrag(0.3, t = 1000)
-        assertNull(g.move(0, 1030, 0f))
-        g.up(0, 1040)
+        startDrag(0.3, t = 1500)
+        assertNull(g.move(0, 1530, 0f))
+        g.up(0, 1540)
 
-        g.down(0, 1100, 100f, height, 0.3); assertNull(g.up(0, 1150))
-        g.down(0, 1200, 100f, height, 0.3); assertNull(g.up(0, 1250))
+        g.down(0, 1600, 100f, height, 0.3); assertNull(g.up(0, 1650))
+        g.down(0, 1700, 100f, height, 0.3); assertNull(g.up(0, 1750))
 
         g.down(0, 2000, 100f, height, 0.3)
-        assertEquals(StripAction.Lock(false), g.timeout(2500))
-        g.up(0, 2600)
+        assertEquals(StripAction.Lock(false), g.timeout(3000))
+        g.up(0, 3100)
         assertFalse(g.locked)
-        startDrag(0.3, t = 3000)
-        assertEquals(0.4, value(g.move(0, 3020, 285f - 45f)), 1e-9)
+        startDrag(0.3, t = 4000)
+        assertEquals(0.4, value(g.move(0, 4020, 285f - 45f)), 1e-9)
     }
 
     @Test
@@ -190,5 +192,84 @@ class StripGestureTest {
         assertNull(g.up(0, 150))
         g.down(0, 200, 100f, height, 0.3)
         assertNull(g.up(0, 250))
+    }
+
+    // --- build-22: the 1 s still hold, its ring and its cancel (owner decision 1-2c) ---
+
+    @Test
+    fun aLockNeedsAFullSecondStill() {
+        g.down(0, 0, 100f, height, 0.3)
+        assertEquals(1000L, g.longPressDeadline)
+        assertNull(g.timeout(999))
+        assertFalse(g.locked)
+        assertEquals(StripAction.Lock(true), g.timeout(1000))
+    }
+
+    @Test
+    fun aRestingThumbThatThenDragsNeverLocks() {
+        // Half a second at rest (the build-21 lock time), then a drag: the drag works.
+        g.down(0, 0, 300f, height, 0.5)
+        assertNull(g.timeout(600))
+        assertNull(g.move(0, 700, 300f - slop - 5f))
+        assertEquals(0.6, value(g.move(0, 720, 285f - 45f)), 1e-9)
+        assertNull(g.timeout(1500))
+        assertFalse(g.locked)
+    }
+
+    @Test
+    fun movementWithinTheSlopKeepsTheHold() {
+        g.down(0, 0, 300f, height, 0.5)
+        assertNull(g.move(0, 400, 300f + slop))
+        assertEquals(StripAction.Lock(true), g.timeout(1000))
+    }
+
+    @Test
+    fun theRingWaitsThenFillsToTheLock() {
+        g.down(0, 0, 100f, height, 0.3)
+        assertNull("no ring for a tap or a drag's first moments", g.lockProgress(0))
+        assertNull(g.lockProgress(StripGesture.RING_DELAY_MS - 1))
+        assertEquals(0f, g.lockProgress(StripGesture.RING_DELAY_MS)!!, 1e-6f)
+        val mid = (StripGesture.RING_DELAY_MS + StripGesture.LOCK_HOLD_MS) / 2
+        assertEquals(0.5f, g.lockProgress(mid)!!, 0.01f)
+        assertEquals(1f, g.lockProgress(999)!!, 0.01f)
+        g.timeout(1000)
+        assertNull("the ring goes once locked", g.lockProgress(1001))
+    }
+
+    @Test
+    fun theRingStopsWhenTheFingerMovesLiftsOrASecondFingerLands() {
+        g.down(0, 0, 300f, height, 0.3)
+        assertTrue(g.lockProgress(600)!! > 0f)
+        g.move(0, 610, 300f - slop - 1f)
+        assertNull(g.lockProgress(620))
+
+        g.cancel()
+        g.down(0, 2000, 300f, height, 0.3)
+        g.down(1, 2600, 200f, height, 0.3)
+        assertNull(g.lockProgress(2700))
+
+        g.cancel()
+        g.down(0, 4000, 300f, height, 0.3)
+        g.up(0, 4600)
+        assertNull(g.lockProgress(4700))
+    }
+
+    @Test
+    fun theUiWakesForTheRingFramesAndTheDeadline() {
+        assertNull(g.nextWake(0))
+        g.down(0, 0, 100f, height, 0.3)
+        // Before the ring shows, sleep until it does; then a frame at a time, never past the deadline.
+        assertEquals(StripGesture.RING_DELAY_MS, g.nextWake(10))
+        assertEquals(400L + StripGesture.FRAME_MS, g.nextWake(400))
+        assertEquals(1000L, g.nextWake(995))
+        g.timeout(1000)
+        assertNull(g.nextWake(1000))
+    }
+
+    @Test
+    fun aDoubleTapStillResets() {
+        g.down(0, 0, 100f, height, 0.3); assertNull(g.up(0, 80))
+        g.down(0, 200, 100f, height, 0.3)
+        assertEquals(StripAction.Reset, g.up(0, 260))
     }
 }

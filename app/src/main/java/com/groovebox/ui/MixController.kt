@@ -16,6 +16,8 @@ import com.groovebox.ui.model.MixLimits
 import com.groovebox.ui.model.MixerLayout
 import com.groovebox.ui.model.MixerPad
 import com.groovebox.ui.model.MixerPadAction
+import com.groovebox.ui.model.MixerSolo
+import com.groovebox.ui.model.MixerSync
 import com.groovebox.ui.model.StripRef
 import com.groovebox.ui.model.TapeStrips
 import kotlin.math.roundToInt
@@ -63,8 +65,41 @@ class MixValues(private val onChange: () -> Unit = {}) {
         val state = channels[channel][spec.id]
         if (state.doubleValue == v) return
         state.doubleValue = v
-        NativeEngine.setChannelParam(channel, spec.id, v)
+        NativeEngine.setChannelParam(channel, spec.id, if (spec.key == MixKeys.MUTE) engineMute(channel) else v)
         onChange()
+    }
+
+    // --- solo (build-22): UI only, sent to the engine as mutes (MixerSolo); engine solo is build-23 ---
+
+    /** The soloed channels; not saved with the session. */
+    var soloed: Set<Int> by mutableStateOf(emptySet())
+        private set
+
+    fun isSoloed(channel: Int): Boolean = channel in soloed
+
+    /** Silent only because another channel is soloed (its own mute is off). */
+    fun silencedBySolo(channel: Int): Boolean = !muted(channel) && MixerSolo.silencedBySolo(channel, soloed)
+
+    fun toggleSolo(channel: Int) {
+        val next = MixerSolo.toggled(soloed, channel)
+        if (next == soloed) return
+        soloed = next
+        sendMutes()
+    }
+
+    fun clearSolo() {
+        if (soloed.isEmpty()) return
+        soloed = emptySet()
+        sendMutes()
+    }
+
+    private fun engineMute(channel: Int): Double =
+        if (MixerSolo.effectiveMute(channel, muted(channel), soloed)) 1.0 else 0.0
+
+    /** Every channel's ch.mute as the engine should have it: the user's mutes plus the solo's. */
+    private fun sendMutes() {
+        val spec = channelByKey[MixKeys.MUTE] ?: return
+        for (c in 0 until MixLimits.CHANNELS) NativeEngine.setChannelParam(c, spec.id, engineMute(c))
     }
 
     fun setChannel(channel: Int, key: String, value: Double) {
@@ -98,6 +133,8 @@ class MixValues(private val onChange: () -> Unit = {}) {
     }
 
     fun refreshFromEngine() {
+        // The engine holds the solo's mutes: drop the solo first so the user's mutes read back.
+        clearSolo()
         for (p in mixParams) mix[p.id].doubleValue = NativeEngine.getMixParam(p.id)
         for (c in 0 until MixLimits.CHANNELS) {
             for (p in channelParams) channels[c][p.id].doubleValue = NativeEngine.getChannelParam(c, p.id)
@@ -180,6 +217,23 @@ class MixerController(private val app: GrooveState, private val values: MixValue
     var selected: MixerPad by mutableStateOf(MixerPad.Slot(1))
         private set
 
+    /** The selected pad's channel is muted (its own mute, not a solo's). */
+    val selectedMuted: Boolean
+        get() = channel?.let(values::muted) == true
+
+    val selectedSoloed: Boolean
+        get() = channel?.let(values::isSoloed) == true
+
+    /** The footer's Mute chip (build-22): mutes the selected channel; like Shift + tap on its pad. */
+    fun toggleMuteSelected() {
+        channel?.let(values::toggleMute)
+    }
+
+    /** The footer's Solo chip (build-22): solos the selected channel (others muted, UI only). */
+    fun toggleSoloSelected() {
+        channel?.let(values::toggleSolo)
+    }
+
     val strips: List<ParamSpec?>
         get() = MixerLayout.strips(selected, app.shift.shifted, values.delaySynced).map { values.resolve(it) }
 
@@ -188,9 +242,12 @@ class MixerController(private val app: GrooveState, private val values: MixValue
         selected = pad
     }
 
+    /** Build-22: a slot pad selects that slot (the top bar follows), a tape pad that tape track. */
     fun select(pad: MixerPad) {
         if (pad == selected) return
         selected = pad
+        MixerSync.slotOf(pad)?.let(app::selectSlot)
+        MixerSync.trackOf(pad)?.let(app::selectTrack)
         app.sessionChanged()
     }
 

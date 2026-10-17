@@ -27,6 +27,9 @@ import com.groovebox.ui.model.MixKeys
 import com.groovebox.ui.model.MixLimits
 import com.groovebox.ui.model.MixerLayout
 import com.groovebox.ui.model.MixerPad
+import com.groovebox.ui.model.MixerSync
+import com.groovebox.ui.model.SlotChip
+import com.groovebox.ui.model.TapTempo
 import com.groovebox.ui.model.MotionLane
 import com.groovebox.ui.model.NoteMemory
 import com.groovebox.ui.model.PadAction
@@ -361,6 +364,8 @@ class GrooveState : KeyListener {
         if (!isDrum(slot)) lastSynthSlot = slot
         when (screen) {
             Screen.Seq -> Unit
+            // Build-22: the Tape screen's slot chip picks what the keys play and Commit takes.
+            Screen.Tape -> Unit
             Screen.Mixer -> mixer.select(MixerPad.Slot(slot))
             else -> screen = if (isDrum(slot)) Screen.Drum else Screen.Synth
         }
@@ -391,7 +396,37 @@ class GrooveState : KeyListener {
     }
 
     fun showMixer() = uiEdit {
+        // Build-22: a slot or tape pad follows the top bar's slot and the Tape screen's track.
+        mixer.restoreSelection(MixerSync.padOnShow(mixer.selected, selectedSlot, tapeTrack))
         screen = Screen.Mixer
+    }
+
+    /** The Tape slot chip (build-22): a tap steps to the next slot. */
+    fun slotChipTap() = selectSlot(SlotChip.next(selectedSlot))
+
+    private val tapTempo = TapTempo()
+
+    /** Taps in the current tap-tempo run (the BPM readout shows them until the third). */
+    var tapCount by mutableIntStateOf(0)
+        private set
+
+    /** A tap on the BPM readout (build-22): the third and later taps set the tempo. */
+    fun tapTempo(nowMs: Long) {
+        tapTempo.tap(nowMs, tempoBpm)?.let(::setTempo)
+        tapCount = tapTempo.count
+    }
+
+    /** A long-press on the BPM readout: back to 120. */
+    fun tapTempoReset() {
+        tapTempo.reset()
+        tapCount = 0
+        setTempo(TapTempo.LONG_PRESS_BPM)
+    }
+
+    /** The readout's tap run timed out (no tap for [TapTempo.TIMEOUT_MS]). */
+    fun tapTempoIdle() {
+        tapTempo.reset()
+        tapCount = 0
     }
 
     /** The name a slot shows: "Kit", or the synth's preset. */
