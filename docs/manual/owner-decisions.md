@@ -7,3 +7,4 @@ Captured as they come in; they override the suggestions in the manual, the consi
 | 17 Oct 2026 | Keep the Synth display as it is: wave, filter and envelope pictures all visible. | SynthProposed mockup (shows only the filter curve) |
 | 17 Oct 2026 | Keep the capsule keys (the M-VAVE FM-1 look, easier to read); don't flatten them to boxes. | Consistency review R3, all proposed mockups with keys |
 | 17 Oct 2026 | The pitch roll for synth parts on Seq looks good. | Manual 3.2 "Proposed views" #2, SeqSynthProposed |
+| 17 Oct 2026 | Approved 1-1A: keep the display swipe and flash the slot number and preset name large while swiping. | Manual 1.1 task 1-1A |
