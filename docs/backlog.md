@@ -4,6 +4,7 @@ Last updated 17 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 
 ## Shipped
 
+- [x] build-21: CX safe set: Note strip moves by an interval (bug fix), pitch roll + note names on Seq, one kit grid (Kick bottom-left) with readable names, Drum screen grid + two pad blocks, presets audition with keys, Undo long-press = Redo (Shift no longer flips it), tape lane clear asks first.
 - [x] build-20: two-thumb sequencer (drum lanes, long-press step select, Velocity/Length/Chance/Nudge strips, undo, Shift+Clear lane); voice-mode fix; tape varispeed with tempo; whole-bar commits; mixer return markers; build number in debug panel.
 - [x] build-19: P1, long-press the Synth display for presets.
 - [x] build-18: v1 close-out: bundled fonts; live Mixer level meters with clip lights; Synth/Drum/Mixer mockups as built; two-thumb review (swipe display to change slot, double-tap a tape lane to record).
