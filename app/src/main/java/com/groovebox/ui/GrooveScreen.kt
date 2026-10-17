@@ -206,6 +206,18 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                         }
                     }
                 }
+            }
+            // Build-22: the Tape slot picker closes on a touch anywhere off it.
+            .pointerInput(state.slotPickerOpen) {
+                if (!state.slotPickerOpen) return@pointerInput
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.any { it.changedToDownIgnoreConsumed() && !state.slotPickerBounds.contains(it.position) }) {
+                            state.closeSlotPicker()
+                        }
+                    }
+                }
             },
     ) {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {

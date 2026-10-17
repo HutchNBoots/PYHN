@@ -96,4 +96,40 @@ class SoundHistoryTest {
         h.undo()
         assertTrue(r1 > r0 && h.revision > r1)
     }
+
+    @Test
+    fun anUndoDuringAnOpenGestureReBaselinesIt() {
+        val drum = SoundTarget.Drum(2)
+        h.record(SoundEdit.Params(drum, listOf(ParamChange("drum.decay", 1.0, 0.5))))
+        // A finger rests on Decay (gesture open from 0.5), the other thumb taps Undo: Decay is 1.0 again.
+        h.begin("drum:drum.decay", drum, mapOf("drum.decay" to 0.5))
+        h.undo()
+        // The drag then moves it to 0.8: one step from 1.0, so undoing it returns to 1.0, not 0.5.
+        assertTrue(h.end("drum:drum.decay", mapOf("drum.decay" to 0.8)))
+        assertEquals(listOf(ParamChange("drum.decay", 1.0, 0.8)), (h.undo() as SoundEdit.Params).changes)
+    }
+
+    @Test
+    fun aRedoReBaselinesToTheAfterValuesAndOtherTargetsAreLeftAlone() {
+        val synth = SoundTarget.Synth(2)
+        h.record(SoundEdit.Params(synth, listOf(ParamChange("flt.reso", 0.2, 0.7))))
+        h.undo()
+        h.begin("s2", synth, mapOf("flt.reso" to 0.2, "flt.cutoff" to 900.0))
+        h.begin("s3", SoundTarget.Synth(3), mapOf("flt.reso" to 0.2))
+        h.redo()
+        assertTrue(h.end("s2", mapOf("flt.reso" to 0.7, "flt.cutoff" to 900.0)).not())
+        assertTrue(h.end("s3", mapOf("flt.reso" to 0.7)))
+        assertEquals(ParamChange("flt.reso", 0.2, 0.7), (h.undo() as SoundEdit.Params).changes.single())
+    }
+
+    @Test
+    fun aWholeSoundUndoReBaselinesEveryKeyOfThatSlot() {
+        val synth = SoundTarget.Synth(1)
+        val a = SynthSound(PresetRef("A", 0), mapOf("x" to 1.0, "y" to 2.0), emptyMap(), emptyMap())
+        val b = SynthSound(PresetRef("B", 1), mapOf("x" to 5.0, "y" to 6.0), emptyMap(), emptyMap())
+        h.record(SoundEdit.Whole(synth, a, b))
+        h.begin("x", synth, mapOf("x" to 5.0))
+        h.undo()
+        assertFalse("x is back at 1.0 and stays: no step", h.end("x", mapOf("x" to 1.0)))
+    }
 }

@@ -260,4 +260,18 @@ class StripGestureTest {
         g.down(0, 200, 100f, height, 0.3)
         assertEquals(StripAction.Reset, g.up(0, 260))
     }
+
+    @Test
+    fun aDiagonalOrSidewaysMovePastTheSlopCancelsTheLockButIsNoDrag() {
+        // 8 px right and 8 px down is 11.3 px: past the slop in 2D though under it on each axis.
+        g.down(0, 0, 300f, height, 0.5, x = 20f)
+        assertNull(g.move(0, 100, 308f, x = 28f))
+        assertNull(g.lockProgress(600))
+        assertNull(g.timeout(1000))
+        assertFalse(g.locked)
+        // Sideways only: still not a drag (no value change) until it moves vertically past the slop.
+        assertNull(g.move(0, 300, 308f, x = 80f))
+        assertNull(g.move(0, 400, 300f - slop - 5f)) // now vertical past the slop: the drag starts, no jump
+        assertEquals(0.6, value(g.move(0, 420, 285f - 45f)), 1e-9)
+    }
 }

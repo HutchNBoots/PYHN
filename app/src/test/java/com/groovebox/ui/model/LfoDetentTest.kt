@@ -71,4 +71,42 @@ class LfoDetentTest {
         assertEquals("1/8", LfoDetent.label(LfoDetent.position(true, 4.0, rate, bpm), rate, bpm))
         assertEquals("2.0 Hz", LfoDetent.label(LfoDetent.position(false, 2.0, rate, bpm), rate, bpm))
     }
+
+    // --- review 5 and 6 ---
+
+    @Test
+    fun onlyDivisionsInsideTheRateRangeAreOffered() {
+        // At 190 BPM 1/32T is 38 Hz, over Rate's 30 Hz top: the strip's sync zone stops at 1/32.
+        val fast = LfoDetent.divisions(rate, 190.0)
+        assertEquals(LfoSync.DIVISION_BEATS.size - 1, fast.size)
+        assertEquals(11, fast.last())
+        val top = LfoDetent.fromPosition(LfoDetent.SYNC_TOP - 1e-9, rate, 190.0)
+        assertEquals(11, top.division)
+        assertTrue(top.hz <= rate.max)
+        // At 40 BPM 4 bars is 0.042 Hz, under 0.05: it starts at 2 bars.
+        assertEquals(1, LfoDetent.divisions(rate, 40.0).first())
+        for (tempo in listOf(30.0, 40.0, 120.0, 190.0, 300.0)) for (d in LfoDetent.divisions(rate, tempo)) {
+            val r = LfoDetent.fromPosition(LfoDetent.position(true, LfoSync.divisionHz(d, tempo.toFloat()).toDouble(), rate, tempo), rate, tempo)
+            assertEquals("$d at $tempo", d, r.division)
+            assertTrue(r.hz in rate.min..rate.max)
+        }
+    }
+
+    @Test
+    fun aTempoChangeKeepsTheChosenDivision() {
+        // 1/4 at 120 is 2 Hz; at 90 BPM the engine would hear 2 Hz as 1/4T without the retime.
+        val hz120 = LfoSync.divisionHz(5, 120f).toDouble()
+        assertEquals(6, LfoSync.nearestDivision(hz120.toFloat(), 90f))
+        val hz90 = LfoDetent.retime(hz120, rate, oldBpm = 120.0, newBpm = 90.0)
+        assertEquals(LfoSync.divisionHz(5, 90f).toDouble(), hz90, 1e-9)
+        assertEquals(5, LfoSync.nearestDivision(hz90.toFloat(), 90f))
+    }
+
+    @Test
+    fun aRetimePastTheRangeTakesTheNearestDivisionThatFits() {
+        val hz = LfoSync.divisionHz(12, 120f).toDouble() // 1/32T = 24 Hz
+        val at200 = LfoDetent.retime(hz, rate, 120.0, 200.0)
+        assertTrue(at200 <= rate.max)
+        assertEquals(11, LfoSync.nearestDivision(at200.toFloat(), 200f))
+    }
 }

@@ -3,7 +3,6 @@ package com.groovebox.ui.model
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Build-22: the pattern row's gestures, chains, beat edges, the triplet offer and page follow. */
@@ -21,8 +20,6 @@ class PatternRowTest {
     @Test
     fun aLongHoldSwitchesAllSlotsOnRelease() {
         row.down(0, 2, false, 0)
-        assertFalse(row.isLongHeld(0, 499))
-        assertTrue(row.isLongHeld(0, 500))
         assertEquals(PatternRowAction.SwitchAll(2), row.up(0, 700))
     }
 
@@ -82,20 +79,23 @@ class PatternRowTest {
 
     @Test
     fun beatEdgesFollowTheRate() {
-        assertEquals(listOf(2, 4, 8, 3), (0..3).map(StepGrid::beatSteps))
-        assertEquals(listOf(0, 3, 6, 9, 12, 15), (0 until 16).filter { StepGrid.isBeat(it, 3) })
+        // Engine Pattern.h stepsPerBeat: 1/8 = 2, 1/16 = 4, 1/32 = 8, 1/16T = 6.
+        assertEquals(listOf(2, 4, 8, 6), (0..3).map(StepGrid::beatSteps))
+        assertEquals(listOf(0, 6, 12, 18), (0 until 24).filter { StepGrid.isBeat(it, 3) })
         assertEquals(listOf(0, 2, 4, 6, 8, 10, 12, 14), (0 until 16).filter { StepGrid.isBeat(it, 0) })
         assertEquals(listOf(0, 4, 8, 12), (0 until 16).filter { StepGrid.isBeat(it, 1) })
     }
 
     @Test
-    fun tripletsOfferWholeBarsOfTwelve() {
-        assertEquals(12, StepGrid.tripletOffer(3, 16))
-        assertEquals(24, StepGrid.tripletOffer(3, 32))
-        assertEquals(12, StepGrid.tripletOffer(3, 1))
-        assertEquals(48, StepGrid.tripletOffer(3, 64))
-        assertEquals(24, StepGrid.tripletOffer(3, 20))
+    fun tripletsOfferTheSameBarsAt24ABar() {
+        assertEquals(24, StepGrid.tripletOffer(3, 16))
+        assertEquals(24, StepGrid.tripletOffer(3, 1))
+        assertEquals(48, StepGrid.tripletOffer(3, 32))
+        assertEquals(48, StepGrid.tripletOffer(3, 20))
+        assertNull("64 steps hold no more than 2 triplet bars", StepGrid.tripletOffer(3, 64))
+        assertNull(StepGrid.tripletOffer(3, 33))
         assertNull(StepGrid.tripletOffer(3, 24))
+        assertNull(StepGrid.tripletOffer(3, 48))
         assertNull(StepGrid.tripletOffer(1, 16))
     }
 

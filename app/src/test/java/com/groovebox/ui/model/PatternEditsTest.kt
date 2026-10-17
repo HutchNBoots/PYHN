@@ -70,6 +70,55 @@ class PatternEditsTest {
         assertEquals(16, PatternEdits.halved(PatternEdits.doubled(p)!!)!!.settings.length)
     }
 
+    // --- review fixes: full drum steps, page copy on non-16 lengths ---
+
+    private val full = Step((36 until 44).map { hit(it) }) // 8 other sounds, no lane (50)
+
+    @Test
+    fun mergeNeverDropsTheLaneHitOnAFullStep() {
+        assertEquals(full, drum.merge(full, Step(listOf(hit(50)))))
+        assertFalse(drum.fits(full, Step(listOf(hit(50)))))
+        assertTrue("an empty part always fits", drum.fits(full, Step()))
+        assertTrue(EditScope.WHOLE.fits(full, Step(listOf(hit(50)))))
+    }
+
+    @Test
+    fun moveFillPasteRotateIntoAFullStepAreRefused() {
+        val p = pattern(16, mapOf(0 to Step(listOf(hit(50))), 4 to full))
+        assertNull(PatternEdits.moved(p, 0, 4, copy = false, scope = drum))
+        assertNull(PatternEdits.moved(p, 0, 4, copy = true, scope = drum))
+        assertNull(PatternEdits.filled(p, 0, 2, Step(listOf(hit(50))), drum))
+        assertNull(PatternEdits.pasted(p, listOf(0), 4, drum))
+        assertNull(PatternEdits.rotated(p, 4, drum))
+        assertNull(PatternEdits.inserted(p, 3, drum))
+        // Into a step with room it works.
+        assertEquals(listOf(50), PatternEdits.moved(p, 0, 5, copy = false, scope = drum)!!.steps.getValue(5).notes)
+    }
+
+    @Test
+    fun pageCopyOfA12StepTripletPatternAppendsWithoutAGap() {
+        val steps = (0 until 12).associateWith { Step.of(listOf(60 + it)) }
+        val out = PatternEdits.pageCopied(pattern(12, steps, rate = 3), 0, 1)
+        assertEquals(24, out.settings.length)
+        assertEquals((0 until 24).toList(), notesAt(out).keys.toList())
+        assertEquals(listOf(60), out.steps.getValue(12).notes)
+        assertEquals(listOf(71), out.steps.getValue(23).notes)
+    }
+
+    @Test
+    fun pageCopyCopiesOnlyTheUsedStepsOfAPartPageAndCapsAt64() {
+        // 40 steps: page 3 (index 2) uses 8; copied to page 4 it lands after the end (40..47).
+        val p = pattern(40, mapOf(32 to Step.of(listOf(60)), 39 to Step.of(listOf(61))))
+        val out = PatternEdits.pageCopied(p, 2, 3)
+        assertEquals(48, out.settings.length)
+        assertEquals(listOf(32, 39, 40, 47), notesAt(out).keys.toList())
+        assertEquals(0, PatternEdits.pageUsed(40, 3))
+        assertSame("an unused page copies nothing", p, PatternEdits.pageCopied(p, 3, 0))
+        // Whole pages: onto the page tapped, even past the end.
+        assertEquals(48, PatternEdits.pageCopyStart(16, 3))
+        assertEquals(12, PatternEdits.pageCopyStart(12, 3))
+    }
+
     // --- page copy ---
 
     @Test
@@ -96,7 +145,7 @@ class PatternEditsTest {
     @Test
     fun pasteKeepsTheSpacingFromTheEarliestSelectedStep() {
         val p = pattern(32, mapOf(2 to Step(listOf(hit(60))), 5 to Step(listOf(hit(64, 0.3f))), 9 to Step(listOf(hit(67)))))
-        val out = PatternEdits.pasted(p, listOf(5, 2), anchor = 20, scope = EditScope.WHOLE)
+        val out = PatternEdits.pasted(p, listOf(5, 2), anchor = 20, scope = EditScope.WHOLE)!!
         assertEquals(sortedMapOf(2 to listOf(60), 5 to listOf(64), 9 to listOf(67), 20 to listOf(60), 23 to listOf(64)), notesAt(out))
         assertEquals(0.3f, out.steps.getValue(23).hits[0].velocity)
     }
@@ -104,7 +153,7 @@ class PatternEditsTest {
     @Test
     fun pastePastStep64DropsTheRestAndSkipsEmptySources() {
         val p = pattern(64, mapOf(0 to Step(listOf(hit(60))), 4 to Step(listOf(hit(62))), 62 to Step(listOf(hit(70)))))
-        val out = PatternEdits.pasted(p, listOf(0, 2, 4), anchor = 61, scope = EditScope.WHOLE)
+        val out = PatternEdits.pasted(p, listOf(0, 2, 4), anchor = 61, scope = EditScope.WHOLE)!!
         // 0 → 61; 2 (empty) skipped, so 62 keeps its note; 4 → 65 is past the end.
         assertEquals(sortedMapOf(0 to listOf(60), 4 to listOf(62), 61 to listOf(60), 62 to listOf(70)), notesAt(out))
     }
@@ -116,7 +165,7 @@ class PatternEditsTest {
             mapOf(0 to Step(listOf(hit(48), hit(50, 0.4f))), 8 to Step(listOf(hit(54)))),
             listOf(lane(25, 0 to 0.6f), lane(5, 0 to 0.1f)), // 25 = key 2's param 5; 5 = key 0's
         )
-        val out = PatternEdits.pasted(p, listOf(0), anchor = 8, scope = drum)
+        val out = PatternEdits.pasted(p, listOf(0), anchor = 8, scope = drum)!!
         assertEquals(listOf(54, 50), out.steps.getValue(8).notes)
         assertEquals(0.4f, out.steps.getValue(8).hit(50)!!.velocity)
         assertEquals(sortedMapOf(0 to 0.6f, 8 to 0.6f), laneValues(out, 25))
@@ -129,7 +178,7 @@ class PatternEditsTest {
     fun moveTakesEveryValueAndTheMotionAlong() {
         val h = hit(60, 0.4f, 2f, 0.5f, -0.2f)
         val p = pattern(16, mapOf(5 to Step(listOf(h)), 6 to Step(listOf(hit(72)))), listOf(lane(9, 5 to 0.3f, 6 to 0.8f)))
-        val out = PatternEdits.moved(p, 5, 6, copy = false, scope = EditScope.WHOLE)
+        val out = PatternEdits.moved(p, 5, 6, copy = false, scope = EditScope.WHOLE)!!
         assertEquals(sortedMapOf(6 to listOf(60)), notesAt(out))
         assertEquals(h, out.steps.getValue(6).hits.single())
         assertEquals(sortedMapOf(6 to 0.3f), laneValues(out, 9))
@@ -138,7 +187,7 @@ class PatternEditsTest {
     @Test
     fun copyLeavesTheSource() {
         val p = pattern(16, mapOf(5 to Step(listOf(hit(60)))), listOf(lane(9, 5 to 0.3f)))
-        val out = PatternEdits.moved(p, 5, 11, copy = true, scope = EditScope.WHOLE)
+        val out = PatternEdits.moved(p, 5, 11, copy = true, scope = EditScope.WHOLE)!!
         assertEquals(sortedMapOf(5 to listOf(60), 11 to listOf(60)), notesAt(out))
         assertEquals(sortedMapOf(5 to 0.3f, 11 to 0.3f), laneValues(out, 9))
     }
@@ -146,7 +195,7 @@ class PatternEditsTest {
     @Test
     fun moveOnADrumLaneMovesOnlyThatSound() {
         val p = pattern(16, mapOf(4 to Step(listOf(hit(48), hit(50, 0.9f))), 6 to Step(listOf(hit(54)))))
-        val out = PatternEdits.moved(p, 4, 6, copy = false, scope = drum)
+        val out = PatternEdits.moved(p, 4, 6, copy = false, scope = drum)!!
         assertEquals(listOf(48), out.steps.getValue(4).notes)
         assertEquals(listOf(54, 50), out.steps.getValue(6).notes)
     }
@@ -164,17 +213,17 @@ class PatternEditsTest {
     @Test
     fun fillPutsThePartOnEveryIntervalToThePatternsEnd() {
         val p = pattern(16, mapOf(2 to Step(listOf(hit(48)))))
-        val out = PatternEdits.filled(p, a = 2, b = 4, part = Step(listOf(hit(50))), scope = drum)
+        val out = PatternEdits.filled(p, a = 2, b = 4, part = Step(listOf(hit(50))), scope = drum)!!
         assertEquals(listOf(2, 4, 6, 8, 10, 12, 14), notesAt(out).keys.toList())
         assertEquals(listOf(48, 50), out.steps.getValue(2).notes)
-        assertEquals("B before A fills from B", listOf(0, 3, 6, 9, 12, 15), notesAt(PatternEdits.filled(pattern(16, emptyMap()), 3, 0, Step(listOf(hit(50))), drum)).keys.toList())
+        assertEquals("B before A fills from B", listOf(0, 3, 6, 9, 12, 15), notesAt(PatternEdits.filled(pattern(16, emptyMap()), 3, 0, Step(listOf(hit(50))), drum)!!).keys.toList())
     }
 
     @Test
     fun fillOnASynthSlotWritesThePenNotesOverEachStep() {
         val p = pattern(12, mapOf(4 to Step(listOf(hit(70)))))
         val pen = Step(listOf(hit(57), hit(60)))
-        val out = PatternEdits.filled(p, 0, 4, pen, EditScope.WHOLE)
+        val out = PatternEdits.filled(p, 0, 4, pen, EditScope.WHOLE)!!
         assertEquals(sortedMapOf(0 to listOf(57, 60), 4 to listOf(57, 60), 8 to listOf(57, 60)), notesAt(out))
         assertSame(p, PatternEdits.filled(p, 3, 3, pen, EditScope.WHOLE))
     }
@@ -184,24 +233,24 @@ class PatternEditsTest {
     @Test
     fun rotateWrapsAtTheLengthAndLeavesHiddenStepsAlone() {
         val p = pattern(8, mapOf(0 to Step(listOf(hit(60))), 7 to Step(listOf(hit(62))), 20 to Step(listOf(hit(70)))), listOf(lane(4, 7 to 0.5f)))
-        val r = PatternEdits.rotated(p, 1, EditScope.WHOLE)
+        val r = PatternEdits.rotated(p, 1, EditScope.WHOLE)!!
         assertEquals(sortedMapOf(0 to listOf(62), 1 to listOf(60), 20 to listOf(70)), notesAt(r))
         assertEquals(sortedMapOf(0 to 0.5f), laneValues(r, 4))
-        assertEquals(notesAt(p), notesAt(PatternEdits.rotated(r, -1, EditScope.WHOLE)))
+        assertEquals(notesAt(p), notesAt(PatternEdits.rotated(r, -1, EditScope.WHOLE)!!))
         assertSame(p, PatternEdits.rotated(p, 8, EditScope.WHOLE))
     }
 
     @Test
     fun rotateOnADrumLaneRotatesOnlyThatSound() {
         val p = pattern(4, mapOf(0 to Step(listOf(hit(48), hit(50))), 1 to Step(listOf(hit(48)))))
-        val r = PatternEdits.rotated(p, 1, drum)
+        val r = PatternEdits.rotated(p, 1, drum)!!
         assertEquals(sortedMapOf(0 to listOf(48), 1 to listOf(48, 50)), notesAt(r))
     }
 
     @Test
     fun insertPushesTheLineLaterFromTheStepAndDropsTheLast() {
         val p = pattern(8, (0 until 8).associateWith { Step(listOf(hit(60 + it))) })
-        val out = PatternEdits.inserted(p, 3, EditScope.WHOLE)
+        val out = PatternEdits.inserted(p, 3, EditScope.WHOLE)!!
         assertEquals(listOf(0, 1, 2, 4, 5, 6, 7), notesAt(out).keys.toList())
         assertEquals(listOf(62), out.steps.getValue(2).notes)
         assertEquals(listOf(63), out.steps.getValue(4).notes)
@@ -211,7 +260,7 @@ class PatternEditsTest {
     @Test
     fun deletePullsTheLineEarlierAndEmptiesTheLastStep() {
         val p = pattern(8, (0 until 8).associateWith { Step(listOf(hit(60 + it))) }, listOf(lane(2, 4 to 0.9f)))
-        val out = PatternEdits.deleted(p, 3, EditScope.WHOLE)
+        val out = PatternEdits.deleted(p, 3, EditScope.WHOLE)!!
         assertEquals(listOf(0, 1, 2, 3, 4, 5, 6), notesAt(out).keys.toList())
         assertEquals(listOf(64), out.steps.getValue(3).notes)
         assertEquals(sortedMapOf(3 to 0.9f), laneValues(out, 2))

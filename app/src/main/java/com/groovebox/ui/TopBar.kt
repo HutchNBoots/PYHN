@@ -21,9 +21,6 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,13 +95,33 @@ fun TopBar(
         }
 
         if (state.screen == Screen.Tape) {
-            TapeButtons(state, buttonHeight) { slot, picked ->
-                SlotButton(state, slot, buttonHeight, onSlotPositioned, onTap = { picked() }, onLongPress = { picked() })
+            TapeButtons(state, buttonHeight) { slot ->
+                // Picker mode: picks on release; a touch that slides off or is cancelled changes
+                // nothing and closes the picker.
+                SlotButton(
+                    state, slot, buttonHeight, onSlotPositioned,
+                    Modifier.pointerInput(slot) {
+                        awaitEachGesture {
+                            awaitFirstDown()
+                            if (waitForUpOrCancellation() != null) state.pickSlot(slot) else state.closeSlotPicker()
+                        }
+                    },
+                )
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.GROUP))) {
                 for (slot in 0 until SeqLimits.SLOTS) {
-                    SlotButton(state, slot, buttonHeight, onSlotPositioned, onTap = { slotTap(slot) }, onLongPress = { slotLongPress(slot) })
+                    SlotButton(
+                        state, slot, buttonHeight, onSlotPositioned,
+                        // Selects on touch-down; a long-press on a synth slot opens its presets.
+                        Modifier.pointerInput(slot) {
+                            detectTapGestures(
+                                onPress = { state.selectSlot(slot) },
+                                onTap = { slotTap(slot) },
+                                onLongPress = { slotLongPress(slot) },
+                            )
+                        },
+                    )
                 }
             }
         }
@@ -192,19 +209,16 @@ fun TopBar(
     }
 }
 
-/** One sound slot button: selects on touch-down; [onLongPress] (presets on a synth slot elsewhere). */
+/** One sound slot button; its touch handling comes in with [gesture]. */
 @Composable
 private fun SlotButton(
     state: GrooveState,
     slot: Int,
     height: Dp,
     onPositioned: (slot: Int, bounds: Rect) -> Unit,
-    onTap: () -> Unit,
-    onLongPress: () -> Unit,
+    gesture: Modifier,
 ) {
     val d = LocalDesign.current
-    val tap by rememberUpdatedState(onTap)
-    val longPress by rememberUpdatedState(onLongPress)
     val active = slot == state.selectedSlot
     val drum = state.isDrum(slot)
     val description = buildString {
@@ -223,13 +237,7 @@ private fun SlotButton(
                 selected = active
             }
             .onGloballyPositioned { onPositioned(slot, it.boundsInRoot()) }
-            .pointerInput(slot) {
-                detectTapGestures(
-                    onPress = { state.selectSlot(slot) },
-                    onTap = { tap() },
-                    onLongPress = { longPress() },
-                )
-            },
+            .then(gesture),
     ) {
         BasicText(
             "${slot + 1}",
@@ -251,13 +259,13 @@ private fun SlotButton(
 private fun TempoReadout(state: GrooveState, height: Dp) {
     val d = LocalDesign.current
     val haptics = LocalHapticFeedback.current
-    val taps = state.tapCount
-    LaunchedEffect(taps) {
-        if (taps == 0) return@LaunchedEffect
+    val tapping = state.tapCount > 0
+    // Restarts on every tap (the count stops rising once the timing window is full).
+    LaunchedEffect(state.tapSerial) {
+        if (!tapping) return@LaunchedEffect
         delay(TapTempo.TIMEOUT_MS)
         state.tapTempoIdle()
     }
-    val tapping = taps > 0
     Row(
         Modifier
             .height(height)
@@ -280,13 +288,22 @@ private fun TempoReadout(state: GrooveState, height: Dp) {
             }
             .pointerInput(Unit) {
                 awaitEachGesture {
+                    // The touch-down times the tap; its tempo applies on release, so a long-press
+                    // (120) never applies it first and a slide-off applies nothing.
                     val down = awaitFirstDown()
-                    state.tapTempo(down.uptimeMillis)
-                    val held = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { waitForUpOrCancellation() } == null
-                    if (held && currentEvent.changes.any { it.pressed }) {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        state.tapTempoReset()
-                        waitForUpOrCancellation()
+                    state.tapTempoDown(down.uptimeMillis)
+                    var cancelled = false
+                    val released = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                        if (waitForUpOrCancellation() == null) cancelled = true
+                    } != null
+                    when {
+                        cancelled -> state.tapTempoCancel()
+                        released -> state.tapTempoUp()
+                        else -> {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            state.tapTempoReset()
+                            waitForUpOrCancellation()
+                        }
                     }
                 }
             },
@@ -312,22 +329,29 @@ private fun TempoReadout(state: GrooveState, height: Dp) {
  * The Tape screen's slot chip and Export WAV (ADR 0002's exception: they take the slot buttons'
  * place). Build-22 (ADR 0003 P5, P6): Undo moved to the Tape footer, in the left thumb's reach,
  * and the slot chip ("slot 2 ▾") names the slot the keys play and Commit takes: a tap steps to
- * the next slot ([SlotChip]); a long-press opens the eight slot buttons here for a direct pick,
- * and picking one closes them. Export WAV (F7.1) is live when the tape has audio: a tap renders
+ * the next slot ([SlotChip]); a long-press opens the eight slot buttons here for a direct pick.
+ * A pick selects on release; a cancelled touch, a touch elsewhere or 4 s idle closes them. Export WAV (F7.1) is live when the tape has audio: a tap renders
  * the loop to a WAV (the button shows the progress) and then opens the share sheet.
  */
 @Composable
 private fun TapeButtons(
     state: GrooveState,
     height: Dp,
-    slotButton: @Composable (slot: Int, onPicked: () -> Unit) -> Unit,
+    slotButton: @Composable (slot: Int) -> Unit,
 ) {
     val d = LocalDesign.current
     val haptics = LocalHapticFeedback.current
-    var picking by remember { mutableStateOf(false) }
-    if (picking) {
-        Row(horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.GROUP))) {
-            for (slot in 0 until SeqLimits.SLOTS) slotButton(slot) { picking = false }
+    if (state.slotPickerOpen) {
+        // Closes by itself after [SLOT_PICKER_IDLE_MS]; a touch outside it closes it too (GrooveScreen).
+        LaunchedEffect(Unit) {
+            delay(SLOT_PICKER_IDLE_MS)
+            state.closeSlotPicker()
+        }
+        Row(
+            Modifier.onGloballyPositioned { state.slotPickerBounds = it.boundsInRoot() },
+            horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.GROUP)),
+        ) {
+            for (slot in 0 until SeqLimits.SLOTS) slotButton(slot)
         }
         return
     }
@@ -341,14 +365,14 @@ private fun TapeButtons(
                 .semantics {
                     contentDescription = "Slot ${slot + 1}, ${state.instrumentName(slot)}, plays on the keys and commits. " +
                         "Tap for the next slot, hold to pick one"
-                    onLongClick("Pick a slot") { picking = true; true }
+                    onLongClick("Pick a slot") { state.openSlotPicker(); true }
                 }
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { state.slotChipTap() },
                         onLongPress = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            picking = true
+                            state.openSlotPicker()
                         },
                     )
                 },
@@ -504,6 +528,9 @@ fun BarButton(
         content = content,
     )
 }
+
+/** The Tape slot picker closes by itself after this long. */
+private const val SLOT_PICKER_IDLE_MS = 4_000L
 
 /** Shown but not usable yet: dimmed, no touch handling, marked disabled for accessibility. */
 fun Modifier.inert(description: String? = null): Modifier =

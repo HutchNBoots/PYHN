@@ -14,11 +14,21 @@ class EditScope private constructor(val lane: Int?, private val laneKey: Int, pr
     /** [step] without its part. */
     fun rest(step: Step): Step = if (lane == null) EMPTY else Step(step.hits.filter { it.note != lane })
 
-    /** [step] with its part replaced by [part] (the drum slot keeps the other sounds; a full step keeps them first). */
+    /**
+     * [step] can take [part]: always on a synth slot; on the drum slot unless the step is full
+     * (8 hits) of other sounds while [part] holds the lane's hit.
+     */
+    fun fits(step: Step, part: Step): Boolean =
+        lane == null || !part.on || step.hit(lane) != null || step.hits.size < SeqLimits.HITS
+
+    /**
+     * [step] with its part replaced by [part] (the drum slot keeps the other sounds). A step
+     * that cannot take it ([fits]) is returned unchanged: the hit is never silently dropped.
+     */
     fun merge(step: Step, part: Step): Step {
         if (lane == null) return part
-        val hits = rest(step).hits + part.hits.filter { it.note == lane }
-        return Step(hits.take(SeqLimits.HITS))
+        if (!fits(step, part)) return step
+        return Step(rest(step).hits + part.hits.filter { it.note == lane })
     }
 
     fun ownsTarget(target: Int): Boolean = lane == null || (paramCount > 0 && target >= 0 && target / paramCount == laneKey)
@@ -39,7 +49,9 @@ class EditScope private constructor(val lane: Int?, private val laneKey: Int, pr
  * slot types)"), as pure functions from one pattern's snapshot to the snapshot it becomes. The
  * screen applies the result with [PatternStore.restorePattern] inside one [PatternHistory.edit],
  * so the engine gets only what differs (through setStep / setPatternSettings / setMotionValue)
- * and each edit is one undo step. Only steps inside the pattern's length play, so the ones
+ * and each edit is one undo step. The edits that put a drum hit onto other steps (paste, move,
+ * fill, rotate, insert, delete) return null, changing nothing, when one of those steps is full
+ * ([EditScope.fits]); the screen then says "step full". Only steps inside the pattern's length play, so the ones
  * that rotate, shift or fill stay inside it; the copies (×2, page copy) write the steps they
  * name, hidden or not.
  */
@@ -84,23 +96,40 @@ object PatternEdits {
     }
 
     /**
-     * Shift + tap page [to]: the 16 steps of page [from] (hits and motion) copied onto it. A
-     * page past the pattern's end lengthens the pattern to take it in.
+     * Shift + tap page [to]: the steps page [from] uses (all 16, or fewer on the pattern's last
+     * page, e.g. 12 at 1/16T) copied, hits and motion, to [pageCopyStart]. The pattern
+     * lengthens to take them in (at most 64 steps).
      */
     fun pageCopied(p: PatternSnapshot, from: Int, to: Int): PatternSnapshot {
         val pages = SeqLimits.STEPS / PAGE
         if (from == to || from !in 0 until pages || to !in 0 until pages) return p
+        val length = p.settings.length
+        val used = pageUsed(length, from)
+        if (used == 0) return p
+        val start = pageCopyStart(length, to)
+        val count = minOf(used, SeqLimits.STEPS - start)
         val w = Work(p)
-        for (c in 0 until PAGE) w.copyStep(from * PAGE + c, to * PAGE + c)
-        return w.snapshot(p.settings.copy(length = maxOf(p.settings.length, (to + 1) * PAGE)))
+        for (c in 0 until count) w.copyStep(from * PAGE + c, start + c)
+        return w.snapshot(p.settings.copy(length = maxOf(length, start + count)))
     }
+
+    /** Steps of page [page] inside a pattern of [length] steps. */
+    fun pageUsed(length: Int, page: Int): Int = (length - page * PAGE).coerceIn(0, PAGE)
+
+    /**
+     * Where a page copy to page [to] lands: on that page when the pattern is whole pages long
+     * (or the page is inside it); otherwise straight after the pattern's end, so a 12-step
+     * pattern copied becomes 24 steps without a gap.
+     */
+    fun pageCopyStart(length: Int, to: Int): Int =
+        if (length % PAGE == 0 || to * PAGE < length) to * PAGE else length
 
     /**
      * Shift + tap a pad with steps selected: the selected steps' parts (and motion) copied so
      * the earliest lands on [anchor], keeping their spacing. Steps that would land past step 64
      * are dropped; empty sources are skipped.
      */
-    fun pasted(p: PatternSnapshot, source: Collection<Int>, anchor: Int, scope: EditScope): PatternSnapshot {
+    fun pasted(p: PatternSnapshot, source: Collection<Int>, anchor: Int, scope: EditScope): PatternSnapshot? {
         val from = source.filter { it in 0 until SeqLimits.STEPS }.sorted()
         if (from.isEmpty() || anchor !in 0 until SeqLimits.STEPS) return p
         val w = Work(p)
@@ -109,6 +138,7 @@ object PatternEdits {
         for (i in from) {
             val j = i + offset
             if (j !in 0 until SeqLimits.STEPS || !scope.part(original.steps[i]).on) continue
+            if (!scope.fits(w.steps[j], scope.part(original.steps[i]))) return null
             w.steps[j] = scope.merge(w.steps[j], scope.part(original.steps[i]))
             w.copyMotion(original, i, j, scope)
         }
@@ -120,11 +150,12 @@ object PatternEdits {
      * replacing what [to] had of it; [from] keeps it only with [copy]. Nothing when [from] has
      * no part to move.
      */
-    fun moved(p: PatternSnapshot, from: Int, to: Int, copy: Boolean, scope: EditScope): PatternSnapshot {
+    fun moved(p: PatternSnapshot, from: Int, to: Int, copy: Boolean, scope: EditScope): PatternSnapshot? {
         if (from == to || from !in 0 until SeqLimits.STEPS || to !in 0 until SeqLimits.STEPS) return p
         val original = Work(p)
         val part = scope.part(original.steps[from])
         if (!part.on) return p
+        if (!scope.fits(original.steps[to], part)) return null
         val w = Work(p)
         if (!copy) {
             w.steps[from] = scope.rest(w.steps[from])
@@ -139,13 +170,14 @@ object PatternEdits {
      * Fill (Shift + tap pad A, then pad B): [part] (the lane's hit, or the pen's notes) on every
      * |B − A|th step from the earlier of the two to the pattern's end.
      */
-    fun filled(p: PatternSnapshot, a: Int, b: Int, part: Step, scope: EditScope): PatternSnapshot {
+    fun filled(p: PatternSnapshot, a: Int, b: Int, part: Step, scope: EditScope): PatternSnapshot? {
         val every = kotlin.math.abs(b - a)
         val start = minOf(a, b)
         if (every == 0 || start < 0 || !part.on) return p
         val w = Work(p)
         var i = start
         while (i < p.settings.length) {
+            if (!scope.fits(w.steps[i], part)) return null
             w.steps[i] = scope.merge(w.steps[i], part)
             i += every
         }
@@ -153,20 +185,20 @@ object PatternEdits {
     }
 
     /** Rotate: every part inside the pattern moves [by] steps later (earlier when negative), wrapping at its length. */
-    fun rotated(p: PatternSnapshot, by: Int, scope: EditScope): PatternSnapshot {
+    fun rotated(p: PatternSnapshot, by: Int, scope: EditScope): PatternSnapshot? {
         val length = p.settings.length
         if (length <= 1 || Math.floorMod(by, length) == 0) return p
         return shifted(p, scope) { i -> Math.floorMod(i - by, length) }
     }
 
     /** Insert: from [at] on, every part inside the pattern moves one step later; [at] becomes empty, the last part falls off. */
-    fun inserted(p: PatternSnapshot, at: Int, scope: EditScope): PatternSnapshot {
+    fun inserted(p: PatternSnapshot, at: Int, scope: EditScope): PatternSnapshot? {
         if (at !in 0 until p.settings.length) return p
         return shifted(p, scope) { i -> if (i < at) i else if (i == at) -1 else i - 1 }
     }
 
     /** Delete: [at]'s part goes and every later part inside the pattern moves one step earlier; the last step becomes empty. */
-    fun deleted(p: PatternSnapshot, at: Int, scope: EditScope): PatternSnapshot {
+    fun deleted(p: PatternSnapshot, at: Int, scope: EditScope): PatternSnapshot? {
         val length = p.settings.length
         if (at !in 0 until length) return p
         return shifted(p, scope) { i -> if (i < at) i else if (i + 1 < length) i + 1 else -1 }
@@ -176,12 +208,14 @@ object PatternEdits {
     fun notesCleared(p: PatternSnapshot): PatternSnapshot = p.copy(steps = emptyMap())
 
     /** Each step inside the pattern takes the part of step `source(i)` (−1 = nothing), motion too. */
-    private fun shifted(p: PatternSnapshot, scope: EditScope, source: (Int) -> Int): PatternSnapshot {
+    private fun shifted(p: PatternSnapshot, scope: EditScope, source: (Int) -> Int): PatternSnapshot? {
         val original = Work(p)
         val w = Work(p)
         for (i in 0 until p.settings.length) {
             val from = source(i)
-            w.steps[i] = scope.merge(w.steps[i], if (from < 0) Step() else scope.part(original.steps[from]))
+            val part = if (from < 0) Step() else scope.part(original.steps[from])
+            if (!scope.fits(w.steps[i], part)) return null
+            w.steps[i] = scope.merge(w.steps[i], part)
             if (from < 0) w.clearMotion(i, scope) else w.copyMotion(original, from, i, scope)
         }
         return w.snapshot(p.settings)

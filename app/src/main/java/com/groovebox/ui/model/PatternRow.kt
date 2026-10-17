@@ -51,9 +51,6 @@ class PatternRowGesture(private val longPressMs: Long = 500) {
         }
     }
 
-    /** The cell is still held past [longPressMs] (for the screen's feedback). */
-    fun isLongHeld(pointer: Int, timeMs: Long): Boolean = held[pointer]?.let { !it.spent && timeMs - it.downMs >= longPressMs } == true
-
     fun cancel() = held.clear()
 }
 
@@ -72,11 +69,14 @@ data class PatternChain(val first: Int, val then: Int) {
 
 /** The step grid's beats and the triplet offer (build-22). Pure Kotlin. */
 object StepGrid {
-    /** Steps per beat at rate index 0..3 (1/8, 1/16, 1/32, 1/16T): pad and cell edges are drawn every this many steps. */
+    /**
+     * Steps per beat at rate index 0..3 (1/8, 1/16, 1/32, 1/16T; engine Pattern.h): pad and
+     * cell edges are drawn every this many steps. 1/16T is six steps a beat, 24 a bar.
+     */
     fun beatSteps(rate: Int): Int = when (rate) {
         0 -> 2
         2 -> 8
-        3 -> 3
+        3 -> 6
         else -> 4
     }
 
@@ -84,14 +84,18 @@ object StepGrid {
     fun isBeat(i: Int, rate: Int): Boolean = i % beatSteps(rate) == 0
 
     /**
-     * At 1/16T a length that is not whole bars of triplets (12 steps) gets an offer: the same
-     * number of bars (of 16 sixteenths, rounded up) in triplets, 12 per bar (16 → 12, 32 → 24).
-     * Null when none is needed.
+     * At 1/16T (24 steps a bar) a length that is not whole triplet bars gets an offer that
+     * keeps the bars it had at 16 a bar: 1..16 → 24, 17..32 → 48. Longer patterns would need
+     * more than 64 steps, so they get none; whole triplet bars need none.
      */
     fun tripletOffer(rate: Int, length: Int): Int? {
-        if (rate != 3 || length % 12 == 0) return null
-        return ((length + 15) / 16 * 12).coerceIn(12, 48)
+        if (rate != 3 || length % TRIPLET_BAR == 0) return null
+        val bars = (length + 15) / 16
+        return (bars * TRIPLET_BAR).takeIf { it <= SeqLimits.STEPS }
     }
+
+    /** Steps in a bar at 1/16T. */
+    const val TRIPLET_BAR = 24
 }
 
 /**
