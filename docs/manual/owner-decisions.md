@@ -12,3 +12,4 @@ Captured as they come in; they override the suggestions in the manual, the consi
 | 17 Oct 2026 | Approved 1-2b for the next build: LFO Sync reachable on the main layer (Rate snaps to beat divisions below a detent) and a small LFO trace on the Mod section display. | Manual 1.2 task 1-2b |
 | 17 Oct 2026 | 1-2c strip lock: no Shift + long-press (left thumb cannot reach); lock = 1 s still hold with a filling ring and haptic, movement cancels. | Manual 1.2 task 1-2c |
 | 17 Oct 2026 | Approved 1-3a for the next build: Key and Scale reachable from the Synth screen (a fifth "Play" rail item: Key, Scale, Octave, Mode), no screen switch. | Manual 1.3 task 1-3a |
+| 17 Oct 2026 | Approved 1-3c for the next build: Glide dimmed in Poly (it does nothing there); Unison shown as "Unison (mono)". | Manual 1.3 task 1-3c |
