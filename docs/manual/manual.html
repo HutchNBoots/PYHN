@@ -260,7 +260,7 @@ a { color:var(--blue) }
   <ul class="score"><li class="ok"><b>2</b> touches</li><li class="warn"><b>2</b> hidden gestures</li></ul>
   <div class="fi">
     <div class="friction"><h5>Friction</h5><ul><li><b>Accidental lock:</b> resting a thumb for half a second before dragging locks the strip and the drag does nothing (<code>StripGesture.kt:89</code>).</li><li>A lock doesn't protect against a preset load.</li></ul></div>
-    <div class="ideal"><h5>Ideal flow</h5><ul><li>Lock on Shift + long-press, or a 1 s hold with a haptic. Preset loads respect locks.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>One right-thumb gesture, no Shift (Shift is out of reach while the right thumb is on a strip): lock on a 1 s still hold, with a filling ring and a haptic at the lock; any movement before then cancels and the drag works as normal. Preset loads respect locks.</li></ul></div>
   </div>
 </article>
 <figure class="shot"><img src="img/synth-locked.jpg" alt="A locked Cutoff strip (padlock)." loading="lazy" width="1170" height="540"><figcaption>A locked Cutoff strip (padlock).</figcaption></figure>

@@ -151,7 +151,7 @@ SEC1 = f'''
       [("touches", "2", "ok"), ("hidden gestures", "2", "warn")],
       ["<b>Accidental lock:</b> resting a thumb for half a second before dragging locks the strip and the drag does nothing (<code>StripGesture.kt:89</code>).",
        "A lock doesn't protect against a preset load."],
-      ["Lock on Shift + long-press, or a 1 s hold with a haptic. Preset loads respect locks."])}
+      ["One right-thumb gesture, no Shift (Shift is out of reach while the right thumb is on a strip): lock on a 1 s still hold, with a filling ring and a haptic at the lock; any movement before then cancels and the drag works as normal. Preset loads respect locks."])}
 {shot("synth-locked", "A locked Cutoff strip (padlock).")}
 {task("1-2d", "Make it brighter with a bit of grit", "Synth screen, Osc section.",
       steps([("Tap Filter", "L", "Y", "rail", False), ("Drag Cutoff up", "R", "Y", "strip 1", False), ("Tap Shift", "R", "S", "top bar, right", False),
