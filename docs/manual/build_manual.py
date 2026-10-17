@@ -440,7 +440,9 @@ SEC32 = f'''
 
 
 def page():
-    import manual_more
+    import manual_more, screens
+    sec0 = screens.section(E)
+    screens_css = screens.CSS.replace('{{', '{').replace('}}', '}')
     sec32b, sec8 = manual_more.build(task, steps, gaps, E)
     sec32 = SEC32.replace('<h3 id="s3-2-views">', sec32b + '\n<h3 id="s3-2-views">')
     findings = "".join(
@@ -534,6 +536,7 @@ figure.shot img {{ display:block; width:100%; height:auto; border-radius:8px; ma
 figcaption {{ font-size:13px; color:var(--dim); padding:8px 4px 2px }}
 ol.proposals li {{ margin:6px 0; max-width:75ch }}
 .todo {{ color:var(--dim) }}
+{screens_css}
 .np {{ font:500 11px var(--mono); text-transform:uppercase; letter-spacing:.06em; padding:2px 7px; border-radius:6px; background:var(--coral-bg); color:var(--coral); margin-right:6px }}
 .note {{ border-left:3px solid var(--amber); padding:4px 12px; background:var(--amber-bg); border-radius:0 8px 8px 0 }}
 table.ideas td {{ font-size:13.5px }} table.ideas td.c {{ white-space:nowrap }} .sub2 {{ color:var(--dim); font-size:12.5px; margin-top:2px }}
@@ -547,7 +550,7 @@ a {{ color:var(--blue) }}
 <div class="wrap">
 <nav class="toc" aria-label="Contents">
   <p>Manual · draft</p>
-  <a href="#method">How to read this</a><a href="#findings">Top findings</a>
+  <a href="#method">How to read this</a><a href="#findings">Top findings</a><a href="#s0">0 Screen map</a><a class="sub" href="#glossary">Glossary</a>
   <p>Sections</p>
   <a href="#s1">1 Synth sounds</a><a class="sub" href="#s1-1">1.1 Pick a sound</a><a class="sub" href="#s1-2">1.2 Shape it</a><a class="sub" href="#s1-3">1.3 Play it</a><a class="sub" href="#s1-4">1.4 Keep it</a>
   <a href="#s2">2 Drum kit</a><a class="sub" href="#s2-1">2.1 Play the kit</a><a class="sub" href="#s2-2">2.2 Edit one sound</a>
@@ -573,9 +576,9 @@ a {{ color:var(--blue) }}
 <section id="findings"><h2><span class="num">★</span>Top findings so far</h2>
 <p>Ranked across the sections below; they merge with the <a href="https://github.com/HutchNBoots/PYHN/blob/ccr-8d023090-x5f91s/docs/reviews/2026-10-17-consistency-review.md">consistency review</a> into one list before any build is planned.</p>
 <ol class="findings">{findings}</ol></section>
-{SEC1}{SEC2}{SEC31}{sec32}{sec8}
+{sec0}{SEC1}{SEC2}{SEC31}{sec32}{sec8}
 <section id="later"><h2><span class="num">…</span>Not written yet</h2>
-<ul class="todo"><li>0 Getting started (the screen, the grip, Shift, Play and Record, gestures)</li><li>3.3 Patterns and 3.4 Putting parts together</li>
+<ul class="todo"><li>0 Getting started: the grip, Shift, Play and Record, gestures (the screen map is done)</li><li>3.3 Patterns and 3.4 Putting parts together</li>
 <li>4 Tape (paused at the owner's request)</li><li>5 Mix and effects · 6 Performing live · 7 Session · Appendix</li></ul></section>
 </main></div>'''
 

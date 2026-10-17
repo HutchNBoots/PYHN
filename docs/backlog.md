@@ -1,6 +1,6 @@
 # Backlog
 
-Last updated 16 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
+Last updated 17 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 
 ## Shipped
 
@@ -9,6 +9,11 @@ Last updated 16 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 - [x] build-18: v1 close-out: bundled fonts; live Mixer level meters with clip lights; Synth/Drum/Mixer mockups as built; two-thumb review (swipe display to change slot, double-tap a tape lane to record).
 - [x] build-14: CX two-thumb fixes (ADR 0003): strip values under the label; Mixer bars select. Owner: works well.
 - [x] build-13: F8 key and scale.
+
+## Now: CX research
+
+- [ ] Owner returns `docs/manual/cx-feedback.xlsx`; then `docs/manual/cx-findings.md` and the next build plan (see `docs/HANDOFF.md`).
+- [ ] Manual sections still to write: 0 Getting started, 3.3 Patterns, 3.4 Parts together, 4 Tape (paused), 5 Mix, 6 Performing, 7 Session.
 
 ## v1 close-out
 
