@@ -41,19 +41,90 @@ object DrumTapCells {
 }
 
 /**
+ * Touch grammar of the Rev / Choke tap cells (build-22, review 1): a quick still touch on a cell
+ * is a [Action.Tap] (choose it); a 1 s still hold anywhere on the cells toggles the lock, with
+ * the same timing and ring as a strip ([StripGesture.LOCK_HOLD_MS], [StripGesture.RING_DELAY_MS]);
+ * moving past the slop (2D) cancels both. Times are monotonic ms. Main thread only.
+ */
+class CellHold(private val touchSlop: Float) {
+    enum class Action { Tap, Lock }
+
+    private var downAt = -1L
+    private var x0 = 0f
+    private var y0 = 0f
+    private var moved = false
+    private var locked = false
+
+    fun down(timeMs: Long, x: Float, y: Float) {
+        downAt = timeMs
+        x0 = x
+        y0 = y
+        moved = false
+        locked = false
+    }
+
+    fun move(timeMs: Long, x: Float, y: Float) {
+        if (downAt >= 0 && kotlin.math.hypot(x - x0, y - y0) > touchSlop) moved = true
+    }
+
+    private fun pending() = downAt >= 0 && !moved && !locked
+
+    val deadline: Long?
+        get() = if (pending()) downAt + LOCK_HOLD_MS else null
+
+    fun timeout(timeMs: Long): Action? {
+        if (!pending() || timeMs - downAt < LOCK_HOLD_MS) return null
+        locked = true
+        return Action.Lock
+    }
+
+    fun up(timeMs: Long): Action? {
+        if (downAt < 0) return null
+        val action = when {
+            locked || moved -> null
+            timeMs - downAt >= LOCK_HOLD_MS -> Action.Lock // the timer was late
+            else -> Action.Tap
+        }
+        downAt = -1L
+        return action
+    }
+
+    fun cancel() {
+        downAt = -1L
+    }
+
+    /** The ring, as [StripGesture.lockProgress]. */
+    fun lockProgress(timeMs: Long): Float? {
+        if (!pending()) return null
+        val held = timeMs - downAt
+        if (held < StripGesture.RING_DELAY_MS) return null
+        return ((held - StripGesture.RING_DELAY_MS).toFloat() / (LOCK_HOLD_MS - StripGesture.RING_DELAY_MS)).coerceIn(0f, 1f)
+    }
+
+    companion object {
+        const val LOCK_HOLD_MS = StripGesture.LOCK_HOLD_MS
+    }
+}
+
+/**
  * Hold one slot button and tap another: the held slot's sound is copied onto the tapped one
- * (build-22, manual 1-4B). Synth slots only. Fed with every pointer down / up on the slot
- * buttons; main thread only.
+ * (build-22, manual 1-4B). Synth slots only. A finger counts as holding its slot only after
+ * [MIN_HOLD_MS] (review 2), so a two-finger brush over the slots copies nothing. While two slot
+ * fingers are down, or after a copy from a still-held slot, no slot opens its presets
+ * ([suppressLongPress], review 3). Fed with every pointer down / up on the slot buttons; main
+ * thread only.
  */
 class SlotCopyGesture(private val isSynth: (Int) -> Boolean) {
     data class Copy(val from: Int, val to: Int)
 
-    private val held = LinkedHashMap<Long, Int>()
+    private class Held(val slot: Int, val downAt: Long)
+
+    private val held = LinkedHashMap<Long, Held>()
     private val sources = HashSet<Int>()
 
-    fun down(pointer: Long, slot: Int): Copy? {
-        val from = held.values.firstOrNull { it != slot && isSynth(it) }
-        held[pointer] = slot
+    fun down(pointer: Long, slot: Int, timeMs: Long): Copy? {
+        val from = held.values.firstOrNull { it.slot != slot && isSynth(it.slot) && timeMs - it.downAt >= MIN_HOLD_MS }?.slot
+        held[pointer] = Held(slot, timeMs)
         if (from == null || !isSynth(slot)) return null
         sources += from
         return Copy(from, slot)
@@ -61,14 +132,18 @@ class SlotCopyGesture(private val isSynth: (Int) -> Boolean) {
 
     fun up(pointer: Long) {
         held.remove(pointer)
-        sources.retainAll(held.values.toSet())
+        sources.retainAll(held.values.map { it.slot }.toSet())
     }
 
-    /** [slot] is held and has given a copy: its long-press (the preset strip) should stand down. */
-    fun copiedFrom(slot: Int): Boolean = slot in sources
+    /** [slot]'s long-press (its preset strip) stands down: another slot finger is down, or it gave a copy. */
+    fun suppressLongPress(slot: Int): Boolean = slot in sources || held.values.any { it.slot != slot }
 
     fun cancel() {
         held.clear()
         sources.clear()
+    }
+
+    companion object {
+        const val MIN_HOLD_MS = 300L
     }
 }

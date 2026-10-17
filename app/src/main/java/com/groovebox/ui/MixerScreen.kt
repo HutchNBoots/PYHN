@@ -88,7 +88,8 @@ private fun MixerDisplay(state: GrooveState, audioStarted: Boolean, debug: Debug
     val pad = mixer.selected
     val shifted = state.shift.shifted
     val channel = MixerLayout.channelOf(pad)
-    val muted = channel != null && state.mix.muted(channel)
+    // Solo wins: a soloed channel plays even if muted, so the subtitle doesn't say "muted".
+    val muted = channel != null && state.mix.muted(channel) && !state.mix.isSoloed(channel)
     val soloOn = state.mix.soloed.isNotEmpty()
     val subtitle = MixerLayout.title(pad, state::instrumentName).let { title ->
         val base = when {
@@ -407,7 +408,13 @@ private fun MixerPadButton(state: GrooveState, pad: MixerPad, modifier: Modifier
         }
         when {
             muted -> Badge("M", MixerColors.Mute, d.meta(GrooveColors.Ground, FontWeight.Medium), Modifier.align(Alignment.TopEnd))
-            soloed -> Badge("S", MixerColors.Solo, d.meta(GrooveColors.Ground, FontWeight.Medium), Modifier.align(Alignment.TopEnd))
+            // On the selected (cream) pad the S inverts, so it still reads.
+            soloed -> Badge(
+                "S",
+                if (isSelected) GrooveColors.Ground else MixerColors.Solo,
+                d.meta(if (isSelected) MixerColors.Solo else GrooveColors.Ground, FontWeight.Medium),
+                Modifier.align(Alignment.TopEnd),
+            )
         }
     }
 }

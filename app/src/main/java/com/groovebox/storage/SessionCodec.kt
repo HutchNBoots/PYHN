@@ -47,7 +47,8 @@ import java.util.zip.CRC32
  *    the step's velocity, its gate as the length (-1 = the pattern's gate) and probability,
  *    nudge 0; steps that were off, or had no note, are dropped.
  *  - 4: build-22, after the UI block's current patterns the keyboard octave (int); after each
- *    synth's locks whether its preset is a user preset (boolean); before the key and scale the
+ *    synth's locks whether its preset is a user preset and whether it showed the edited mark
+ *    (booleans); before the key and scale the
  *    user presets (count, then per preset its name and values). Drum locks are per sound
  *    ("drum.decay@3"); an older file's kit-wide lock becomes a lock on every sound. Older files
  *    load with octave 0, no user presets and every slot on a factory preset.
@@ -163,7 +164,10 @@ object SessionCodec {
             out.writeUTF(if (version >= 1) synth.section else synth.section.lowercase())
             writeValues(out, synth.values)
             writeStrings(out, synth.locks)
-            if (version >= 4) out.writeBoolean(synth.userPreset)
+            if (version >= 4) {
+                out.writeBoolean(synth.userPreset)
+                out.writeBoolean(synth.edited)
+            }
         }
         out.writeInt(s.drum.selectedKey)
         out.writeInt(s.drum.values.size)
@@ -218,6 +222,7 @@ object SessionCodec {
                 values = readValues(input),
                 locks = readStrings(input),
                 userPreset = version >= 4 && input.readBoolean(),
+                edited = version < 4 || input.readBoolean(),
             )
         }
         val selectedKey = input.readInt()

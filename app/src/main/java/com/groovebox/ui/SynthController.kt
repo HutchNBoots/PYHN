@@ -393,6 +393,7 @@ class SynthController(
     fun saveUserPreset(): String? {
         val taken = presetNames + library.presets.map { it.name }
         val name = SoundPresets.userName(presetName, taken, library.presets.size) ?: return null
+        val before = sound()
         val now = currentValues()
         library.add(UserPreset(name, now))
         userPresetName = name
@@ -400,6 +401,9 @@ class SynthController(
         presetValues = now
         loadValues = now
         onChange()
+        // One step (review 8): undo goes back to the earlier preset's name and mark; the saved preset stays in the library.
+        history.record(SoundEdit.Whole(SoundTarget.Synth(slot), before, sound()))
+        onHistory()
         return name
     }
 
@@ -418,6 +422,7 @@ class SynthController(
         values = currentValues(),
         locks = locks.keys,
         userPreset = userPresetName != null,
+        edited = edited,
     )
 
     /**
@@ -452,8 +457,44 @@ class SynthController(
             values[p.id].doubleValue = v
             NativeEngine.setParam(slot, p.id, v)
         }
+        // Review 9: a slot saved unmarked (e.g. a load that kept locked values) comes back unmarked.
+        if (!saved.edited) loadValues = currentValues()
         sectionState = SynthSection.entries.firstOrNull { it.name == saved.section } ?: SynthSection.Osc
         locks.restore(saved.locks)
+        lastTempo = tempo()
+    }
+
+    // --- synced LFO across tempo changes (review 5) ---
+
+    /** The tempo the synced Rate's Hz was last set for. */
+    private var lastTempo = Double.NaN
+
+    /**
+     * The tempo moved: a synced LFO keeps its division ([LfoDetent.retime]) instead of drifting
+     * to whichever division the old Hz is nearest at the new tempo. The preset's and the load's
+     * synced rates move with it, so the edited mark and a double-tap stay right. Not an undo step.
+     */
+    fun retime(bpm: Double) {
+        val old = lastTempo
+        lastTempo = bpm
+        val rate = rateSpec ?: return
+        if (old.isNaN() || bpm.isNaN() || old == bpm) return
+        fun moved(m: Map<String, Double>): Map<String, Double> {
+            val hz = m[LFO_RATE] ?: return m
+            if ((m[LFO_SYNC] ?: 0.0) < 0.5) return m
+            return m + (LFO_RATE to LfoDetent.retime(hz, rate, old, bpm))
+        }
+        presetValues = moved(presetValues)
+        loadValues = moved(loadValues)
+        if (lfoSynced) {
+            val hz = LfoDetent.retime(value(LFO_RATE), rate, old, bpm)
+            val state = values[rate.id]
+            if (state.doubleValue != hz) {
+                state.doubleValue = hz
+                NativeEngine.setParam(slot, rate.id, hz)
+                onChange()
+            }
+        }
     }
 
     private companion object {

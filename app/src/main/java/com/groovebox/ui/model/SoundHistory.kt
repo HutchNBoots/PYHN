@@ -82,11 +82,12 @@ class SoundHistory(val depth: Int = 64) {
         return true
     }
 
-    /** The edit to revert (apply its "before"), or null. */
+    /** The edit to revert (apply its "before"), or null. Open gestures on what it touches re-baseline. */
     fun undo(): SoundEdit? {
         val e = done.removeLastOrNull() ?: return null
         undone.addLast(e)
         revision++
+        rebaseline(e, applied = before(e))
         return e
     }
 
@@ -95,7 +96,31 @@ class SoundHistory(val depth: Int = 64) {
         val e = undone.removeLastOrNull() ?: return null
         done.addLast(e)
         revision++
+        rebaseline(e, applied = after(e))
         return e
+    }
+
+    private fun before(e: SoundEdit): Map<String, Double> = when (e) {
+        is SoundEdit.Params -> e.changes.associate { it.key to it.before }
+        is SoundEdit.Whole -> e.before.values
+    }
+
+    private fun after(e: SoundEdit): Map<String, Double> = when (e) {
+        is SoundEdit.Params -> e.changes.associate { it.key to it.after }
+        is SoundEdit.Whole -> e.after.values
+    }
+
+    /**
+     * A finger still on a strip of [e]'s sound when [e] is undone or redone (review 7): the
+     * values the undo put back become that gesture's starting point, so its step later records
+     * only what the finger did.
+     */
+    private fun rebaseline(e: SoundEdit, applied: Map<String, Double>) {
+        for ((id, entry) in open.entries.toList()) {
+            val (target, before) = entry
+            if (target != e.target || before.keys.none { it in applied }) continue
+            open[id] = target to before.mapValues { (k, v) -> applied[k] ?: v }
+        }
     }
 
     fun clear() {

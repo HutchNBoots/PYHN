@@ -71,14 +71,11 @@ fun SynthMiddleRow(
     flash: SlotFlash? = null,
 ) {
     val d = LocalDesign.current
-    // A finger on the Undo chip: the display's long-press (presets, save) stands down.
-    var chipHeld by remember { mutableStateOf(false) }
     val longPress: (() -> Unit)? = if (onPresets == null && onSavePreset == null) {
         null
     } else {
         {
             when {
-                chipHeld -> Unit
                 controller.shifted && onSavePreset != null -> onSavePreset()
                 else -> onPresets?.invoke()
             }
@@ -114,7 +111,7 @@ fun SynthMiddleRow(
                 ),
             keyName = keyName,
             keyRange = state?.let { KeyOctave.rangeLabel(it.keyOctave) },
-            undo = state?.let { st -> { SoundUndoChip(st, onHeld = { chipHeld = it }) } },
+            undo = state?.let { st -> { SoundUndoChip(st) } },
             flash = flash,
         )
         StripRow(controller.strips, controller)

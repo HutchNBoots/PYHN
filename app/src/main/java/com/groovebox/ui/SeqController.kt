@@ -73,8 +73,10 @@ class SeqController(private val app: GrooveState) : StripHost {
         spec.key == SeqStrips.Pattern.key && app.queuedOf(app.selectedSlot) >= 0
 
     /**
-     * A step strip over a step without that hit: dimmed; moving it creates the hit. The Note
-     * strip with no selected step playing a note: dimmed, and it does nothing.
+     * Dimmed strips: a step strip when the step selected last lacks the hit (build-22: moving it
+     * changes only the selected steps that have the hit, and never creates one); the Note strip
+     * when no selected step plays a note, and Spread when no selected step has the hit (both
+     * then do nothing).
      */
     override fun dimmed(spec: ParamSpec): Boolean = when {
         spec in SeqStrips.step -> focusHit() == null

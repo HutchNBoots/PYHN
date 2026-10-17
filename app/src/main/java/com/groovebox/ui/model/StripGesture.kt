@@ -1,6 +1,7 @@
 package com.groovebox.ui.model
 
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /** What a strip gesture asks the strip to do. */
 sealed interface StripAction {
@@ -52,6 +53,7 @@ class StripGesture(
 
     private var downTimeMs = 0L
     private var downY = 0f
+    private var downX = 0f
     private var lastY = 0f
     private var height = 1f
     private var normalized = 0.0
@@ -59,6 +61,9 @@ class StripGesture(
     private var dragging = false
     private var multiTouch = false
     private var longPressDone = false
+
+    /** The finger moved past the slop in 2D (any direction) before the lock: no lock, no tap. */
+    private var moved = false
     private var lastTapUpMs: Long? = null
 
     /** When [timeout] should be called to fire the long-press, or null if none is pending. */
@@ -81,12 +86,14 @@ class StripGesture(
      * A finger touched the strip. [height] is the strip's height in the same units as y;
      * [currentNormalized] is the strip's value now (used when this finger starts the gesture).
      */
-    fun down(pointerId: Int, timeMs: Long, y: Float, height: Float, currentNormalized: Double): StripAction? {
+    fun down(pointerId: Int, timeMs: Long, y: Float, height: Float, currentNormalized: Double, x: Float = 0f): StripAction? {
         if (pointers.isEmpty()) {
             pointers[pointerId] = y
             primary = pointerId
             downTimeMs = timeMs
             downY = y
+            downX = x
+            moved = false
             lastY = y
             this.height = if (height > 0f) height else 1f
             normalized = currentNormalized.coerceIn(0.0, 1.0)
@@ -100,11 +107,13 @@ class StripGesture(
         return null
     }
 
-    fun move(pointerId: Int, timeMs: Long, y: Float): StripAction? {
+    /** [x] is optional: with it, a sideways or diagonal move past the slop (2D) cancels the lock hold. */
+    fun move(pointerId: Int, timeMs: Long, y: Float, x: Float = downX): StripAction? {
         if (pointerId !in pointers) return null
         pointers[pointerId] = y
         if (pointerId != primary || longPressDone) return null
         if (!dragging) {
+            if (hypot(x - downX, y - downY) > touchSlop) moved = true
             if (abs(y - downY) <= touchSlop) return null
             dragging = true
             lastY = y
@@ -133,7 +142,7 @@ class StripGesture(
         }
 
         primary = NONE
-        val wasTap = !dragging && !multiTouch && !longPressDone
+        val wasTap = !dragging && !multiTouch && !longPressDone && !moved
         if (!wasTap) {
             lastTapUpMs = null
             return null
@@ -166,10 +175,11 @@ class StripGesture(
         dragging = false
         multiTouch = false
         longPressDone = false
+        moved = false
         lastTapUpMs = null
     }
 
-    private fun longPressPending() = pointers.isNotEmpty() && !dragging && !multiTouch && !longPressDone
+    private fun longPressPending() = pointers.isNotEmpty() && !dragging && !multiTouch && !longPressDone && !moved
 
     private fun fireLongPress(): StripAction {
         longPressDone = true

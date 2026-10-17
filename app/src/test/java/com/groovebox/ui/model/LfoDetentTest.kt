@@ -26,7 +26,7 @@ class LfoDetentTest {
     fun theRateHzPicksTheDivisionTheEnginePlays() {
         // The engine plays the division nearest the Rate value at the tempo (LfoSync), so the
         // Hz sent for a division must come back as that division at any tempo.
-        for (tempo in listOf(60.0, 97.5, 120.0, 174.0)) for (d in LfoSync.DIVISION_BEATS.indices) {
+        for (tempo in listOf(60.0, 97.5, 120.0, 174.0)) for (d in LfoDetent.divisions(rate, tempo)) {
             val n = LfoDetent.position(true, LfoSync.divisionHz(d, tempo.toFloat()).toDouble(), rate, tempo)
             val r = LfoDetent.fromPosition(n, rate, tempo)
             assertEquals("division $d at $tempo", d, r.division)

@@ -323,6 +323,14 @@ class SessionCodecTest {
     }
 
     @Test
+    fun theEditedMarkIsSavedInVersionFourAndOlderFilesCompareWithThePreset() {
+        val s = withV4().let { v -> v.copy(synths = v.synths.mapIndexed { i, x -> x.copy(edited = i % 2 == 0) }) }
+        assertEquals(s, SessionCodec.decode(SessionCodec.encode(s)))
+        // Before version 4 there was no flag: "edited" means "compare with the preset" (the old behaviour).
+        assertTrue(SessionCodec.decode(SessionCodec.encode(s, version = 3))!!.synths.all { it.edited })
+    }
+
+    @Test
     fun aKeyboardOctaveOutOfRangeIsClampedNotRejected() {
         val s = withV4().copy(ui = withV4().ui.copy(keyOctave = 9))
         assertEquals(2, SessionCodec.decode(SessionCodec.encode(s))!!.ui.keyOctave)

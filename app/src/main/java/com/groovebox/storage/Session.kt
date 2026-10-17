@@ -69,6 +69,12 @@ data class SynthSnapshot(
     val values: Map<String, Double>,
     val locks: Set<String>,
     val userPreset: Boolean = false,
+    /**
+     * The slot showed the edited mark (build-22). False restores it unmarked even when locks kept
+     * values off the preset at its load; true (and every file before version 4) compares the
+     * restored values with the preset's.
+     */
+    val edited: Boolean = true,
 )
 
 /** The drum kit: each of the 16 keys' values, the key the strips edit, and the locks (per sound since version 4: "drum.decay@3"). */

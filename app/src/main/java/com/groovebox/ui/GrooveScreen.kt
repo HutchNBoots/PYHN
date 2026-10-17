@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -90,6 +91,10 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
     }
     // Build-22: hold one slot button and tap another copies the sound.
     val slotCopy = remember { SlotCopyGesture(isSynth = { !state.isDrum(it) }) }
+    // Review 5: a synced LFO keeps its beat division when the tempo moves (any source: strip, tap tempo, restore).
+    LaunchedEffect(state) {
+        snapshotFlow { state.tempoBpm }.collect { state.retimeLfos(it) }
+    }
     val latency = remember { LatencyStats() }
     var latencySummary by remember { mutableStateOf<LatencySummary?>(null) }
     var stats by remember { mutableStateOf<EngineStats?>(null) }
@@ -183,7 +188,7 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                                     if (state.screen == Screen.Tape) continue
                                     val slot = overlay.slots.indexOfFirst { it.contains(c.position) }
                                     if (slot < 0) continue
-                                    slotCopy.down(c.id.value, slot)?.let { copy ->
+                                    slotCopy.down(c.id.value, slot, c.uptimeMillis)?.let { copy ->
                                         state.copySound(copy.from, copy.to)
                                         presetSlot = -1
                                         showFlash("${copy.to + 1}", "${state.synth(copy.from).presetName} copied from ${copy.from + 1}")
@@ -234,8 +239,8 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                     TopBar(
                         state = state,
                         onSlotTap = { slot -> if (presetSlot == slot) presetSlot = -1 },
-                        // Build-22: a slot held to copy its sound does not also open its presets.
-                        onSlotLongPress = { slot -> if (!state.isDrum(slot) && !slotCopy.copiedFrom(slot)) presetSlot = slot },
+                        // Build-22 (review 3): no preset strip while another slot finger is down or after a copy.
+                        onSlotLongPress = { slot -> if (!state.isDrum(slot) && !slotCopy.suppressLongPress(slot)) presetSlot = slot },
                         onSlotPositioned = { slot, bounds -> overlay.slots[slot] = bounds },
                     )
                     val middle = Modifier.fillMaxWidth().height(middleRowHeight())

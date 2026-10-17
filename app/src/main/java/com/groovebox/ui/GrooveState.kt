@@ -192,6 +192,9 @@ class GrooveState : KeyListener {
     /** Shift + long-press the Synth display (build-22): saves the selected slot as a user preset. Its name, or null when full. */
     fun saveUserPreset(): String? = if (isDrum(selectedSlot)) null else synth(selectedSlot).saveUserPreset()
 
+    /** The tempo moved (review 5): synced LFOs keep their beat division. Called by the screen on every tempo change. */
+    fun retimeLfos(bpm: Double) = synths.forEach { it.retime(bpm) }
+
     /** Hold slot [from] and tap slot [to] (build-22): copies the sound; synth slots only; one undo step. */
     fun copySound(from: Int, to: Int) {
         if (from == to || isDrum(from) || isDrum(to)) return
@@ -377,6 +380,9 @@ class GrooveState : KeyListener {
             seqCanUndo = history.canUndo
             seqCanRedo = history.canRedo
         }
+        // Build-22: an empty pattern picked to play or edit takes the slot's last settings on its
+        // first real edit, inside that edit's undo step (viewing it changes nothing).
+        history.beforeEdit = { slot, pattern -> applyInherit(slot, pattern) }
     }
 
     /** Something worth saving changed (autosave, F7.4). */
@@ -647,8 +653,25 @@ class GrooveState : KeyListener {
     fun instrumentName(slot: Int): String = if (isDrum(slot)) "Kit" else synth(slot).presetName
 
     private fun leaveStepEditing() {
+        cancelPads()
         deselectSteps()
         clearLoop()
+    }
+
+    /**
+     * The slot or the pattern edited changed under the pads (review fix): pads still held are
+     * forgotten, so their release acts on nothing, and an open swipe's undo step closes.
+     */
+    private fun cancelPads() {
+        handle(pads.cancel())
+        endSwipe()
+        padPages.clear()
+    }
+
+    /** Strip drags write back the steps they captured: any other step edit ends them first (review fix). */
+    private fun endStripDrags() {
+        seq.endNoteDrag()
+        seq.endHitDrags()
     }
 
     /** Deselects every step (a tap on the display, a slot or pattern change). */
@@ -756,9 +779,19 @@ class GrooveState : KeyListener {
     }
 
     /** Runs a whole-pattern edit of the edited pattern as one undo step; false when it changed nothing. */
-    private fun patternEdit(slot: Int = selectedSlot, pattern: Int = editPatternOf(slot), edit: (PatternSnapshot) -> PatternSnapshot?): Boolean {
+    private fun patternEdit(
+        slot: Int = selectedSlot,
+        pattern: Int = editPatternOf(slot),
+        refused: (() -> Unit)? = null,
+        edit: (PatternSnapshot) -> PatternSnapshot?,
+    ): Boolean {
+        endStripDrags()
         val before = store.patternSnapshot(slot, pattern)
-        val after = edit(before) ?: return false
+        val after = edit(before)
+        if (after == null) {
+            refused?.invoke()
+            return false
+        }
         if (after == before) return false
         history.edit(slot, pattern) { store.restorePattern(after) }
         return true
@@ -792,7 +825,13 @@ class GrooveState : KeyListener {
 
     // --- step pads ---
 
-    fun padDown(pointerId: Int, pad: Int) = handle(pads.down(pointerId, page * PADS + pad, shift.shifted))
+    /** The page each held pad finger went down on: a page change under it (follow, the rail) does not move it (review fix). */
+    private val padPages = HashMap<Int, Int>()
+
+    fun padDown(pointerId: Int, pad: Int) {
+        padPages[pointerId] = page
+        handle(pads.down(pointerId, page * PADS + pad, shift.shifted))
+    }
 
     /**
      * A tap on the Seq display's pitch roll (build-21): on a note, selects or deselects its
@@ -809,10 +848,15 @@ class GrooveState : KeyListener {
      * The finger [pointerId] is over pad [pad] of the page shown (null: off the pads); [drifted]
      * once it has moved past the touch slop (build-22: drags, copies, swipes).
      */
-    fun padMove(pointerId: Int, pad: Int?, drifted: Boolean) =
-        handle(pads.move(pointerId, pad?.let { page * PADS + it }, drifted))
+    fun padMove(pointerId: Int, pad: Int?, drifted: Boolean) {
+        val base = (padPages[pointerId] ?: page) * PADS
+        handle(pads.move(pointerId, pad?.let { base + it }, drifted))
+    }
 
-    fun padUp(pointerId: Int) = handle(pads.up(pointerId))
+    fun padUp(pointerId: Int) {
+        padPages.remove(pointerId)
+        handle(pads.up(pointerId))
+    }
 
     /** The pad's touch ended without a release (e.g. the pads left the screen): no toggle. */
     fun padAbandon() {
@@ -823,6 +867,9 @@ class GrooveState : KeyListener {
     private fun handle(action: PadAction?) {
         val slot = selectedSlot
         val pattern = editPattern
+        if (action is PadAction.Toggle || action is PadAction.ShiftTap || action is PadAction.Move || action is PadAction.Swipe) {
+            endStripDrags()
+        }
         when (action) {
             is PadAction.Toggle -> {
                 fillFrom = -1
@@ -850,7 +897,7 @@ class GrooveState : KeyListener {
             is PadAction.ShiftTap -> shiftTap(action.step)
             is PadAction.Move -> {
                 fillFrom = -1
-                val moved = patternEdit { PatternEdits.moved(it, action.from, action.to, action.copy, editScope(slot)) }
+                val moved = patternEdit(refused = ::stepFull) { PatternEdits.moved(it, action.from, action.to, action.copy, editScope(slot)) }
                 if (moved && !action.copy && action.from in selectedSteps) {
                     selectSteps(selectedSteps.map { if (it == action.from) action.to else it }.distinct(), loadPen = false)
                 }
@@ -887,7 +934,7 @@ class GrooveState : KeyListener {
         val from = fillFrom
         when {
             selectedSteps.isNotEmpty() -> {
-                if (patternEdit { PatternEdits.pasted(it, selectedSteps, step, scope) }) flash("pasted ${selectedSteps.size} at ${step + 1}")
+                if (patternEdit(refused = ::stepFull) { PatternEdits.pasted(it, selectedSteps, step, scope) }) flash("pasted ${selectedSteps.size} at ${step + 1}")
             }
             from == step -> fillFrom = -1
             from >= 0 -> {
@@ -897,7 +944,7 @@ class GrooveState : KeyListener {
                 } else {
                     Step.of(noteMemory.lastNotes(slot), SeqLimits.DEFAULT_VELOCITY)
                 }
-                if (patternEdit { PatternEdits.filled(it, from, step, part, scope) }) flash("fill every ${kotlin.math.abs(step - from)} from ${minOf(step, from) + 1}")
+                if (patternEdit(refused = ::stepFull) { PatternEdits.filled(it, from, step, part, scope) }) flash("fill every ${kotlin.math.abs(step - from)} from ${minOf(step, from) + 1}")
             }
             !isDrum(slot) && store.step(slot, pattern, step).on -> {
                 history.edit(slot, pattern) { store.updateStep(slot, pattern, step, Accent::toggled) }
@@ -915,13 +962,16 @@ class GrooveState : KeyListener {
         val scope = editScope()
         val at = focusStep
         if (at == null) {
-            patternEdit { PatternEdits.rotated(it, by, scope) }
+            patternEdit(refused = ::stepFull) { PatternEdits.rotated(it, by, scope) }
             return
         }
         repeat(kotlin.math.abs(by)) {
-            patternEdit { if (by > 0) PatternEdits.inserted(it, at, scope) else PatternEdits.deleted(it, at, scope) }
+            patternEdit(refused = ::stepFull) { if (by > 0) PatternEdits.inserted(it, at, scope) else PatternEdits.deleted(it, at, scope) }
         }
     }
+
+    /** A drum edit would put the lane's sound on a step already holding 8 sounds: nothing changed. */
+    private fun stepFull() = flash("step full · 8 sounds already, nothing changed")
 
     private fun endSwipe() {
         swipeToken?.let(history::end)
@@ -1022,6 +1072,7 @@ class GrooveState : KeyListener {
         val before = editPatternOf(slot)
         editPin[slot].intValue = if (pattern == patternOf(slot)) -1 else pattern
         if (editPatternOf(slot) != before && slot == selectedSlot) {
+            cancelPads()
             clearLoop()
             deselectSteps()
             clearConfirm.reset()
@@ -1029,12 +1080,25 @@ class GrooveState : KeyListener {
         }
     }
 
-    /** Build-22: an empty pattern with the default settings takes [from]'s settings when it is first picked. */
+    /** Per slot: an empty pattern picked, and the settings it takes on its first edit ([applyInherit]). */
+    private val pendingInherit = arrayOfNulls<Pair<Int, PatternSettings>>(SeqLimits.SLOTS)
+
+    /**
+     * Build-22: [to], picked while [from] was edited, takes [from]'s settings on its first real
+     * edit if it is still empty with the default settings then (review fix: not on mere viewing).
+     */
     private fun inheritSettings(slot: Int, from: Int, to: Int) {
-        if (from == to) return
-        val target = store.patternSnapshot(slot, to)
-        if (!PatternEdits.isEmpty(target) || target.settings != PatternSettings()) return
-        store.setSettings(slot, to, store.settings(slot, from))
+        if (from == to || slot !in 0 until SeqLimits.SLOTS) return
+        pendingInherit[slot] = to to store.settings(slot, from)
+    }
+
+    /** The history's hook before each edit of [slot]'s [pattern]: applies a pending inherit. */
+    private fun applyInherit(slot: Int, pattern: Int) {
+        val (target, settings) = pendingInherit.getOrNull(slot) ?: return
+        if (target != pattern) return
+        pendingInherit[slot] = null
+        val snap = store.patternSnapshot(slot, pattern)
+        if (PatternEdits.isEmpty(snap) && snap.settings == PatternSettings()) store.setSettings(slot, pattern, settings)
     }
 
     /**
@@ -1112,6 +1176,7 @@ class GrooveState : KeyListener {
      * queued (and edited); Shift + Dup copies without switching.
      */
     fun seqDup() {
+        endStripDrags()
         val slot = selectedSlot
         val from = editPattern
         val shifted = shift.shifted
@@ -1161,7 +1226,7 @@ class GrooveState : KeyListener {
     val beatSteps: Int
         get() = StepGrid.beatSteps(settings().rate)
 
-    /** At 1/16T: the Steps the footer offers (12 per bar), or null. */
+    /** At 1/16T: the Steps the footer offers (24 per bar, the same bars), or null. */
     val tripletOffer: Int?
         get() = settings().let { StepGrid.tripletOffer(it.rate, it.length) }
 
@@ -1210,6 +1275,7 @@ class GrooveState : KeyListener {
             return
         }
         clearArmed = false
+        endStripDrags()
         when (mode) {
             ClearMode.Lane -> {
                 val note = laneNote
@@ -1259,7 +1325,10 @@ class GrooveState : KeyListener {
             if (editPin[s].intValue == pattern) editPin[s].intValue = -1
             // A switch changed the pattern the shown slot edits: the selection was another pattern's
             // (one picked on the row and now playing keeps it).
-            if (s == selectedSlot && editPatternOf(s) != editedBefore) deselectSteps()
+            if (s == selectedSlot && editPatternOf(s) != editedBefore) {
+                cancelPads()
+                deselectSteps()
+            }
             // A chain keeps its other pattern queued (the engine switches at the pattern's end).
             // (Sent once per playing pattern, so the command queue is not refilled every frame
             // before the engine reports the switch as queued.)
@@ -1278,7 +1347,8 @@ class GrooveState : KeyListener {
         if (clearArmed && !clearConfirm.isArmed(clearTarget(clearArmedMode), nowMs)) clearArmed = false
         // Build-22: page follow, while the pattern shown is the one playing.
         if (screen == Screen.Seq) {
-            pageFollow.pageFor(stepOf(selectedSlot), !editingOther)?.let { if (it != pageState) pageState = it }
+            // Held still while a pad is held, so a gesture never changes page under the finger.
+            if (!pads.anyHeld) pageFollow.pageFor(stepOf(selectedSlot), !editingOther)?.let { if (it != pageState) pageState = it }
         }
         if (seqFlash != null && nowMs >= seqFlashUntil) seqFlash = null
     }

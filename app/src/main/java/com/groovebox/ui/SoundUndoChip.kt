@@ -3,7 +3,6 @@ package com.groovebox.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -14,7 +13,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,6 +20,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
@@ -42,14 +41,13 @@ private val ChipFill = Color(0xFF2B2B31)
  * thumb): a tap undoes, a hold redoes once (the chip briefly reads "Redo"), Shift plays no part
  * ([UndoHold], as on Seq and Tape). The synth slots and the kit share one history
  * ([GrooveState.soundHistory]). Its touches are consumed, so they never swipe the slot or open
- * the presets: [onHeld] says while a finger is on it, so the display's long-press can stand down.
+ * the presets (the display's [slotSwipe] skips a touch whose down a child consumed).
  */
 @Composable
-fun SoundUndoChip(state: GrooveState, modifier: Modifier = Modifier, onHeld: (Boolean) -> Unit = {}) {
+fun SoundUndoChip(state: GrooveState, modifier: Modifier = Modifier) {
     val d = LocalDesign.current
     val haptics = LocalHapticFeedback.current
     val hold = remember { UndoHold() }
-    val held by rememberUpdatedState(onHeld)
     var readsRedo by remember { mutableStateOf(false) }
     var flash by remember { mutableIntStateOf(0) }
     LaunchedEffect(flash) {
@@ -76,44 +74,44 @@ fun SoundUndoChip(state: GrooveState, modifier: Modifier = Modifier, onHeld: (Bo
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
-                    held(true)
-                    try {
-                        hold.down(down.uptimeMillis)
-                        var cancelled = false
-                        var upAt = 0L
-                        val released = withTimeoutOrNull(hold.longPressMs) {
-                            val up = waitForUpOrCancellation()
-                            if (up == null) cancelled = true else { upAt = up.uptimeMillis; up.consume() }
-                        } != null
-                        when {
-                            cancelled -> hold.cancel()
-                            released -> when (hold.up(upAt)) {
-                                UndoHold.Action.Undo -> state.soundUndoPress(redo = false)
-                                UndoHold.Action.Redo -> {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    state.soundUndoPress(redo = true)
-                                    readsRedo = true
-                                    flash++
-                                }
-                                null -> Unit
-                            }
-                            else -> {
-                                if (hold.poll(down.uptimeMillis + hold.longPressMs) == UndoHold.Action.Redo) {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    state.soundUndoPress(redo = true)
-                                    readsRedo = true
-                                }
-                                // The rest of the hold is ours (no swipe, no preset strip).
-                                do {
-                                    val event = awaitPointerEvent()
-                                    event.changes.forEach { it.consume() }
-                                } while (event.changes.any { it.pressed })
-                                hold.cancel()
+                    hold.down(down.uptimeMillis)
+                    // Review 4: every change of this touch is consumed here, so the display's swipe
+                    // and long-press (presets, save) never see it; the up is waited for by hand.
+                    var upAt = -1L
+                    var cancelled = false
+                    suspend fun AwaitPointerEventScope.untilUp() {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            event.changes.forEach { it.consume() }
+                            val c = event.changes.firstOrNull { it.id == down.id }
+                            if (c == null) { cancelled = true; return }
+                            if (!c.pressed) { upAt = c.uptimeMillis; return }
+                        }
+                    }
+                    val released = withTimeoutOrNull(hold.longPressMs) { untilUp() } != null
+                    if (!released) {
+                        // Held to the long-press time: redo once, now; then the rest of the hold.
+                        if (hold.poll(down.uptimeMillis + hold.longPressMs) == UndoHold.Action.Redo) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            state.soundUndoPress(redo = true)
+                            readsRedo = true
+                        }
+                        untilUp()
+                        hold.cancel()
+                        flash++
+                    } else if (cancelled) {
+                        hold.cancel()
+                    } else {
+                        when (hold.up(upAt)) {
+                            UndoHold.Action.Undo -> state.soundUndoPress(redo = false)
+                            UndoHold.Action.Redo -> {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                state.soundUndoPress(redo = true)
+                                readsRedo = true
                                 flash++
                             }
+                            null -> Unit
                         }
-                    } finally {
-                        held(false)
                     }
                 }
             },

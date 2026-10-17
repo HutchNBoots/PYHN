@@ -97,7 +97,7 @@ object PatternEdits {
 
     /**
      * Shift + tap page [to]: the steps page [from] uses (all 16, or fewer on the pattern's last
-     * page, e.g. 12 at 1/16T) copied, hits and motion, to [pageCopyStart]. The pattern
+     * page, e.g. 12 of a 12-step pattern) copied, hits and motion, to [pageCopyStart]. The pattern
      * lengthens to take them in (at most 64 steps).
      */
     fun pageCopied(p: PatternSnapshot, from: Int, to: Int): PatternSnapshot {

@@ -173,7 +173,7 @@ fun ColourStrip(
                                         handle(
                                             gesture.down(
                                                 id, change.uptimeMillis, change.position.y,
-                                                size.height.toFloat(), currentNormalized,
+                                                size.height.toFloat(), currentNormalized, x = change.position.x,
                                             ),
                                         )
                                     }
@@ -181,7 +181,7 @@ fun ColourStrip(
                                         handle(gesture.up(id, change.uptimeMillis))
                                         if (down.remove(id) && down.isEmpty()) host.gestureEnd(spec)
                                     }
-                                    change.positionChanged() -> handle(gesture.move(id, change.uptimeMillis, change.position.y))
+                                    change.positionChanged() -> handle(gesture.move(id, change.uptimeMillis, change.position.y, change.position.x))
                                 }
                                 change.consume()
                             }

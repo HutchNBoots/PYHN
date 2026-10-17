@@ -117,7 +117,7 @@ fun PitchRollView(state: GrooveState, modifier: Modifier = Modifier) {
                     }
                 }
             }
-            // Build-22: beat lines follow the rate (every 3 steps at 1/16T, 2 at 1/8).
+            // Build-22: beat lines follow the rate (every 6 steps at 1/16T, 2 at 1/8).
             val beatEvery = StepGrid.beatSteps(settings.rate)
             for (beat in beatEvery until PitchRoll.COLUMNS step beatEvery) drawRect(RollColors.Beat, Offset(gutter + beat * colW, 0f), Size(one, size.height))
             // Steps past the pattern's end.

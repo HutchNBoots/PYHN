@@ -28,7 +28,17 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.foundation.gestures.detectTapGestures
+import android.os.SystemClock
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.withFrameMillis
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalViewConfiguration
+import com.groovebox.ui.model.CellHold
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import com.groovebox.engine.ParamSpec
@@ -79,6 +89,8 @@ fun DrumMiddleRow(
 /**
  * Rev or Choke as tap cells (build-22): the strip's label, then one cell per option, the
  * current one filled in the strip colour; a tap chooses (one undo step; Rev replays the sound).
+ * Review 1: a 1 s still hold on any cell locks or unlocks them for this sound, with the strips'
+ * filling ring and haptic ([CellHold]); a locked cell ignores taps.
  */
 @Composable
 private fun TapCells(position: Int, spec: ParamSpec, drum: DrumController, modifier: Modifier) {
@@ -87,20 +99,33 @@ private fun TapCells(position: Int, spec: ParamSpec, drum: DrumController, modif
     val options = DrumTapCells.options(spec.key)
     val current = drum.value(spec).roundToInt()
     val locked = drum.isLocked(spec)
+    val haptics = LocalHapticFeedback.current
+    val slop = LocalViewConfiguration.current.touchSlop
+    val hold = remember(slop) { CellHold(slop) }
+    val ring = remember { mutableFloatStateOf(-1f) }
+    val holding = remember { mutableStateOf(false) }
+    LaunchedEffect(holding.value) {
+        if (!holding.value) {
+            ring.floatValue = -1f
+            return@LaunchedEffect
+        }
+        while (true) withFrameMillis { ring.floatValue = hold.lockProgress(SystemClock.uptimeMillis()) ?: -1f }
+    }
+    val lock = {
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        drum.setLocked(spec, !drum.isLocked(spec))
+    }
     Column(
         modifier
             .clip(d.shape(GrooveRadius.STRIP))
             .background(GrooveColors.Panel)
+            .lockRing({ ring.floatValue }, colour, d)
             .padding(horizontal = d.dp(6), vertical = d.dp(10)),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(d.dp(6)),
     ) {
         BasicText(spec.label, style = d.label(14f, colour, FontWeight.Bold), maxLines = 1)
-        BasicText(
-            if (locked) "locked" else "tap",
-            style = d.meta(GrooveColors.TextDim),
-            maxLines = 1,
-        )
+        BasicText(if (locked) "locked" else "tap", style = d.meta(if (locked) colour else GrooveColors.TextDim), maxLines = 1)
         // Top to bottom: the last option first, so "On" / "B" sit up and "Off" / "None" down, like a strip.
         for (i in options.indices.reversed()) {
             val isOn = i == current
@@ -109,12 +134,53 @@ private fun TapCells(position: Int, spec: ParamSpec, drum: DrumController, modif
                     .fillMaxWidth()
                     .weight(1f)
                     .clip(d.shape(GrooveRadius.CHIP))
-                    .background(if (isOn) colour.copy(alpha = 0.85f) else CellOff)
+                    .background(if (isOn) colour.copy(alpha = if (locked) 0.45f else 0.85f) else CellOff)
                     .semantics {
-                        contentDescription = "${spec.label} ${options[i]}" + (if (isOn) ", on" else ", tap to choose") + (if (locked) ", locked" else "")
+                        contentDescription = "${spec.label} ${options[i]}" + (if (isOn) ", on" else ", tap to choose") +
+                            (if (locked) ", locked" else "") + ". Hold 1 second to ${if (locked) "unlock" else "lock"}"
                         selected = isOn
                     }
-                    .pointerInput(spec, i) { detectTapGestures(onTap = { drum.tapCell(spec, i) }) },
+                    .pointerInput(spec, i) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown()
+                            down.consume()
+                            hold.down(down.uptimeMillis, down.position.x, down.position.y)
+                            holding.value = true
+                            try {
+                                while (true) {
+                                    val deadline = hold.deadline
+                                    val event = if (deadline == null) {
+                                        awaitPointerEvent()
+                                    } else {
+                                        val wait = deadline - SystemClock.uptimeMillis()
+                                        if (wait > 0) withTimeoutOrNull(wait) { awaitPointerEvent() } else null
+                                    }
+                                    if (event == null) {
+                                        if (deadline != null && hold.timeout(deadline) == CellHold.Action.Lock) lock()
+                                        holding.value = hold.deadline != null
+                                        continue
+                                    }
+                                    val c = event.changes.firstOrNull { it.id == down.id }
+                                    if (c == null) {
+                                        hold.cancel()
+                                        break
+                                    }
+                                    c.consume()
+                                    if (!c.pressed) {
+                                        when (hold.up(c.uptimeMillis)) {
+                                            CellHold.Action.Tap -> drum.tapCell(spec, i)
+                                            CellHold.Action.Lock -> lock()
+                                            null -> Unit
+                                        }
+                                        break
+                                    }
+                                    hold.move(c.uptimeMillis, c.position.x, c.position.y)
+                                }
+                            } finally {
+                                holding.value = false
+                            }
+                        }
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 BasicText(

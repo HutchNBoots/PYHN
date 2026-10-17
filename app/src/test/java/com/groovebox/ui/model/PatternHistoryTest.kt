@@ -269,4 +269,23 @@ class PatternHistoryTest {
         history.undo()
         assertFalse(store.step(1, 0, 0).on)
     }
+
+    @Test
+    fun beforeEditRunsInsideTheEditsUndoStep() {
+        // Build-22 review: an empty pattern inherits the slot's settings on its first real edit.
+        history.beforeEdit = { slot, pattern ->
+            if (pattern == 1) store.updateSettings(slot, pattern) { it.copy(length = 32, shuffle = 0.3f) }
+        }
+        history.edit(1, 1) { store.toggleStep(1, 1, 0, listOf(60), 1f) }
+        assertEquals(32, store.settings(1, 1).length)
+        history.undo()
+        assertEquals("one step takes the settings back too", PatternSettings(), store.settings(1, 1))
+        assertFalse(store.step(1, 1, 0).on)
+        // Inside a group, too.
+        val g = history.begin()
+        history.edit(1, 1) { store.toggleStep(1, 1, 2, listOf(60), 1f) }
+        history.end(g)
+        history.undo()
+        assertEquals(PatternSettings(), store.settings(1, 1))
+    }
 }

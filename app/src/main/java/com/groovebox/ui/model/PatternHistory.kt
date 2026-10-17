@@ -30,6 +30,13 @@ class PatternHistory(private val store: PatternStore) {
     private var generation = 0
     private val captured = LinkedHashMap<Int, PatternSnapshot>()
 
+    /**
+     * Runs before each edit of a pattern, after the history has its copy of it, so whatever
+     * it writes (build-22: an empty pattern taking the slot's last settings) joins that edit's
+     * undo step.
+     */
+    var beforeEdit: ((slot: Int, pattern: Int) -> Unit)? = null
+
     /** Called after anything that changes [canUndo] or [canRedo]. */
     var onChange: (() -> Unit)? = null
 
@@ -43,11 +50,13 @@ class PatternHistory(private val store: PatternStore) {
     fun <T> edit(slot: Int, pattern: Int, action: () -> T): T {
         if (depth > 0) {
             captured.getOrPut(key(slot, pattern)) { store.patternSnapshot(slot, pattern) }
+            beforeEdit?.invoke(slot, pattern)
             val result = action()
             onChange?.invoke()
             return result
         }
         val before = store.patternSnapshot(slot, pattern)
+        beforeEdit?.invoke(slot, pattern)
         val result = action()
         if (store.patternSnapshot(slot, pattern) != before) push(Entry(listOf(before)))
         return result

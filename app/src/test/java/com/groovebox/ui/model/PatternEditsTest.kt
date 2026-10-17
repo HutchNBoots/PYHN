@@ -90,7 +90,7 @@ class PatternEditsTest {
         assertNull(PatternEdits.filled(p, 0, 2, Step(listOf(hit(50))), drum))
         assertNull(PatternEdits.pasted(p, listOf(0), 4, drum))
         assertNull(PatternEdits.rotated(p, 4, drum))
-        assertNull(PatternEdits.inserted(p, 3, drum))
+        assertNull("insert pushes step 4's lane hit... none here, so step 3 → 4 needs one", PatternEdits.inserted(p.copy(steps = p.steps + (3 to Step(listOf(hit(50))))), 3, drum))
         // Into a step with room it works.
         assertEquals(listOf(50), PatternEdits.moved(p, 0, 5, copy = false, scope = drum)!!.steps.getValue(5).notes)
     }

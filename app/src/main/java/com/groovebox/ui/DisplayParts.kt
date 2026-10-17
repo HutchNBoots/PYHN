@@ -68,6 +68,9 @@ fun Modifier.slotSwipe(onLongPress: (() -> Unit)? = null, onSteps: (Int) -> Unit
         val swipe = SlotSwipe(stepPx)
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false)
+            // Review 4 (agent 2): a child took this touch (the Undo chip, a kit cell, the title):
+            // no swipe and no long-press for it.
+            if (down.isConsumed) return@awaitEachGesture
             var overSlop = 0f
             // null: the long-press time ran out with the finger still down and not swiping.
             // Without a long-press action there is no time limit: a swipe can start any time.

@@ -537,7 +537,7 @@ private fun SeqChip(text: String, description: String, enabled: Boolean = true, 
 /**
  * The Seq footer (build-22): the chips for the left thumb, Undo · ×2 · Dup (Q arrives with the
  * build-23 engine work and stays hidden), with Shift reading ½ and Dup+ and adding Swing (the
- * Shuffle to every slot). At 1/16T a "Steps 12" chip offers whole triplet bars. Then the step
+ * Shuffle to every slot). At 1/16T a "Steps 24" / "Steps 48" chip offers whole triplet bars. Then the step
  * selected last (synth: its notes sorted and named), a moment's note of what an edit did, or
  * the pattern's settings.
  */
@@ -722,8 +722,9 @@ private class PadTouch(val start: Offset, val deadline: Long) {
 
 /**
  * The 16 pads, with one touch handler for all of them (build-22) so a finger can be followed
- * across pads: a tap toggles, a long-press selects, a drag drops onto another pad (move;
- * Shift + hold first = copy), a Shift swipe rotates or inserts / deletes ([StepPads]).
+ * across pads: a tap toggles, a long-press selects and a held pad dragged onto another moves
+ * it (Shift + hold, then drag = copy); a drift without the hold cancels; a Shift swipe rotates
+ * or inserts / deletes ([StepPads]).
  */
 @Composable
 private fun StepPadRow(state: GrooveState, modifier: Modifier) {
@@ -881,7 +882,7 @@ private fun StepPad(state: GrooveState, pad: Int, tail: Boolean, modifier: Modif
                     (if (isSelected) ", selected" else "") +
                     (if (fillArmed) ", fill starts here" else "") +
                     (if (!inside) ", past the pattern's end" else "") +
-                    ". Tap to toggle, hold to select, drag onto another pad to move"
+                    ". Tap to toggle, hold to select, hold and drag onto another pad to move"
                 selected = isSelected
             },
     ) {
