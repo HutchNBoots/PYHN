@@ -16,12 +16,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -30,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -39,7 +39,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -56,9 +55,13 @@ import androidx.compose.ui.unit.max
 import com.groovebox.ui.model.ExportStatus
 import com.groovebox.ui.model.SeqLimits
 import com.groovebox.ui.model.TapeRecordStatus
-import com.groovebox.ui.model.UndoHold
+import com.groovebox.ui.model.SlotChip
+import com.groovebox.ui.model.TapTempo
 import com.groovebox.ui.theme.Design
 import com.groovebox.ui.theme.GrooveColors
+import com.groovebox.ui.theme.GrooveRadius
+import com.groovebox.ui.theme.GrooveSpace
+import com.groovebox.ui.theme.GrooveText
 import com.groovebox.ui.theme.LocalDesign
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -94,57 +97,21 @@ fun TopBar(
             Tab("Mixer", state.screen == Screen.Mixer, buttonHeight) { state.showMixer() }
         }
 
-        if (state.screen == Screen.Tape) TapeButtons(state, buttonHeight) else Row(horizontalArrangement = Arrangement.spacedBy(d.dp(4))) {
-            for (slot in 0 until SeqLimits.SLOTS) {
-                val active = slot == state.selectedSlot
-                val drum = state.isDrum(slot)
-                val description = buildString {
-                    append("Sound slot ${slot + 1}, ")
-                    append(if (drum) "drum kit" else state.synth(slot).presetName)
-                    if (active) append(", selected")
-                    if (!drum) append(". Long-press, or long-press the display, for presets")
-                }
-                BarButton(
-                    width = d.dp(40),
-                    height = buttonHeight,
-                    background = if (active) GrooveColors.Strips[0] else GrooveColors.Panel,
-                    modifier = Modifier
-                        .semantics {
-                            contentDescription = description
-                            selected = active
-                        }
-                        .onGloballyPositioned { onSlotPositioned(slot, it.boundsInRoot()) }
-                        .pointerInput(slot) {
-                            // Selects on touch-down; a long-press on a synth slot opens its presets.
-                            detectTapGestures(
-                                onPress = { state.selectSlot(slot) },
-                                onTap = { slotTap(slot) },
-                                onLongPress = { slotLongPress(slot) },
-                            )
-                        },
-                ) {
-                    BasicText(
-                        "${slot + 1}",
-                        style = d.value(
-                            14f,
-                            if (active) GrooveColors.Ground else GrooveColors.TextDim,
-                            if (active) FontWeight.Medium else FontWeight.Normal,
-                        ),
-                    )
+        if (state.screen == Screen.Tape) {
+            TapeButtons(state, buttonHeight) { slot, picked ->
+                SlotButton(state, slot, buttonHeight, onSlotPositioned, onTap = { picked() }, onLongPress = { picked() })
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.GROUP))) {
+                for (slot in 0 until SeqLimits.SLOTS) {
+                    SlotButton(state, slot, buttonHeight, onSlotPositioned, onTap = { slotTap(slot) }, onLongPress = { slotLongPress(slot) })
                 }
             }
         }
 
         Spacer(Modifier.weight(1f))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(d.dp(4))) {
-            BasicText(
-                String.format(Locale.ROOT, "%.1f", state.tempoBpm),
-                Modifier.alignByBaseline(),
-                style = d.value(22f, GrooveColors.Text, FontWeight.Medium),
-            )
-            BasicText("BPM", Modifier.alignByBaseline(), style = d.value(12f, GrooveColors.TextDim))
-        }
+        TempoReadout(state, buttonHeight)
 
         val playing = state.playing
         BarButton(
@@ -225,81 +192,171 @@ fun TopBar(
     }
 }
 
+/** One sound slot button: selects on touch-down; [onLongPress] (presets on a synth slot elsewhere). */
+@Composable
+private fun SlotButton(
+    state: GrooveState,
+    slot: Int,
+    height: Dp,
+    onPositioned: (slot: Int, bounds: Rect) -> Unit,
+    onTap: () -> Unit,
+    onLongPress: () -> Unit,
+) {
+    val d = LocalDesign.current
+    val tap by rememberUpdatedState(onTap)
+    val longPress by rememberUpdatedState(onLongPress)
+    val active = slot == state.selectedSlot
+    val drum = state.isDrum(slot)
+    val description = buildString {
+        append("Sound slot ${slot + 1}, ")
+        append(if (drum) "drum kit" else state.synth(slot).presetName)
+        if (active) append(", selected")
+        if (!drum && state.screen != Screen.Tape) append(". Long-press, or long-press the display, for presets")
+    }
+    BarButton(
+        width = d.dp(40),
+        height = height,
+        background = if (active) GrooveColors.SlotSelect else GrooveColors.Panel,
+        modifier = Modifier
+            .semantics {
+                contentDescription = description
+                selected = active
+            }
+            .onGloballyPositioned { onPositioned(slot, it.boundsInRoot()) }
+            .pointerInput(slot) {
+                detectTapGestures(
+                    onPress = { state.selectSlot(slot) },
+                    onTap = { tap() },
+                    onLongPress = { longPress() },
+                )
+            },
+    ) {
+        BasicText(
+            "${slot + 1}",
+            style = d.value(
+                GrooveText.LABEL,
+                if (active) GrooveColors.Ground else GrooveColors.TextDim,
+                if (active) FontWeight.Medium else FontWeight.Normal,
+            ),
+        )
+    }
+}
+
 /**
- * The Tape screen's Undo and Export WAV (ADR 0002). Undo (build-21): a tap undoes the last tape
- * action, a long-press redoes it (the button briefly reads "Redo"); Shift no longer changes it,
- * so it never redoes by accident ([UndoHold]). Export WAV (F7.1) is live when the tape has
- * audio: a tap renders the loop to a WAV (the button shows the progress) and then opens the
- * share sheet.
+ * The tempo readout, also tap tempo (build-22): each touch-down is a tap; from the third the
+ * tempo follows the taps ([com.groovebox.ui.model.TapTempo]: ×2 / ½ snap). While a run is going
+ * the readout is lit and reads "TAP"; it ends 2 s after the last one. A long-press sets 120.
  */
 @Composable
-private fun TapeButtons(state: GrooveState, height: Dp) {
+private fun TempoReadout(state: GrooveState, height: Dp) {
     val d = LocalDesign.current
     val haptics = LocalHapticFeedback.current
-    val hold = remember { UndoHold() }
-    var readsRedo by remember { mutableStateOf(false) }
-    var flash by remember { mutableIntStateOf(0) }
-    LaunchedEffect(flash) {
-        if (flash == 0) return@LaunchedEffect
-        delay(hold.flashMs)
-        readsRedo = false
+    val taps = state.tapCount
+    LaunchedEffect(taps) {
+        if (taps == 0) return@LaunchedEffect
+        delay(TapTempo.TIMEOUT_MS)
+        state.tapTempoIdle()
     }
-    // Live while either is possible; a tap only undoes when there is something to undo.
-    val enabled = state.canUndo || state.canRedo
-    Row(horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
+    val tapping = taps > 0
+    Row(
+        Modifier
+            .height(height)
+            // The lit plate is drawn past the readout's edges: the bar has no width to spare.
+            .drawBehind {
+                if (tapping) {
+                    val out = d.px(GrooveSpace.GROUP)
+                    drawRoundRect(
+                        GrooveColors.Panel,
+                        topLeft = Offset(-out, 0f),
+                        size = Size(size.width + 2 * out, size.height),
+                        cornerRadius = CornerRadius(d.px(GrooveRadius.CONTROL)),
+                    )
+                }
+            }
+            .semantics {
+                contentDescription = "Tempo ${String.format(Locale.ROOT, "%.1f", state.tempoBpm)} BPM. " +
+                    "Tap three times or more to set it, hold for 120"
+                onLongClick("Tempo 120") { state.tapTempoReset(); true }
+            }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    state.tapTempo(down.uptimeMillis)
+                    val held = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) { waitForUpOrCancellation() } == null
+                    if (held && currentEvent.changes.any { it.pressed }) {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        state.tapTempoReset()
+                        waitForUpOrCancellation()
+                    }
+                }
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.GROUP))) {
+            BasicText(
+                String.format(Locale.ROOT, "%.1f", state.tempoBpm),
+                Modifier.alignByBaseline(),
+                style = d.bpm(),
+            )
+            BasicText(
+                // Same width as "BPM" (mono), so the bar never shifts while tapping.
+                if (tapping) "TAP" else "BPM",
+                Modifier.alignByBaseline(),
+                style = d.meta(if (tapping) GrooveColors.Select else GrooveColors.TextDim),
+            )
+        }
+    }
+}
+
+/**
+ * The Tape screen's slot chip and Export WAV (ADR 0002's exception: they take the slot buttons'
+ * place). Build-22 (ADR 0003 P5, P6): Undo moved to the Tape footer, in the left thumb's reach,
+ * and the slot chip ("slot 2 ▾") names the slot the keys play and Commit takes: a tap steps to
+ * the next slot ([SlotChip]); a long-press opens the eight slot buttons here for a direct pick,
+ * and picking one closes them. Export WAV (F7.1) is live when the tape has audio: a tap renders
+ * the loop to a WAV (the button shows the progress) and then opens the share sheet.
+ */
+@Composable
+private fun TapeButtons(
+    state: GrooveState,
+    height: Dp,
+    slotButton: @Composable (slot: Int, onPicked: () -> Unit) -> Unit,
+) {
+    val d = LocalDesign.current
+    val haptics = LocalHapticFeedback.current
+    var picking by remember { mutableStateOf(false) }
+    if (picking) {
+        Row(horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.GROUP))) {
+            for (slot in 0 until SeqLimits.SLOTS) slotButton(slot) { picking = false }
+        }
+        return
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.ZONE))) {
+        val slot = state.selectedSlot
         BarButton(
-            width = d.dp(88),
+            width = d.dp(108),
             height = height,
             background = GrooveColors.Panel,
             modifier = Modifier
-                .alpha(if (enabled) 1f else GrooveColors.INERT_ALPHA)
                 .semantics {
-                    contentDescription = if (state.canUndo) "Undo tape. Hold to redo" else "Nothing to undo. Hold to redo tape"
-                    if (!enabled) disabled()
-                    onLongClick("Redo tape") { state.tapeRedo(); true }
+                    contentDescription = "Slot ${slot + 1}, ${state.instrumentName(slot)}, plays on the keys and commits. " +
+                        "Tap for the next slot, hold to pick one"
+                    onLongClick("Pick a slot") { picking = true; true }
                 }
                 .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown()
-                        hold.down(down.uptimeMillis)
-                        var cancelled = false
-                        var upAt = 0L
-                        val released = withTimeoutOrNull(hold.longPressMs) {
-                            val up = waitForUpOrCancellation()
-                            if (up == null) cancelled = true else upAt = up.uptimeMillis
-                            Unit
-                        } != null
-                        when {
-                            cancelled -> hold.cancel()
-                            // A release right at the long-press time can still come back as Redo.
-                            released -> when (hold.up(upAt)) {
-                                UndoHold.Action.Undo -> if (state.canUndo) state.tapeUndo()
-                                UndoHold.Action.Redo -> {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    state.tapeRedo()
-                                    readsRedo = true
-                                    flash++
-                                }
-                                null -> Unit
-                            }
-                            else -> {
-                                // Held to the long-press time: redo once, now.
-                                if (hold.poll(down.uptimeMillis + hold.longPressMs) == UndoHold.Action.Redo) {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    state.tapeRedo()
-                                    readsRedo = true
-                                }
-                                val up = waitForUpOrCancellation()
-                                if (up == null) hold.cancel() else hold.up(up.uptimeMillis)
-                                flash++
-                            }
-                        }
-                    }
+                    detectTapGestures(
+                        onTap = { state.slotChipTap() },
+                        onLongPress = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            picking = true
+                        },
+                    )
                 },
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
-                UndoIcon(readsRedo, GrooveColors.Text, Modifier.size(d.dp(16)))
-                BasicText(if (readsRedo) "Redo" else "Undo", style = d.label(14f, GrooveColors.Text, FontWeight.Medium))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.PAD))) {
+                // The selected slot's coral, as on the slot buttons.
+                Box(Modifier.size(d.dp(8)).clip(CircleShape).background(GrooveColors.SlotSelect))
+                BasicText(SlotChip.label(slot), style = d.buttonLabel(GrooveColors.Text), maxLines = 1)
             }
         }
         val status = state.exportStatus
@@ -372,27 +429,6 @@ private fun TapeRecordButton(state: GrooveState, height: Dp, gesture: Modifier) 
     }
 }
 
-/** The mockup's undo arrow (16 × 16); mirrored for redo. */
-@Composable
-private fun UndoIcon(redo: Boolean, colour: Color, modifier: Modifier) {
-    val d = LocalDesign.current
-    val stroke = d.px(1.8f)
-    Canvas(modifier) {
-        val s = size.width / 16f
-        val path = Path().apply {
-            moveTo(5f * s, 4f * s)
-            lineTo(2f * s, 7f * s)
-            lineTo(5f * s, 10f * s)
-            moveTo(2f * s, 7f * s)
-            lineTo(10f * s, 7f * s)
-            arcTo(Rect(6f * s, 7f * s, 14f * s, 15f * s), -90f, 180f, false)
-            lineTo(8f * s, 15f * s)
-        }
-        val style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
-        if (redo) scale(-1f, 1f) { drawPath(path, colour, style = style) } else drawPath(path, colour, style = style)
-    }
-}
-
 /** The mockup's download arrow (16 × 16). */
 @Composable
 private fun ExportIcon(colour: Color, modifier: Modifier) {
@@ -462,7 +498,7 @@ fun BarButton(
         modifier
             .width(width)
             .height(height)
-            .clip(RoundedCornerShape(d.dp(10)))
+            .clip(d.shape(GrooveRadius.CONTROL))
             .background(background),
         contentAlignment = Alignment.Center,
         content = content,

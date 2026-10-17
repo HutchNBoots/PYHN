@@ -9,7 +9,7 @@ import kotlin.math.roundToInt
 /**
  * Which of the Sequencer screen's strip layers shows (F3, docs/mockups/Sequencer.dc.html;
  * build-20): the pattern's, Shift's tempo / key, the selected steps' (no Shift) and the
- * selected steps' Shift layer (Note, Motion).
+ * selected steps' Shift layer (Note, —, Spread, Motion).
  */
 enum class SeqLayer { Pattern, Transport, Step, StepShift }
 
@@ -22,7 +22,7 @@ object SeqStrips {
     val RATE_NAMES = listOf("1/8", "1/16", "1/32", "1/16T") // NativeEngine.STEP_RATES
 
     val Shuffle = ParamSpec(0, "seq.shuffle", "Shuffle", 0.0, 1.0, 0.0, Curve.Linear, "%")
-    val Length = ParamSpec(1, "seq.length", "Length", 1.0, SeqLimits.STEPS.toDouble(), 16.0, Curve.Int, "steps")
+    val Length = ParamSpec(1, "seq.length", "Steps", 1.0, SeqLimits.STEPS.toDouble(), 16.0, Curve.Int, "steps")
     val Gate = ParamSpec(2, "seq.gate", "Gate", SeqLimits.MIN_GATE.toDouble(), 1.0, 0.5, Curve.Linear, "%")
     val Rate = ParamSpec(
         3, "seq.rate", "Rate", 0.0, (SeqLimits.RATES - 1).toDouble(), SeqLimits.DEFAULT_RATE.toDouble(),
@@ -71,11 +71,18 @@ object SeqStrips {
     // The selected steps' strips (build-20), without Shift: the hit's own values.
     val HitVelocity = ParamSpec(12, "seq.hit.velo", "Velocity", SeqLimits.MIN_VELOCITY.toDouble(), 1.0, SeqLimits.DEFAULT_VELOCITY.toDouble(), Curve.Linear, "%")
     val HitLength = ParamSpec(
-        13, "seq.hit.length", "Length", 0.0, (LENGTHS.size - 1).toDouble(), 0.0, Curve.Enum,
+        13, "seq.hit.length", "Hold", 0.0, (LENGTHS.size - 1).toDouble(), 0.0, Curve.Enum,
         LENGTHS.joinToString("|") { formatLength(it) },
     )
     val HitChance = ParamSpec(14, "seq.hit.chance", "Chance", 0.0, 1.0, 1.0, Curve.Linear, "%")
     val HitNudge = ParamSpec(15, "seq.hit.nudge", "Nudge", -SeqLimits.MAX_NUDGE.toDouble(), SeqLimits.MAX_NUDGE.toDouble(), 0.0, Curve.Linear, "%")
+
+    /**
+     * Build-22: the Shift-layer strip 3 with steps selected, a seeded random humanise of the
+     * selected hits' velocity and nudge ([Spread]). Its value is the open drag's amount, 0
+     * between drags; one drag is one undo step.
+     */
+    val SpreadStrip = ParamSpec(16, "seq.spread", "Spread", 0.0, 1.0, 0.0, Curve.Linear, "%")
 
     val main = listOf(Shuffle, Length, Gate, Rate)
     val step = listOf(HitVelocity, HitLength, HitChance, HitNudge)
@@ -160,6 +167,7 @@ object SeqStrips {
         HitVelocity.key, HitChance.key -> percent(value)
         HitLength.key -> formatLength(lengthAt(value))
         HitNudge.key -> formatNudge(value.toFloat())
+        SpreadStrip.key -> if (value <= 0.0) "0" else "\u00B1${percent(value)}"
         Key.key -> KeyScale.KEY_NAMES[value.roundToInt().coerceIn(0, 11)]
         ScaleStrip.key -> Scale.entries[value.roundToInt().coerceIn(0, Scale.entries.lastIndex)].label
         else -> ParamMapping.format(spec, value)

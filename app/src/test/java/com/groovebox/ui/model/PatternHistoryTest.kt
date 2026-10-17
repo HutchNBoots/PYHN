@@ -61,7 +61,7 @@ class PatternHistoryTest {
         // One drag: many strip values, one step.
         history.edit(1, 0) { store.toggleStep(1, 0, 3, listOf(60), 1f) }
         val g = history.begin()
-        for (v in 1..20) history.edit(1, 0) { store.editHits(1, 0, 3, null, { emptyList() }) { it.copy(velocity = v / 40f) } }
+        for (v in 1..20) history.edit(1, 0) { store.editHits(1, 0, 3, null) { it.copy(velocity = v / 40f) } }
         history.end(g)
         assertEquals(0.5f, store.step(1, 0, 3).hits[0].velocity, 0f)
         history.undo()

@@ -13,6 +13,18 @@ sealed interface PadAction {
 
     /** The loop's pads were let go. */
     data object ClearLoop : PadAction
+
+    /** Shift + one pad tapped (build-22): paste, fill or accent, as the screen decides. */
+    data class ShiftTap(val step: Int) : PadAction
+
+    /** A pad dragged onto another (build-22): move [from]'s hit there, or with [copy] (Shift + hold, drag) copy it. */
+    data class Move(val from: Int, val to: Int, val copy: Boolean) : PadAction
+
+    /** Shift + a swipe across the pads (build-22) crossed [by] pads (negative = leftwards): rotate, or insert / delete. */
+    data class Swipe(val by: Int) : PadAction
+
+    /** The swipe's finger lifted. */
+    data object SwipeEnd : PadAction
 }
 
 /**
@@ -27,15 +39,24 @@ sealed interface PadAction {
  * - **Shift + two pads held**: a step loop over the range between them, in either order;
  *   releasing either clears it. Other Shift pads touched during a loop do nothing, and no new
  *   loop starts until every pad of that gesture is up.
- * - **Shift + one pad tapped** (no loop formed): toggles that step in the selection on
- *   release (the old Shift + pad select).
+ * - **Shift + one pad tapped** (no loop formed): [PadAction.ShiftTap] on release (build-22:
+ *   paste, fill or accent; it no longer toggles the selection).
+ * - **Drag** (build-22): a finger that leaves its pad past the touch slop never toggles
+ *   (a drifting long-press cancels); lifted on another pad it asks for [PadAction.Move]. With
+ *   Shift, a finger held still for the long-press time picks the step up and its drop is a
+ *   copy; one that moves first is a swipe, [PadAction.Swipe] for every pad it crosses, then
+ *   [PadAction.SwipeEnd]. Pads touched to join a selection never drag.
  *
  * The selection survives [cancel]; [clearSelection] empties it. Main thread only.
  */
 class StepPads {
-    private enum class Kind { Pending, Selecting, Done }
+    private enum class Kind { Pending, Selecting, Done, Dragging, Swiping, Carrying }
 
-    private class Held(val step: Int, val shifted: Boolean, var kind: Kind = Kind.Pending)
+    private class Held(val step: Int, val shifted: Boolean, var kind: Kind = Kind.Pending) {
+        /** The pad under the finger now, or null off the pads. */
+        var current: Int? = step
+        var lastSwipe = step
+    }
 
     /** The pads held, in touch order. */
     private val held = LinkedHashMap<Int, Held>()
@@ -85,7 +106,11 @@ class StepPads {
     /** The pad under [pointerId] has been held still for the long-press time. */
     fun longPress(pointerId: Int): PadAction? {
         val h = held[pointerId] ?: return null
-        if (h.shifted || h.kind != Kind.Pending) return null
+        if (h.kind != Kind.Pending) return null
+        if (h.shifted) {
+            if (!loopGesture) h.kind = Kind.Carrying
+            return null
+        }
         if (selection.remove(h.step)) {
             h.kind = Kind.Done
         } else {
@@ -107,12 +132,28 @@ class StepPads {
             endLoopGestureIfDone()
             return null
         }
-        if (h.kind != Kind.Pending) return null
-        if (h.shifted) {
-            if (!selection.remove(h.step)) selection.add(h.step)
-            return PadAction.Selection(selected)
+        val to = h.current
+        return when (h.kind) {
+            Kind.Pending -> if (h.shifted) PadAction.ShiftTap(h.step) else PadAction.Toggle(h.step)
+            Kind.Swiping -> PadAction.SwipeEnd
+            Kind.Carrying -> if (to != null && to != h.step) PadAction.Move(h.step, to, copy = true) else PadAction.ShiftTap(h.step)
+            Kind.Dragging, Kind.Selecting -> if (to != null && to != h.step) PadAction.Move(h.step, to, copy = false) else null
+            Kind.Done -> null
         }
-        return PadAction.Toggle(h.step)
+    }
+
+    /**
+     * The finger [pointerId] is over [step] now (null: off the pads); [drifted] once it has
+     * moved past the touch slop since it went down.
+     */
+    fun move(pointerId: Int, step: Int?, drifted: Boolean): PadAction? {
+        val h = held[pointerId] ?: return null
+        h.current = step
+        if (drifted && h.kind == Kind.Pending) h.kind = if (h.shifted) Kind.Swiping else Kind.Dragging
+        if (h.kind != Kind.Swiping || step == null || step == h.lastSwipe) return null
+        val by = step - h.lastSwipe
+        h.lastSwipe = step
+        return PadAction.Swipe(by)
     }
 
     /** The touch stream was taken away: forget the held pads (and clear any loop). The selection stays. */

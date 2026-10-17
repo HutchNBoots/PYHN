@@ -1,5 +1,6 @@
 package com.groovebox.storage
 
+import com.groovebox.ui.model.DrumLockKeys
 import com.groovebox.ui.model.Hit
 import com.groovebox.ui.model.KeyScale
 import com.groovebox.ui.model.LanePoint
@@ -178,7 +179,8 @@ class SessionCodecTest {
         // What version 0 had comes back, upgraded (sections were lower-case in version 0).
         assertEquals(s.tempo, back.tempo, 0.0)
         assertEquals(s.synths, back.synths)
-        assertEquals(s.drum, back.drum)
+        // Build-22: a kit-wide drum lock comes back on every sound.
+        assertEquals(s.drum.copy(locks = DrumLockKeys.migrate(s.drum.locks)), back.drum)
         assertEquals(s.mix, back.mix)
         assertEquals(s.channels, back.channels)
         assertEquals(s.patterns, back.patterns)
@@ -227,7 +229,7 @@ class SessionCodecTest {
         val back = SessionCodec.decode(v2)
         assertEquals(V2_SESSION, back)
         val again = SessionCodec.encode(back!!)
-        assertEquals(3, ByteBuffer.wrap(again).getInt(4))
+        assertEquals(SessionCodec.VERSION, ByteBuffer.wrap(again).getInt(4))
         assertEquals(back, SessionCodec.decode(again))
     }
 
@@ -282,6 +284,56 @@ class SessionCodecTest {
         assertEquals(KeyScale(0, Scale.Minor), SessionCodec.decode(withKey(-1, "Minor"))!!.keyScale)
     }
 
+    // --- version 4 (build-22) ---
+
+    private fun withV4() = TestSessions.small().copy(
+        ui = UiSnapshot("Synth", 3, 3, 0, 1, "4", keyOctave = -1),
+        synths = TestSessions.small().synths.mapIndexed { i, s -> if (i == 2) s.copy(presetName = "Glass Wire 2", userPreset = true) else s },
+        drum = DrumSnapshot(5, List(16) { mapOf("drum.decay" to it / 16.0) }, setOf("drum.decay@3", "drum.pan@0")),
+        userPresets = listOf(
+            UserPreset("Glass Wire 2", mapOf("flt.cutoff" to 3200.0, "flt.reso" to 0.55)),
+            UserPreset("Rubber Floor 2", mapOf("osc.wave" to 1.5)),
+            UserPreset("Ünïcode ★ 3", emptyMap()),
+        ),
+    )
+
+    @Test
+    fun versionFourKeepsUserPresetsTheKeyboardOctaveAndPerSoundLocks() {
+        val s = withV4()
+        val bytes = SessionCodec.encode(s)
+        assertEquals(4, ByteBuffer.wrap(bytes).getInt(4))
+        assertEquals(s, SessionCodec.decode(bytes))
+    }
+
+    @Test
+    fun aVersionThreeFileLoadsWithNoUserPresetsAndKitWideLocksSpread() {
+        val s = withV4()
+        val v3 = SessionCodec.encode(s, version = 3)
+        assertEquals(3, ByteBuffer.wrap(v3).getInt(4))
+        val back = SessionCodec.decode(v3)!!
+        assertEquals(emptyList<UserPreset>(), back.userPresets)
+        assertEquals(0, back.ui.keyOctave)
+        assertTrue(back.synths.none { it.userPreset })
+        // Already per-sound keys stay as they are; a v3 kit-wide one spreads to all 16.
+        assertEquals(setOf("drum.decay@3", "drum.pan@0"), back.drum.locks)
+        val kitWide = SessionCodec.decode(SessionCodec.encode(s.copy(drum = s.drum.copy(locks = setOf("drum.tone"))), version = 3))!!
+        assertEquals((0 until 16).map { "drum.tone@$it" }.toSet(), kitWide.drum.locks)
+        // And it saves again as version 4.
+        assertEquals(SessionCodec.VERSION, ByteBuffer.wrap(SessionCodec.encode(back)).getInt(4))
+    }
+
+    @Test
+    fun aKeyboardOctaveOutOfRangeIsClampedNotRejected() {
+        val s = withV4().copy(ui = withV4().ui.copy(keyOctave = 9))
+        assertEquals(2, SessionCodec.decode(SessionCodec.encode(s))!!.ui.keyOctave)
+    }
+
+    @Test
+    fun aTruncatedVersionFourFileIsRejected() {
+        val bytes = SessionCodec.encode(withV4())
+        for (n in 0 until bytes.size step 7) assertNull("truncated to $n", SessionCodec.decode(bytes.copyOf(n)))
+    }
+
     @Test
     fun sizeAndSpeedAreSmall() {
         val typical = SessionCodec.encode(TestSessions.small())
@@ -318,7 +370,8 @@ class SessionCodecTest {
             tempo = 97.5,
             ui = UiSnapshot("Seq", 3, 3, 2, 1, "T1"),
             synths = listOf(SynthSnapshot(4, "Glass", "Filter", mapOf("flt.cutoff" to 1200.0, "osc.wave" to 0.25), setOf("flt.reso"))),
-            drum = DrumSnapshot(2, listOf(mapOf("drm.level" to 0.5)), setOf("drm.tune")),
+            // Version 1's kit-wide lock, per sound since version 4.
+            drum = DrumSnapshot(2, listOf(mapOf("drm.level" to 0.5)), DrumLockKeys.migrate(setOf("drm.tune"))),
             mix = mapOf("mst.volume" to -3.0),
             channels = listOf(mapOf("ch.pan" to 0.25)),
             patterns = listOf(

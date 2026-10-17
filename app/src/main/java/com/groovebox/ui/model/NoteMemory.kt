@@ -30,6 +30,15 @@ class NoteMemory(private val defaultNote: (slot: Int) -> Int) {
         if (slot in held.indices) held[slot].remove(note)
     }
 
+    /**
+     * Sets the slot's pen (build-22): what a pad tap enters from now on, e.g. the notes of a
+     * step the keys just edited. An empty list leaves the pen as it was.
+     */
+    fun setChord(slot: Int, notes: List<Int>) {
+        if (slot !in held.indices || notes.isEmpty()) return
+        chord[slot] = notes.take(SeqLimits.CHORD)
+    }
+
     /** True once a key has been played on the slot. */
     fun hasPlayed(slot: Int): Boolean = chord.getOrNull(slot) != null
 

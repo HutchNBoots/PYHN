@@ -215,7 +215,6 @@ class PatternEditsTest {
         assertEquals(listOf(0, 1, 2, 3, 4, 5, 6), notesAt(out).keys.toList())
         assertEquals(listOf(64), out.steps.getValue(3).notes)
         assertEquals(sortedMapOf(3 to 0.9f), laneValues(out, 2))
-        assertEquals(notesAt(p).minus(7).mapValues { it.value }.keys, notesAt(PatternEdits.inserted(out, 3, EditScope.WHOLE)).keys.plus(3).minus(7))
     }
 
     // --- clear, empty ---

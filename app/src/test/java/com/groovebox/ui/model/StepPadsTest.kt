@@ -175,21 +175,97 @@ class StepPadsTest {
     }
 
     @Test
-    fun shiftTapTogglesTheStepsSelectionOnRelease() {
-        // The old Shift + pad select still works (one pad, no loop).
+    fun shiftTapAsksForAShiftTapAndNoLongerSelects() {
         assertNull(pads.down(0, 5, true))
-        assertEquals(sel(5), pads.up(0))
-        pads.down(1, 9, true)
-        assertEquals(sel(5, 9), pads.up(1))
-        pads.down(2, 5, true)
-        assertEquals(sel(9), pads.up(2))
+        assertEquals(PadAction.ShiftTap(5), pads.up(0))
+        assertTrue(pads.selected.isEmpty())
+    }
+
+    // --- build-22: drags, copies, swipes ---
+
+    @Test
+    fun aDragOntoAnotherPadMovesAndNeverToggles() {
+        pads.down(0, 3, false)
+        assertNull(pads.move(0, 3, drifted = true))
+        assertNull("a drifting touch cannot become a long-press", pads.longPress(0))
+        assertNull(pads.move(0, 6, true))
+        assertEquals(PadAction.Move(3, 6, copy = false), pads.up(0))
+        assertTrue(pads.selected.isEmpty())
     }
 
     @Test
-    fun shiftPadsIgnoreTheLongPress() {
-        pads.down(0, 5, true)
+    fun aDriftThatComesBackToItsPadCancels() {
+        pads.down(0, 3, false)
+        pads.move(0, 4, true)
+        pads.move(0, 3, true)
+        assertNull("read without risk: no toggle", pads.up(0))
+    }
+
+    @Test
+    fun aSmallWobbleInsideTheSlopIsStillATap() {
+        pads.down(0, 3, false)
+        pads.move(0, 3, drifted = false)
+        assertEquals(PadAction.Toggle(3), pads.up(0))
+    }
+
+    @Test
+    fun aDragLiftedOffThePadsDoesNothing() {
+        pads.down(0, 3, false)
+        pads.move(0, null, true)
+        assertNull(pads.up(0))
+    }
+
+    @Test
+    fun aLongPressedPadDraggedOntoAnotherMovesToo() {
+        pads.down(0, 3, false)
+        assertEquals(sel(3), pads.longPress(0))
+        pads.move(0, 9, true)
+        assertEquals(PadAction.Move(3, 9, copy = false), pads.up(0))
+    }
+
+    @Test
+    fun padsThatJoinASelectionNeverDrag() {
+        pads.down(0, 2, false)
+        pads.longPress(0)
+        pads.down(1, 5, false)
+        pads.move(1, 8, true)
+        assertNull(pads.up(1))
+    }
+
+    @Test
+    fun shiftHoldThenDragCopies() {
+        pads.down(0, 4, true)
         assertNull(pads.longPress(0))
-        assertEquals(sel(5), pads.up(0))
+        assertNull("carrying: no swipe", pads.move(0, 7, true))
+        assertEquals(PadAction.Move(4, 7, copy = true), pads.up(0))
+    }
+
+    @Test
+    fun aShiftHoldReleasedInPlaceIsStillAShiftTap() {
+        pads.down(0, 5, true)
+        pads.longPress(0)
+        assertEquals(PadAction.ShiftTap(5), pads.up(0))
+    }
+
+    @Test
+    fun aShiftSwipeReportsEveryPadCrossedThenEnds() {
+        pads.down(0, 2, true)
+        assertNull(pads.move(0, 2, true))
+        assertEquals(PadAction.Swipe(1), pads.move(0, 3, true))
+        assertNull(pads.move(0, 3, true))
+        assertEquals(PadAction.Swipe(2), pads.move(0, 5, true))
+        assertNull("off the pads", pads.move(0, null, true))
+        assertEquals(PadAction.Swipe(-4), pads.move(0, 1, true))
+        assertNull(pads.longPress(0))
+        assertEquals(PadAction.SwipeEnd, pads.up(0))
+    }
+
+    @Test
+    fun aSwipingShiftPadDoesNotFormALoop() {
+        pads.down(0, 2, true)
+        pads.move(0, 4, true)
+        assertNull(pads.down(1, 9, true))
+        assertNull(pads.loop)
     }
 
     // --- cancel ---

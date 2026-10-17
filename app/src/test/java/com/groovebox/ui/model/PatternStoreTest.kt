@@ -128,30 +128,37 @@ class PatternStoreTest {
     }
 
     @Test
-    fun editHitsOnALaneEditsOrCreatesOnlyThatHit() {
+    fun editHitsOnALaneEditsOnlyThatHitAndNeverCreatesOne() {
         store.setStep(0, 0, 4, Step(listOf(Hit(48, 1f), Hit(50, 0.9f))))
-        store.editHits(0, 0, 4, lane = 50, entry = { emptyList() }) { it.copy(nudge = 0.25f) }
+        store.editHits(0, 0, 4, lane = 50) { it.copy(nudge = 0.25f) }
         assertEquals(Step(listOf(Hit(48, 1f), Hit(50, 0.9f, nudge = 0.25f))), store.step(0, 0, 4))
-        // The lane has no hit here: it is created with the defaults, then edited.
-        store.editHits(0, 0, 5, lane = 54, entry = { emptyList() }) { it.copy(length = 2f) }
-        assertEquals(Step(listOf(Hit(54, SeqLimits.DEFAULT_VELOCITY, length = 2f))), store.step(0, 0, 5))
-    }
-
-    @Test
-    fun editHitsWithoutALaneEditsEveryHitOrCreatesTheEntry() {
-        store.setStep(1, 0, 0, Step(listOf(Hit(60, 0.5f), Hit(64, 0.6f))))
-        store.editHits(1, 0, 0, lane = null, entry = { error("not needed") }) { it.copy(probability = 0.5f) }
-        assertEquals(Step(listOf(Hit(60, 0.5f, probability = 0.5f), Hit(64, 0.6f, probability = 0.5f))), store.step(1, 0, 0))
-        store.editHits(1, 0, 1, lane = null, entry = { listOf(Hit(57, 0.7f), Hit(60, 0.7f)) }) { it.copy(velocity = 0.3f) }
-        assertEquals(Step(listOf(Hit(57, 0.3f), Hit(60, 0.3f))), store.step(1, 0, 1))
-    }
-
-    @Test
-    fun editHitsOnAFullStepWithoutTheLaneChangesNothing() {
-        store.setStep(0, 0, 0, Step((48 until 56).map { Hit(it) }))
+        // Build-22: the lane has no hit here, so the strip changes nothing (it stays dimmed).
         val n = sink.calls.size
-        store.editHits(0, 0, 0, lane = 60, entry = { emptyList() }) { it.copy(velocity = 0.2f) }
+        store.editHits(0, 0, 4, lane = 54) { it.copy(length = 2f) }
+        store.editHits(0, 0, 5, lane = 54) { it.copy(length = 2f) }
+        assertFalse(store.step(0, 0, 5).on)
         assertEquals(n, sink.calls.size)
+    }
+
+    @Test
+    fun editHitsWithoutALaneEditsEveryHitAndLeavesAnEmptyStepEmpty() {
+        store.setStep(1, 0, 0, Step(listOf(Hit(60, 0.5f), Hit(64, 0.6f))))
+        store.editHits(1, 0, 0, lane = null) { it.copy(probability = 0.5f) }
+        assertEquals(Step(listOf(Hit(60, 0.5f, probability = 0.5f), Hit(64, 0.6f, probability = 0.5f))), store.step(1, 0, 0))
+        // Build-22: no chord is written into an empty selected step.
+        store.editHits(1, 0, 1, lane = null) { it.copy(velocity = 0.3f) }
+        assertFalse(store.step(1, 0, 1).on)
+    }
+
+    @Test
+    fun hasContentSeesStepsAndMotionButNotSettings() {
+        assertFalse(store.hasContent(1, 2))
+        store.updateSettings(1, 2) { it.copy(length = 32) }
+        assertFalse(store.hasContent(1, 2))
+        store.setMotionValue(1, 2, 8, 3, 0.5f)
+        assertTrue(store.hasContent(1, 2))
+        store.toggleStep(1, 3, 0, listOf(60), 1f)
+        assertTrue(store.hasContent(1, 3))
     }
 
     @Test

@@ -34,6 +34,14 @@ import com.groovebox.ui.model.ParamMapping
 import com.groovebox.ui.model.SynthSection
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
+import com.groovebox.ui.model.LfoTrace
+import com.groovebox.ui.model.SynthLayout
+import com.groovebox.ui.theme.GrooveRadius
+import kotlin.math.roundToInt
 import kotlin.math.ln
 import kotlin.math.pow
 
@@ -41,6 +49,7 @@ private val WaveColour = Color(0xFFFF6B57)
 private val FilterColour = Color(0xFFFFC23D)
 private val EnvColour = Color(0xFF3DD68C)
 private val CutoffDot = Color(0xFF3DD68C)
+private val LfoColour = Color(0xFF4F8BFF)
 
 /** Drawn frequency axis of the filter picture, and its dB window. */
 private const val F_LO = 20.0
@@ -52,6 +61,12 @@ private const val DB_BOTTOM = -60.0
  * The display: engine and preset names, the layer label, and live pictures of the
  * oscillator, filter and envelope drawn from the current values. It is not a control,
  * except that tapping the engine name toggles the debug panel.
+ *
+ * Build-22: the preset name carries the edited mark ("Glass Wire*"); the mode reads "unison
+ * (mono)"; with Mod as the section a small LFO trace sits under the three pictures (all kept,
+ * owner decision), with Play a line says what the keys play; [undo] (the sound Undo chip) sits
+ * at the bottom-left; [flash] shows the slot and preset large for a moment (a display swipe,
+ * a saved preset).
  */
 @Composable
 fun SynthDisplay(
@@ -60,43 +75,121 @@ fun SynthDisplay(
     debug: DebugSlot,
     modifier: Modifier = Modifier,
     keyName: String? = null,
+    keyRange: String? = null,
+    undo: (@Composable () -> Unit)? = null,
+    flash: SlotFlash? = null,
 ) {
     val d = LocalDesign.current
     val section = controller.section
     val shifted = controller.shifted
-    val modeSpec = controller.spec("osc.voiceMode")
-    val mode = modeSpec?.let { ParamMapping.format(it, controller.value(it)).lowercase() } ?: ""
+    val mode = SynthLayout.voiceModeLabel(controller.value("osc.voiceMode").roundToInt()).lowercase()
 
     Column(
         modifier
             .clip(RoundedCornerShape(d.dp(16)))
             .background(GrooveColors.Panel)
             .padding(horizontal = d.dp(18), vertical = d.dp(14))
-            .semantics { contentDescription = "Synth display, ${controller.presetName}" },
+            .semantics {
+                contentDescription = "Synth display, ${controller.presetName}" + (if (controller.edited) ", edited" else "")
+            },
         verticalArrangement = Arrangement.spacedBy(d.dp(8)),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
             DisplayTitle("Brook", debug, Modifier.alignByBaseline())
             DisplaySubtitle(
-                "${controller.presetName} · slot ${controller.slot + 1} · $mode",
+                "${controller.displayName} · slot ${controller.slot + 1} · $mode",
                 audioStarted,
                 Modifier.weight(1f).alignByBaseline(),
             )
             if (keyName != null) KeyName(keyName, Modifier.alignByBaseline())
-            BasicText(
-                "${section.label.uppercase()} · ${if (shifted) "SHIFT" else "MAIN"} LAYER",
-                Modifier.alignByBaseline(),
-                style = d.value(12f, if (shifted) GrooveColors.Shift else GrooveColors.TextDim),
-                maxLines = 1,
-            )
+            LayerLabel("${if (shifted) "SHIFT" else "MAIN"} · ${section.label.lowercase()}", shifted, Modifier.alignByBaseline())
         }
 
         Box(Modifier.fillMaxWidth().weight(1f)) {
-            Pictures(controller, section, shifted, Modifier.fillMaxSize())
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(d.dp(6))) {
+                Pictures(controller, section, shifted, Modifier.fillMaxWidth().weight(1f))
+                when (section) {
+                    SynthSection.Mod -> LfoRow(controller, Modifier.fillMaxWidth().height(d.dp(22)))
+                    SynthSection.Play -> PlayRow(keyRange, keyName, mode, Modifier.fillMaxWidth().height(d.dp(22)))
+                    else -> Unit
+                }
+            }
+            if (flash != null) FlashOverlay(flash, Modifier.fillMaxSize())
             if (debug.open) debug.panel()
         }
 
-        Legend(controller.strips, controller)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(d.dp(10)), verticalAlignment = Alignment.CenterVertically) {
+            undo?.invoke()
+            Box(Modifier.weight(1f)) { Legend(controller.strips, controller) }
+        }
+    }
+}
+
+/** What a swipe or a save shows large on a display for a moment (build-22, owner decision 1-1A). */
+@Immutable
+data class SlotFlash(val big: String, val small: String, val id: Int)
+
+/** The flash: the slot number and the preset name, large, over the pictures. */
+@Composable
+fun FlashOverlay(flash: SlotFlash, modifier: Modifier = Modifier) {
+    val d = LocalDesign.current
+    Column(
+        modifier
+            .clip(d.shape(GrooveRadius.CELL))
+            .background(GrooveColors.Panel.copy(alpha = 0.92f))
+            .semantics { contentDescription = "${flash.big} ${flash.small}" },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        BasicText(flash.big, style = d.value(44f, GrooveColors.Text, FontWeight.Medium), maxLines = 1)
+        BasicText(flash.small, style = d.label(22f, GrooveColors.Text, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Mod's small LFO trace (owner decision 1-2b): shape, rate (or its division), depth and fade, and the target. */
+@Composable
+private fun LfoRow(controller: SynthController, modifier: Modifier) {
+    val d = LocalDesign.current
+    val rate = controller.value("lfo.rate")
+    val synced = controller.lfoSynced
+    val shape = controller.value("lfo.wave").roundToInt()
+    val depth = controller.value("lfo.depth")
+    val fade = controller.value("lfo.delay")
+    val bpm = controller.tempoBpm
+    val dest = controller.spec("lfo.dest")?.let { ParamMapping.format(it, controller.value(it)).lowercase() } ?: ""
+    val rateText = controller.spec("lfo.rate")?.let { controller.format(it, rate) } ?: ""
+    val points = remember(rate, synced, shape, depth, fade, bpm) {
+        LfoTrace.points(shape, LfoTrace.cycles(rate, synced, bpm), depth, fade, LfoTrace.windowS(synced, bpm))
+    }
+    val stroke = d.px(2f)
+    Row(
+        modifier.semantics { contentDescription = "LFO $rateText to $dest" },
+        horizontalArrangement = Arrangement.spacedBy(d.dp(8)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText("LFO", style = d.meta(GrooveColors.TextDim), maxLines = 1)
+        Canvas(Modifier.weight(1f).fillMaxHeight()) {
+            val h = size.height
+            val path = Path()
+            points.forEachIndexed { i, p ->
+                val x = (p.x * size.width).toFloat()
+                val y = (h / 2 - p.y * (h / 2 - stroke)).toFloat()
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            drawLine(GrooveColors.Divider, Offset(0f, h / 2), Offset(size.width, h / 2), stroke / 2)
+            drawPath(path, LfoColour, alpha = if (depth > 0.0) 1f else 0.45f, style = Stroke(stroke, join = StrokeJoin.Round))
+        }
+        BasicText("$rateText → $dest", style = d.meta(GrooveColors.TextDim), maxLines = 1)
+    }
+}
+
+/** Play's line: what the keys play now (the keyboard octave) and that the pattern does not move. */
+@Composable
+private fun PlayRow(keyRange: String?, keyName: String?, mode: String, modifier: Modifier) {
+    val d = LocalDesign.current
+    val text = listOfNotNull("keys ${keyRange ?: "C3–B4"}", keyName ?: "no scale", mode, "pattern unchanged").joinToString(" · ")
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        BasicText(text, style = d.meta(GrooveColors.TextDim), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -119,7 +212,7 @@ private fun Pictures(controller: SynthController, section: SynthSection, shifted
     val gap = d.px(20f)
     val divider = d.px(2f)
 
-    fun alphaFor(panel: SynthSection) = if (section == panel || section == SynthSection.Mod) 1f else 0.45f
+    fun alphaFor(panel: SynthSection) = if (section == panel || section == SynthSection.Mod || section == SynthSection.Play) 1f else 0.45f
 
     Canvas(modifier) {
         val w = (size.width - 2 * gap) / 3f

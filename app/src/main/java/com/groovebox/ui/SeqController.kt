@@ -2,10 +2,16 @@ package com.groovebox.ui
 
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.groovebox.engine.ParamSpec
 import com.groovebox.ui.model.Hit
+import com.groovebox.ui.model.HitField
+import com.groovebox.ui.model.RelativeDrag
+import com.groovebox.ui.model.Spread
+import com.groovebox.ui.model.Step
 import com.groovebox.ui.model.NoteDrag
 import com.groovebox.ui.model.ParamMapping
 import com.groovebox.ui.model.Scale
@@ -16,12 +22,14 @@ import kotlin.math.roundToInt
 /**
  * The Sequencer screen's strips (F3, docs/mockups/Sequencer.dc.html; build-20), for the
  * selected slot's current pattern:
- *  - no step selected: Shuffle, Length, Gate, Rate;
+ *  - no step selected: Shuffle, Steps (the pattern's length), Gate, Rate;
  *  - Shift, no step selected: Tempo, Pattern (queued while playing), Key, Scale (F8);
- *  - steps selected (long-press a pad, left thumb): Velocity, Length, Chance, Nudge of the
+ *  - steps selected (long-press a pad, left thumb): Velocity, Hold, Chance, Nudge of the
  *    selected steps' hits (right thumb). On the drum slot the selected lane's hit on each
- *    step, created when a step lacks it; on a synth slot every note of each step;
- *  - Shift with steps selected: Note (synth), —, —, Motion (the latest motion lane of the
+ *    step, on a synth slot every note of each step. Build-22: relative ([RelativeDrag]): a
+ *    drag moves every selected hit by the same amount from where it was; a step without the
+ *    hit is left alone (the strip stays dimmed; a key or pad tap creates the hit);
+ *  - Shift with steps selected: Note (synth), —, Spread (build-22, [Spread]), Motion (the latest motion lane of the
  *    step selected last). Note is relative (build-21, [NoteDrag]): a drag moves every note of
  *    every selected step by the same interval and reads "+2" from where it started.
  * Values shown are the step selected last's. Every edit goes through the pattern store and
@@ -40,7 +48,7 @@ class SeqController(private val app: GrooveState) : StripHost {
             SeqLayer.Pattern -> SeqStrips.main
             SeqLayer.Transport -> listOf(SeqStrips.Tempo, SeqStrips.Pattern, SeqStrips.Key, SeqStrips.ScaleStrip)
             SeqLayer.Step -> SeqStrips.step
-            SeqLayer.StepShift -> listOf(if (app.isDrum(app.selectedSlot)) null else SeqStrips.Note, null, null, motionSpec())
+            SeqLayer.StepShift -> listOf(if (app.isDrum(app.selectedSlot)) null else SeqStrips.Note, null, SeqStrips.SpreadStrip, motionSpec())
         }
 
     /** The Motion strip for the step selected last, or null when it has no motion. */
@@ -71,6 +79,7 @@ class SeqController(private val app: GrooveState) : StripHost {
     override fun dimmed(spec: ParamSpec): Boolean = when {
         spec in SeqStrips.step -> focusHit() == null
         spec.key == SeqStrips.Note.key -> app.selectedSteps.none { app.step(it).on }
+        spec.key == SeqStrips.SpreadStrip.key -> selectedWithHits().isEmpty()
         else -> false
     }
 
@@ -116,6 +125,86 @@ class SeqController(private val app: GrooveState) : StripHost {
         for ((step, s) in moved) app.history.edit(slot, pattern) { app.store.updateStep(slot, pattern, step) { s } }
     }
 
+    // --- build-22: relative step strips and Spread ---
+
+    private val hitDrag = RelativeDrag()
+    private var hitField: HitField? = null
+
+    /** The value shown on a step strip while its drag runs over a focus step without the hit. */
+    private var hitShown by mutableStateOf<Double?>(null)
+
+    /** Spread's open drag: the steps as they were, its seed, and the amount shown. */
+    private var spreadFrom: Map<Int, Step>? = null
+    private var spreadSlot = -1
+    private var spreadPattern = -1
+    private var spreadSeed = 1L
+    private var spreadShown by mutableDoubleStateOf(0.0)
+
+    /** The selected steps that hold the hit the strips edit (the lane's, or any note). */
+    private fun selectedWithHits(): Map<Int, Step> {
+        val lane = if (app.isDrum(app.selectedSlot)) app.laneNote else null
+        return app.selectedSteps.associateWith { app.step(it) }
+            .filterValues { if (lane == null) it.on else it.hit(lane) != null }
+    }
+
+    private fun fieldOf(spec: ParamSpec): HitField? = when (spec.key) {
+        SeqStrips.HitVelocity.key -> HitField.Velocity
+        SeqStrips.HitLength.key -> HitField.Hold
+        SeqStrips.HitChance.key -> HitField.Chance
+        SeqStrips.HitNudge.key -> HitField.Nudge
+        else -> null
+    }
+
+    private fun startHitDrag(spec: ParamSpec, field: HitField) {
+        val lane = if (app.isDrum(app.selectedSlot)) app.laneNote else null
+        hitDrag.start(app.selectedSlot, app.editPattern, selectedWithHits(), lane, value(spec))
+        hitField = field
+        hitShown = null
+    }
+
+    private fun startSpread() {
+        spreadFrom = selectedWithHits()
+        spreadSlot = app.selectedSlot
+        spreadPattern = app.editPattern
+        spreadSeed = spreadSeed * 6364136223846793005L + 1442695040888963407L
+        spreadShown = 0.0
+    }
+
+    /**
+     * Ends the open step-strip and Spread drags, keeping what they wrote (keys, recording,
+     * undo or a new selection changed the steps under them); the rest of such a gesture does nothing.
+     */
+    fun endHitDrags() {
+        hitDrag.end()
+        hitField = null
+        hitShown = null
+        spreadFrom = null
+        spreadShown = 0.0
+    }
+
+    fun hitDragHolds(slot: Int, pattern: Int, step: Int): Boolean =
+        hitDrag.holds(slot, pattern, step) || (spreadFrom?.containsKey(step) == true && slot == spreadSlot && pattern == spreadPattern)
+
+    private fun applyHitDrag(field: HitField, v: Double) {
+        val moved = hitDrag.moveTo(v, field, app.selectedSlot, app.editPattern)
+        if (focusHit() == null) hitShown = v
+        app.writeSteps(moved)
+    }
+
+    private fun applySpread(v: Double) {
+        val from = spreadFrom ?: return
+        if (app.selectedSlot != spreadSlot || app.editPattern != spreadPattern) {
+            endHitDrags()
+            return
+        }
+        val lane = if (app.isDrum(spreadSlot)) app.laneNote else null
+        spreadShown = v
+        app.writeSteps(Spread.apply(from, lane, v.toFloat(), spreadSeed))
+    }
+
+    /** Any step-strip gesture open (so a strip gesture's later values know it was ended under it). */
+    private val hitGestures = HashSet<String>()
+
     /** Open strip drags: spec key → their undo group's token. */
     private val drags = HashMap<String, Int>()
 
@@ -126,6 +215,11 @@ class SeqController(private val app: GrooveState) : StripHost {
             noteGesture = true
             startNoteDrag()
         }
+        fieldOf(spec)?.let { startHitDrag(spec, it); hitGestures += spec.key }
+        if (spec.key == SeqStrips.SpreadStrip.key) {
+            startSpread()
+            hitGestures += spec.key
+        }
     }
 
     override fun gestureEnd(spec: ParamSpec) {
@@ -134,6 +228,7 @@ class SeqController(private val app: GrooveState) : StripHost {
             noteGesture = false
             endNoteDrag()
         }
+        if (hitGestures.remove(spec.key)) endHitDrags()
     }
 
     override fun value(spec: ParamSpec): Double {
@@ -155,10 +250,11 @@ class SeqController(private val app: GrooveState) : StripHost {
             SeqStrips.Key.key -> app.keyScale.root.toDouble()
             SeqStrips.ScaleStrip.key -> app.keyScale.scale.ordinal.toDouble()
             SeqStrips.Note.key -> noteMove.toDouble()
-            SeqStrips.HitVelocity.key -> hit?.velocity?.toDouble() ?: spec.default
-            SeqStrips.HitLength.key -> hit?.let { SeqStrips.lengthIndex(it.length).toDouble() } ?: spec.default
-            SeqStrips.HitChance.key -> hit?.probability?.toDouble() ?: spec.default
-            SeqStrips.HitNudge.key -> hit?.nudge?.toDouble() ?: spec.default
+            SeqStrips.SpreadStrip.key -> spreadShown
+            SeqStrips.HitVelocity.key -> hit?.velocity?.toDouble() ?: hitShown.takeIf { hitField == HitField.Velocity } ?: spec.default
+            SeqStrips.HitLength.key -> hit?.let { SeqStrips.lengthIndex(it.length).toDouble() } ?: hitShown.takeIf { hitField == HitField.Hold } ?: spec.default
+            SeqStrips.HitChance.key -> hit?.probability?.toDouble() ?: hitShown.takeIf { hitField == HitField.Chance } ?: spec.default
+            SeqStrips.HitNudge.key -> hit?.nudge?.toDouble() ?: hitShown.takeIf { hitField == HitField.Nudge } ?: spec.default
             else -> spec.default
         }.coerceIn(spec.min, spec.max)
     }
@@ -196,10 +292,32 @@ class SeqController(private val app: GrooveState) : StripHost {
                     history.end(token)
                 }
             }
-            SeqStrips.HitVelocity.key -> app.editSelectedHits { it.copy(velocity = v.toFloat()) }
-            SeqStrips.HitLength.key -> app.editSelectedHits { it.copy(length = SeqStrips.lengthAt(v)) }
-            SeqStrips.HitChance.key -> app.editSelectedHits { it.copy(probability = v.toFloat()) }
-            SeqStrips.HitNudge.key -> app.editSelectedHits { it.copy(nudge = v.toFloat()) }
+            SeqStrips.HitVelocity.key, SeqStrips.HitLength.key, SeqStrips.HitChance.key, SeqStrips.HitNudge.key -> {
+                val field = fieldOf(spec)!!
+                when {
+                    hitDrag.active && hitField == field -> applyHitDrag(field, v)
+                    spec.key in hitGestures -> Unit // ended under the finger
+                    else -> {
+                        // Not from a strip gesture (accessibility): a one-off relative move, one undo step.
+                        val token = history.begin()
+                        startHitDrag(spec, field)
+                        applyHitDrag(field, v)
+                        endHitDrags()
+                        history.end(token)
+                    }
+                }
+            }
+            SeqStrips.SpreadStrip.key -> when {
+                spreadFrom != null -> applySpread(v)
+                spec.key in hitGestures -> Unit
+                else -> {
+                    val token = history.begin()
+                    startSpread()
+                    applySpread(v)
+                    endHitDrags()
+                    history.end(token)
+                }
+            }
         }
     }
 
@@ -210,6 +328,33 @@ class SeqController(private val app: GrooveState) : StripHost {
     override fun reset(spec: ParamSpec) {
         if (spec.key == SeqStrips.Note.key) {
             if (noteDrag.active) applyNoteDrag(0)
+            return
+        }
+        if (spec.key == SeqStrips.SpreadStrip.key) {
+            if (spreadFrom != null) applySpread(0.0)
+            return
+        }
+        fieldOf(spec)?.let { field ->
+            // Double-tap: every selected hit back to the default (absolute), one undo step.
+            endHitDrags()
+            val slot = app.selectedSlot
+            val pattern = app.editPattern
+            val lane = if (app.isDrum(slot)) app.laneNote else null
+            val d = spec.default
+            val token = app.history.begin()
+            for (step in app.selectedSteps) {
+                app.history.edit(slot, pattern) {
+                    app.store.editHits(slot, pattern, step, lane) { h ->
+                        when (field) {
+                            HitField.Velocity -> h.copy(velocity = d.toFloat())
+                            HitField.Hold -> h.copy(length = SeqStrips.lengthAt(d))
+                            HitField.Chance -> h.copy(probability = d.toFloat())
+                            HitField.Nudge -> h.copy(nudge = d.toFloat())
+                        }
+                    }
+                }
+            }
+            app.history.end(token)
             return
         }
         val target = SeqStrips.motionTarget(spec)

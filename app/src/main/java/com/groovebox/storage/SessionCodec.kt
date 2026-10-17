@@ -1,5 +1,6 @@
 package com.groovebox.storage
 
+import com.groovebox.ui.model.DrumLockKeys
 import com.groovebox.ui.model.Hit
 import com.groovebox.ui.model.KeyScale
 import com.groovebox.ui.model.LanePoint
@@ -45,14 +46,23 @@ import java.util.zip.CRC32
  *    per step (on, notes, velocity, gate, probability): they load as one hit per note with
  *    the step's velocity, its gate as the length (-1 = the pattern's gate) and probability,
  *    nudge 0; steps that were off, or had no note, are dropped.
+ *  - 4: build-22, after the UI block's current patterns the keyboard octave (int); after each
+ *    synth's locks whether its preset is a user preset (boolean); before the key and scale the
+ *    user presets (count, then per preset its name and values). Drum locks are per sound
+ *    ("drum.decay@3"); an older file's kit-wide lock becomes a lock on every sound. Older files
+ *    load with octave 0, no user presets and every slot on a factory preset.
  *
  * Pure Kotlin.
  */
 object SessionCodec {
-    const val VERSION = 3
+    const val VERSION = 4
     private const val MAGIC = 0x47425853 // "GBXS"
     private const val HEADER_BYTES = 12
     private const val TRAILER_BYTES = 4
+
+    // The keyboard octave's range (KeyOctave); a value outside it is clamped, not rejected.
+    private const val KEY_OCTAVE_MIN = -2
+    private const val KEY_OCTAVE_MAX = 2
 
     /** Upper bound for any count in the file, so random bytes cannot ask for huge allocations. */
     private const val MAX_COUNT = 1 shl 14
@@ -125,6 +135,10 @@ object SessionCodec {
             // Version 1 had no key and scale: it played chromatically.
             s = s.copy(keyScale = KeyScale.OFF)
         }
+        if (fromVersion < 4) {
+            // Drum locks were kit-wide: keep each one locked on every sound.
+            s = s.copy(drum = s.drum.copy(locks = DrumLockKeys.migrate(s.drum.locks)))
+        }
         return s
     }
 
@@ -140,6 +154,7 @@ object SessionCodec {
             out.writeInt(s.ui.tapeTrack)
             out.writeUTF(s.ui.mixerPad)
             writeInts(out, s.currentPatterns)
+            if (version >= 4) out.writeInt(s.ui.keyOctave)
         }
         out.writeInt(s.synths.size)
         for (synth in s.synths) {
@@ -148,6 +163,7 @@ object SessionCodec {
             out.writeUTF(if (version >= 1) synth.section else synth.section.lowercase())
             writeValues(out, synth.values)
             writeStrings(out, synth.locks)
+            if (version >= 4) out.writeBoolean(synth.userPreset)
         }
         out.writeInt(s.drum.selectedKey)
         out.writeInt(s.drum.values.size)
@@ -165,6 +181,13 @@ object SessionCodec {
         }
         out.writeInt(s.patterns.size)
         for (p in s.patterns) writePattern(out, p, version)
+        if (version >= 4) {
+            out.writeInt(s.userPresets.size)
+            for (u in s.userPresets) {
+                out.writeUTF(u.name)
+                writeValues(out, u.values)
+            }
+        }
         if (version >= 2) {
             out.writeInt(s.keyScale.root)
             out.writeUTF(s.keyScale.scale.name)
@@ -185,6 +208,7 @@ object SessionCodec {
                 mixerPad = input.readUTF(),
             )
             current = readInts(input)
+            if (version >= 4) ui = ui.copy(keyOctave = input.readInt().coerceIn(KEY_OCTAVE_MIN, KEY_OCTAVE_MAX))
         }
         val synths = List(count(input)) {
             SynthSnapshot(
@@ -193,6 +217,7 @@ object SessionCodec {
                 section = input.readUTF(),
                 values = readValues(input),
                 locks = readStrings(input),
+                userPreset = version >= 4 && input.readBoolean(),
             )
         }
         val selectedKey = input.readInt()
@@ -209,9 +234,10 @@ object SessionCodec {
             emptyMap()
         }
         val patterns = List(count(input)) { readPattern(input, version) }
+        val userPresets = if (version >= 4) List(count(input)) { UserPreset(input.readUTF(), readValues(input)) } else emptyList()
         // A root out of range falls back to C and an unknown scale name to Off, rather than failing the load.
         val keyScale = if (version >= 2) KeyScale.of(input.readInt(), Scale.named(input.readUTF())) else KeyScale.OFF
-        return Session(tempo, ui, synths, drum, mix, channels, patterns, current, locks, keyScale)
+        return Session(tempo, ui, synths, drum, mix, channels, patterns, current, locks, keyScale, userPresets)
     }
 
     private fun writePattern(out: DataOutputStream, p: PatternSnapshot, version: Int) {

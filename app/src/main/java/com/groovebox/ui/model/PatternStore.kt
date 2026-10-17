@@ -252,19 +252,23 @@ class PatternStore(private val sink: PatternSink) {
         }
 
     /**
-     * A step strip moved (build-20): on the drum slot ([lane] = the sound's note) only that
-     * sound's hit, created with the defaults when the step lacks it (and has room); on a synth
-     * slot ([lane] null) every hit, or, on an empty step, the hits [entry] gives.
+     * A step strip moved: on the drum slot ([lane] = the sound's note) only that sound's hit;
+     * on a synth slot ([lane] null) every hit. Build-22: a step without the hit is left alone
+     * (no hit, and no chord, is ever created by a strip; a key or pad tap creates it).
      */
-    fun editHits(slot: Int, pattern: Int, step: Int, lane: Int?, entry: () -> List<Hit>, edit: (Hit) -> Hit) =
+    fun editHits(slot: Int, pattern: Int, step: Int, lane: Int?, edit: (Hit) -> Hit) =
         updateStep(slot, pattern, step) { old ->
             when {
-                lane != null && old.hit(lane) != null -> Step(old.hits.map { if (it.note == lane) edit(it) else it })
-                lane != null -> if (old.hits.size >= SeqLimits.HITS) old else Step(old.hits + edit(Hit(lane)))
-                old.on -> Step(old.hits.map(edit))
-                else -> Step(entry().map(edit))
+                lane != null -> if (old.hit(lane) == null) old else Step(old.hits.map { if (it.note == lane) edit(it) else it })
+                else -> Step(old.hits.map(edit))
             }
         }
+
+    /** The pattern has a step on or a motion value (the pattern row's content dot). */
+    fun hasContent(slot: Int, pattern: Int): Boolean {
+        val p = data(slot, pattern) ?: return false
+        return p.steps.any { it.on } || p.lanes.any { lane -> (0 until SeqLimits.STEPS).any(lane::hasValueAt) }
+    }
 
     /** Shift + Clear on the drum slot: the sound [note] leaves every step of the pattern. */
     fun clearLane(slot: Int, pattern: Int, note: Int) {
@@ -299,7 +303,11 @@ class PatternStore(private val sink: PatternSink) {
         changed()
     }
 
-    /** Every step off, motion cleared, settings back to the defaults (the engine does the same). */
+    /**
+     * Every step off, motion cleared, settings back to the defaults (the engine does the same).
+     * Build-22: the Seq screen's Clear keeps the settings and motion ([PatternEdits.notesCleared]);
+     * this full reset is Shift + Clear on a synth slot.
+     */
     fun clearPattern(slot: Int, pattern: Int) {
         val p = data(slot, pattern) ?: return
         p.settings = PatternSettings()

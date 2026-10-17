@@ -19,7 +19,7 @@ class SeqStripsTest {
 
     @Test
     fun stepStripsAreVelocityLengthChanceNudge() {
-        assertEquals(listOf("Velocity", "Length", "Chance", "Nudge"), SeqStrips.step.map { it.label })
+        assertEquals(listOf("Velocity", "Hold", "Chance", "Nudge"), SeqStrips.step.map { it.label })
         assertEquals(0.01, SeqStrips.HitVelocity.min, 1e-6)
         assertEquals(1.0, SeqStrips.HitVelocity.max, 0.0)
         assertEquals(-0.5, SeqStrips.HitNudge.min, 0.0)
@@ -81,6 +81,8 @@ class SeqStripsTest {
         assertEquals("\u221212%", SeqStrips.formatNudge(-0.12f))
         assertEquals("\u221250%", SeqStrips.formatNudge(-0.5f))
         assertEquals("+50%", SeqStrips.format(SeqStrips.HitNudge, 0.5))
+        assertEquals("0", SeqStrips.format(SeqStrips.SpreadStrip, 0.0))
+        assertEquals("\u00B140%", SeqStrips.format(SeqStrips.SpreadStrip, 0.4))
     }
 
     @Test
@@ -94,7 +96,7 @@ class SeqStripsTest {
 
     @Test
     fun mainStripsAreShuffleLengthGateRate() {
-        assertEquals(listOf("Shuffle", "Length", "Gate", "Rate"), SeqStrips.main.map { it.label })
+        assertEquals("build-22 renames: pattern Length → Steps", listOf("Shuffle", "Steps", "Gate", "Rate"), SeqStrips.main.map { it.label })
     }
 
     @Test
@@ -113,7 +115,7 @@ class SeqStripsTest {
         val all = listOf(
             SeqStrips.Shuffle, SeqStrips.Length, SeqStrips.Gate, SeqStrips.Rate, SeqStrips.Tempo, SeqStrips.Pattern,
             SeqStrips.Note, SeqStrips.Key, SeqStrips.ScaleStrip,
-            SeqStrips.HitVelocity, SeqStrips.HitLength, SeqStrips.HitChance, SeqStrips.HitNudge,
+            SeqStrips.HitVelocity, SeqStrips.HitLength, SeqStrips.HitChance, SeqStrips.HitNudge, SeqStrips.SpreadStrip,
         )
         assertEquals(all.size, all.map { it.key }.toSet().size)
         for (s in all) {

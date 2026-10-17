@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -49,6 +48,26 @@ import com.groovebox.ui.model.TapeStrips
 import com.groovebox.ui.model.TapeView
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onLongClick
+import com.groovebox.ui.model.UndoHold
+import com.groovebox.ui.theme.GrooveRadius
+import com.groovebox.ui.theme.GrooveSpace
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /** Colours of the Tape mockup (docs/mockups/Tape.dc.html) beyond the shared palette. */
@@ -74,11 +93,11 @@ fun TapeMiddleRow(
     onLanesPositioned: (Rect) -> Unit = {},
 ) {
     val d = LocalDesign.current
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.ZONE))) {
         TapeDisplay(state, audioStarted, debug, Modifier.weight(1f).fillMaxHeight(), onLanesPositioned)
         val tape = state.tape
         val specs = tape.strips
-        Row(Modifier.width(d.dp(332)).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
+        Row(Modifier.width(d.dp(332)).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.ROW))) {
             tape.refs.forEachIndexed { i, ref ->
                 val strip = Modifier.weight(1f).fillMaxHeight()
                 if (ref == StripRef.Commit) CommitStrip(i, state, strip) else ColourStrip(i, specs[i], tape, strip)
@@ -102,24 +121,21 @@ private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugS
     val subtitle = if (state.tapeLoading) {
         TapeView.LOADING
     } else {
-        TapeView.subtitle(state.tapeBars, region, mix.mix(MixKeys.DUB), speed, mix.mix(MixKeys.REVERSE) >= 0.5)
+        val varispeed = TapeView.varispeed(mix.mix(MixKeys.SPEED).roundToInt(), state.tempoBpm, state.tapeTempoBpm, state.tapeTempoMatches)
+        TapeView.subtitle(state.tapeBars, region, mix.mix(MixKeys.DUB), speed, mix.mix(MixKeys.REVERSE) >= 0.5, varispeed)
     }
 
     Column(
         modifier
-            .clip(RoundedCornerShape(d.dp(16)))
+            .clip(d.shape(GrooveRadius.PANEL))
             .background(GrooveColors.Panel)
-            .padding(horizontal = d.dp(18), vertical = d.dp(12)),
-        verticalArrangement = Arrangement.spacedBy(d.dp(8)),
+            .padding(horizontal = d.dp(GrooveSpace.DISPLAY_H), vertical = d.dp(GrooveSpace.DISPLAY_V)),
+        verticalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.ROW)),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
+        Row(horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.ZONE))) {
             DisplayTitle("Tape", debug, Modifier.alignByBaseline())
             DisplaySubtitle(subtitle, audioStarted, Modifier.weight(1f).alignByBaseline())
-            LayerLabel(
-                if (shifted) "SHIFT · track ${TapeView.trackName(track)}" else "MAIN · speed, loop and dub",
-                shifted,
-                Modifier.alignByBaseline(),
-            )
+            LayerLabel(shifted, TapeView.trackName(track), Modifier.alignByBaseline())
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             // A saved tape still loading (F7.6): the lanes fill in as it lands, dimmed until then.
@@ -150,13 +166,13 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
     val d = LocalDesign.current
     val haptics = LocalHapticFeedback.current
     val measurer = rememberTextMeasurer()
-    val nameStyle = d.value(12f, TapeColors.Name)
-    val tagStyle = d.value(10f, TapeColors.Record, FontWeight.Medium)
-    val askStyle = d.label(14f, TapeColors.Record, FontWeight.Bold)
+    val nameStyle = d.valueText(TapeColors.Name)
+    val tagStyle = d.caption(TapeColors.Record, FontWeight.Medium)
+    val askStyle = d.buttonLabel(TapeColors.Record, FontWeight.Bold)
     val top = d.px(10f) // room for the loop bracket
     val gap = d.px(6f)
     val nameWidth = d.px(36f)
-    val radius = CornerRadius(d.px(8f))
+    val radius = CornerRadius(d.px(GrooveRadius.CHIP))
     val column = d.px(2f)
     val clearLane = state.tapeClearLane
     val description = "Tape tracks, ${TapeView.trackName(state.tapeTrack)} selected. " +
@@ -223,7 +239,9 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
             }
 
             if (isSelected) {
-                drawRoundRect(GrooveColors.Text, Offset(0f, y), Size(size.width, laneH), radius, style = Stroke(d.px(1f)))
+                // Selected item: a cream outline (CX review R6).
+                val w = d.px(1.5f)
+                drawRoundRect(GrooveColors.Select, Offset(w / 2, y + w / 2), Size(size.width - w, laneH - w), radius, style = Stroke(w))
             }
             // Armed: a blinking coral outline; recording: a solid one and a REC tag.
             if (t == busyTrack && (status == TapeRecordStatus.Recording || state.blinkOn)) {
@@ -291,37 +309,44 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
 @Composable
 private fun ExportProgress(progress: Float, modifier: Modifier) {
     val d = LocalDesign.current
-    Box(modifier.height(d.dp(4)).clip(RoundedCornerShape(d.dp(2))).background(TapeColors.Lane)) {
+    Box(modifier.height(d.dp(4)).clip(d.shape(GrooveRadius.HAIRLINE)).background(TapeColors.Lane)) {
         Box(
             Modifier
                 .fillMaxWidth(progress.coerceIn(0f, 1f))
                 .fillMaxHeight()
-                .clip(RoundedCornerShape(d.dp(2)))
+                .clip(d.shape(GrooveRadius.HAIRLINE))
                 .background(GrooveColors.Strips[3]),
         )
     }
 }
 
-/** One line under the lanes: the export's progress or result, what Record is doing, or how to use the lanes. */
+/**
+ * The line under the lanes (build-22): the Undo chip at the left, in the left thumb's reach
+ * (ADR 0003 P5), then the export's progress or result, what Record is doing, or how to use the
+ * lanes.
+ */
 @Composable
 private fun TapeFooter(state: GrooveState) {
     val d = LocalDesign.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.ROW))) {
+        UndoChip(state)
+        val (text, colour) = footerLine(state)
+        FooterHint(text, Modifier.weight(1f), colour)
+    }
+}
+
+private fun footerLine(state: GrooveState): Pair<String, Color> {
     val track = TapeView.trackName(state.tapeTrack)
     val export = state.exportStatus
     val exportLine = TapeView.exportLine(export, state.tapeBars, state.mix.mix(MixKeys.LOOP_START).roundToInt(), state.mix.mix(MixKeys.LOOP_LEN).roundToInt())
-    if (exportLine != null) {
-        val colour = if (export is ExportStatus.Failed) GrooveColors.Warn else GrooveColors.Strips[3]
-        BasicText(exportLine, style = d.value(13f, colour), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        return
-    }
-    val recordNeeds = state.tapeRecordNeeds
+    if (exportLine != null) return exportLine to if (export is ExportStatus.Failed) GrooveColors.Warn else GrooveColors.Strips[3]
     val clearLane = state.tapeClearLane
     if (clearLane >= 0) {
         val name = TapeView.trackName(clearLane)
-        BasicText("tap $name again to clear it · anything else keeps it · Undo brings it back", style = d.value(13f, TapeColors.Record), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        return
+        return "tap $name again to clear it · anything else keeps it · Undo brings it back" to TapeColors.Record
     }
-    val (text, colour) = when (state.tapeStatus) {
+    val recordNeeds = state.tapeRecordNeeds
+    return when (state.tapeStatus) {
         TapeRecordStatus.Recording ->
             "recording ${TapeView.trackName(state.tapeRecordingTrack)} · Record (or double-tap the lane) stops on the next bar" to TapeColors.Record
         TapeRecordStatus.Armed -> {
@@ -331,11 +356,101 @@ private fun TapeFooter(state: GrooveState) {
         TapeRecordStatus.Idle -> when {
             recordNeeds != null -> recordNeeds to GrooveColors.Warn
             state.tapeLoading -> "loading the saved tape · play on, it lands in a moment" to GrooveColors.TextDim
-            state.tapeBars == 0 -> "$track selected · double-tap a lane or Record to start a take" to GrooveColors.TextDim
-            else -> "$track selected · tap a lane to pick it, double-tap to record, hold to clear" to GrooveColors.TextDim
+            state.tapeBars == 0 -> "$track · double-tap a lane or Record to start a take" to GrooveColors.TextDim
+            else -> "$track · tap to pick · double-tap to record · hold to clear" to GrooveColors.TextDim
         }
     }
-    BasicText(text, style = d.value(13f, colour), maxLines = 1, overflow = TextOverflow.Ellipsis)
+}
+
+/**
+ * Tape Undo (build-21 rules, [UndoHold]; build-22 moved it from the top bar to the footer): a tap
+ * undoes the last tape action, a long-press redoes it (the chip briefly reads "Redo"); Shift
+ * plays no part, so it never redoes by accident.
+ */
+@Composable
+private fun UndoChip(state: GrooveState) {
+    val d = LocalDesign.current
+    val haptics = LocalHapticFeedback.current
+    val hold = remember { UndoHold() }
+    var readsRedo by remember { mutableStateOf(false) }
+    var flash by remember { mutableIntStateOf(0) }
+    LaunchedEffect(flash) {
+        if (flash == 0) return@LaunchedEffect
+        delay(hold.flashMs)
+        readsRedo = false
+    }
+    // Live while either is possible; a tap only undoes when there is something to undo.
+    val enabled = state.canUndo || state.canRedo
+    FooterChip(
+        if (readsRedo) "Redo" else "Undo",
+        Modifier
+            .semantics {
+                contentDescription = if (state.canUndo) "Undo tape. Hold to redo" else "Nothing to undo. Hold to redo tape"
+                if (!enabled) disabled()
+                onLongClick("Redo tape") { state.tapeRedo(); true }
+            }
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    hold.down(down.uptimeMillis)
+                    var cancelled = false
+                    var upAt = 0L
+                    val released = withTimeoutOrNull(hold.longPressMs) {
+                        val up = waitForUpOrCancellation()
+                        if (up == null) cancelled = true else upAt = up.uptimeMillis
+                        Unit
+                    } != null
+                    when {
+                        cancelled -> hold.cancel()
+                        // A release right at the long-press time can still come back as Redo.
+                        released -> when (hold.up(upAt)) {
+                            UndoHold.Action.Undo -> if (state.canUndo) state.tapeUndo()
+                            UndoHold.Action.Redo -> {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                state.tapeRedo()
+                                readsRedo = true
+                                flash++
+                            }
+                            null -> Unit
+                        }
+                        else -> {
+                            // Held to the long-press time: redo once, now.
+                            if (hold.poll(down.uptimeMillis + hold.longPressMs) == UndoHold.Action.Redo) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                state.tapeRedo()
+                                readsRedo = true
+                            }
+                            val up = waitForUpOrCancellation()
+                            if (up == null) hold.cancel() else hold.up(up.uptimeMillis)
+                            flash++
+                        }
+                    }
+                }
+            },
+        enabled = enabled,
+        leading = { ink -> UndoIcon(readsRedo, ink, Modifier.size(d.dp(14))) },
+    )
+}
+
+/** The mockup's undo arrow (16 × 16); mirrored for redo. */
+@Composable
+private fun UndoIcon(redo: Boolean, colour: Color, modifier: Modifier) {
+    val d = LocalDesign.current
+    val stroke = d.px(1.8f)
+    Canvas(modifier) {
+        val s = size.width / 16f
+        val path = Path().apply {
+            moveTo(5f * s, 4f * s)
+            lineTo(2f * s, 7f * s)
+            lineTo(5f * s, 10f * s)
+            moveTo(2f * s, 7f * s)
+            lineTo(10f * s, 7f * s)
+            arcTo(Rect(6f * s, 7f * s, 14f * s, 15f * s), -90f, 180f, false)
+            lineTo(8f * s, 15f * s)
+        }
+        val style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        if (redo) scale(-1f, 1f) { drawPath(path, colour, style = style) } else drawPath(path, colour, style = style)
+    }
 }
 
 /**
@@ -347,7 +462,7 @@ private fun CommitStrip(position: Int, state: GrooveState, modifier: Modifier) {
     val d = LocalDesign.current
     val haptics = LocalHapticFeedback.current
     val colour = GrooveColors.Strips[position]
-    val shape = RoundedCornerShape(d.dp(14))
+    val shape = d.shape(GrooveRadius.STRIP)
     val slot = state.selectedSlot
     val target = TapeStrips.commitValue(slot)
     val track = TapeView.trackName(state.tapeTrack)
@@ -368,16 +483,16 @@ private fun CommitStrip(position: Int, state: GrooveState, modifier: Modifier) {
                     },
                 )
             }
-            .padding(horizontal = d.dp(6), vertical = d.dp(10)),
+            .padding(horizontal = d.dp(GrooveSpace.PAD), vertical = d.dp(GrooveSpace.ZONE)),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        BasicText(TapeStrips.COMMIT_LABEL, style = d.label(14f, colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
+        BasicText(TapeStrips.COMMIT_LABEL, style = d.buttonLabel(colour, FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Clip)
         Spacer(Modifier.weight(1f))
         BasicText(
             "tap\n$target\n\nhold\nall",
-            style = d.value(11f, GrooveColors.TextDim).copy(textAlign = TextAlign.Center),
+            style = d.meta().copy(textAlign = TextAlign.Center),
         )
         Spacer(Modifier.weight(1f))
-        BasicText("→ $track", style = d.value(13f, GrooveColors.White), maxLines = 1, overflow = TextOverflow.Clip)
+        BasicText("→ $track", style = d.valueText(GrooveColors.White), maxLines = 1, overflow = TextOverflow.Clip)
     }
 }

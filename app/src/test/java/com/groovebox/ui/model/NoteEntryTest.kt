@@ -12,6 +12,17 @@ class NoteEntryTest {
     private val store = PatternStore(sink)
 
     @Test
+    fun setChordLoadsThePenAndAnEmptyListLeavesIt() {
+        memory.setChord(2, listOf(57, 60, 64, 67, 71))
+        assertEquals("at most a 4-note chord", listOf(57, 60, 64, 67), memory.lastNotes(2))
+        assertTrue(memory.hasPlayed(2))
+        memory.setChord(2, emptyList())
+        assertEquals(listOf(57, 60, 64, 67), memory.lastNotes(2))
+        memory.keyDown(2, 45, 0.9f)
+        assertEquals("a key played alone starts a new pen", listOf(45), memory.lastNotes(2))
+    }
+
+    @Test
     fun defaultsBeforeAnyKey() {
         assertFalse(memory.hasPlayed(0))
         assertEquals(listOf(48), memory.lastNotes(0))
