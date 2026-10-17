@@ -93,11 +93,11 @@ probability, and motion values.
 | F3.1 | Clock: the tempo runs from 40.0 to 240.0 BPM in 0.1 steps. Every step event lands on its exact computed sample frame: zero drift over 10 minutes of offline render at any tempo. | seq | [H] |
 | F3.2 | Step rates are 1/8, 1/16 (the default), 1/32 and 1/16 triplet. Pattern length is 1–64 steps. | seq | [H] |
 | F3.3 | Shuffle (0–100%) delays every second step by up to 2/3 of a step, exact to the sample. | seq | [H] |
-| F3.4 | Probability (0–100% per step) uses a seeded random number generator, so offline renders repeat exactly. Over 10,000 plays, the observed rate is within ±2% of the setting. | seq | [H] |
-| F3.5 | Step entry: tapping a pad toggles the step. Shift + pad selects a step, and its note, velocity, probability and motion move onto the strips. Playing a key while a step is selected sets that step's note. | seq, ui | [K] [D] |
+| F3.4 | Chance (0–100%; per hit on the drum slot, one roll per step for a synth chord) uses a seeded random number generator, so offline renders repeat exactly. Over 10,000 plays, the observed rate is within ±2% of the setting. | seq | [H] |
+| F3.5 | Step entry (build-20, ADR 0003): tapping a pad toggles the step (on the drum slot, only the selected sound's lane, chosen on the display's 4 × 4 sound grid; up to 8 sounds per step). Long-press selects steps (latched, several at once); the strips are then Velocity, Length (1/16–16 steps or the pattern gate), Chance and Nudge (±50% of a step), and Shift gives Note and Motion. Playing keys while a synth step is selected sets its notes (a chord of up to 4). Sequencer edits can be undone (32 deep). | seq, ui | [K] [D] |
 | F3.6 | Live record: while recording, notes played on the keys are written to the nearest step, quantised by default. This stays sample-accurate against the clock. | seq | [H] |
 | F3.7 | Motion recording: holding Record and moving a strip records that parameter's value per step, with up to 8 lanes per pattern. On playback, the value applies at the step's start, smoothed per F0.7. | seq, engine | [H] |
-| F3.8 | Step loop: holding two step pads loops that range of steps. Releasing them returns to where the pattern would have been, still in time. | seq, ui | [H] [D] |
+| F3.8 | Step loop: Shift + holding two step pads loops that range of steps. Releasing them returns to where the pattern would have been, still in time. | seq, ui | [H] [D] |
 | F3.9 | A pattern switch made during play takes effect at the end of the current pattern, never mid-pattern. | seq | [H] |
 | F3.10 | The UI only reads the playhead and never drives timing. The playhead on screen is within one display frame of the audio. | seq, ui | [D] |
 
@@ -131,8 +131,8 @@ All tape memory is allocated before playback starts.
 | F5.2 | Overdub mixes new input into the existing audio. Strip 4 sets the Dub level (0–100%), which is how much of the old audio is kept. | tape | [H] |
 | F5.3 | The loop region (start and length in bars) is on strips 2–3. Playback loops it with a crossfade of 20 ms or less, with no click. | tape | [H] |
 | F5.4 | Undo and redo cover the last 8 tape actions (record, overdub, clear) within a 256 MB tape-plus-undo budget. Older actions drop off when the budget is full. Undo takes effect within 100 ms. | tape | [H] |
-| F5.5 | Speed: 0.5×, 1× or 2× with matching pitch change (tape-style), plus reverse. | tape | [H] |
-| F5.6 | Commit loop: one action records the current pattern loop of one slot, or of all slots, onto the selected track for exactly the pattern's length. | tape, seq | [H] [D] |
+| F5.5 | Speed: 0.5×, 1× or 2× with matching pitch change (tape-style), plus reverse. The tape keeps its first take's tempo; at another tempo it plays varispeed (tape-style), and recording needs Speed 1×, Rev off and the tape's tempo. | tape | [H] |
+| F5.6 | Commit loop: one action records the current pattern loop of one slot, or of all slots, onto the selected track, for the pattern's length rounded up to whole bars (the pattern keeps looping to fill them). | tape, seq | [H] [D] |
 
 ---
 

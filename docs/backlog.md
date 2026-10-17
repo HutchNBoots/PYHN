@@ -4,6 +4,7 @@ Last updated 16 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 
 ## Shipped
 
+- [x] build-20: two-thumb sequencer (drum lanes, long-press step select, Velocity/Length/Chance/Nudge strips, undo, Shift+Clear lane); voice-mode fix; tape varispeed with tempo; whole-bar commits; mixer return markers; build number in debug panel.
 - [x] build-19: P1, long-press the Synth display for presets.
 - [x] build-18: v1 close-out: bundled fonts; live Mixer level meters with clip lights; Synth/Drum/Mixer mockups as built; two-thumb review (swipe display to change slot, double-tap a tape lane to record).
 - [x] build-14: CX two-thumb fixes (ADR 0003): strip values under the label; Mixer bars select. Owner: works well.
@@ -12,13 +13,11 @@ Last updated 16 Oct 2026. Feature IDs refer to `docs/feature-spec.md`.
 ## v1 close-out
 
 - [ ] Owner 30-minute soak on the S25+: xruns 0, callback load ≤ 35% average and ≤ 70% peak (F0.3, F0.4).
-- [ ] Changing voice mode cuts held notes.
-- [ ] Tape tempo lock: the tape keeps the tempo of its first take.
-- [ ] A commit of a pattern that isn't a whole number of bars leaves silence.
 - [ ] Two-thumb proposals P2–P6 (ADR 0003): owner to pick.
-- [ ] Mixer DLY/REV columns: the setting marker uses the 0–100% return scale, the meter dB.
 
 ## v1.1
+
+- [ ] Tape: show varispeed in the subtitle; export at the session tempo.
 
 - [ ] Tilt control (calibrate-and-hold, 1–2 parameters).
 - [ ] USB-MIDI in/out and MIDI clock sync (still open: which MIDI gear to test with).

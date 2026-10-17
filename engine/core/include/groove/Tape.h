@@ -434,7 +434,7 @@ private:
     // The head grid at rate 1, in units: whole frames, or half frames at 0.5x.
     int64_t grid(int32_t speed2) const { return (speed2 == 1 || speed2 == -1) ? seqBar_ : unit_; }
     void retime(int64_t step);
-    void jumpTo(int64_t head2, double fadeSeconds);
+    void jumpTo(int64_t pos, double fadeSeconds);
     bool onBarLine(int64_t head) const;
     int64_t framesToBarLine(int64_t head) const;
     bool headRunning() const;
