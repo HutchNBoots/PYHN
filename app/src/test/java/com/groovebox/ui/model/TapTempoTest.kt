@@ -91,4 +91,43 @@ class TapTempoTest {
     fun theLongPressTempoIs120() {
         assertEquals(120.0, TapTempo.LONG_PRESS_BPM, 0.0)
     }
+
+    @Test
+    fun aDownCountsButOnlyTheReleaseApplies() {
+        t.down(0, 120.0); t.release()
+        t.down(600, 120.0); t.release()
+        t.down(1_200, 120.0)
+        assertEquals(3, t.count) // timed at the touch-down
+        assertEquals(100.0, t.release()!!, 1e-9)
+        assertNull(t.release()) // once
+    }
+
+    @Test
+    fun aCancelledTouchAppliesNothing() {
+        t.down(0, 120.0); t.release()
+        t.down(600, 120.0); t.release()
+        t.down(1_200, 120.0)
+        t.cancel()
+        assertNull(t.release())
+        assertEquals(3, t.count) // its time still counts for the next tap
+        t.down(1_800, 120.0)
+        assertEquals(100.0, t.release()!!, 1e-9)
+    }
+
+    @Test
+    fun aLongPressResetNeverAppliesTheTappedTempo() {
+        t.down(0, 120.0); t.release()
+        t.down(600, 120.0); t.release()
+        t.down(1_200, 120.0)
+        t.reset() // the long-press
+        assertNull(t.release())
+        assertEquals(0, t.count)
+    }
+
+    @Test
+    fun theSerialCountsEveryTapPastTheWindow() {
+        repeat(10) { t.tap(it * 500L, 120.0) }
+        assertEquals(6, t.count) // the window is full
+        assertEquals(10, t.serial) // but every tap is new (the idle timer restarts on each)
+    }
 }

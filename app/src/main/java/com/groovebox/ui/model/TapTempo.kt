@@ -17,11 +17,22 @@ class TapTempo(private val maxTaps: Int = 6) {
     var count = 0
         private set
 
-    /** One tap at [nowMs]; returns the tempo to set once there are 3+ taps, else null. */
-    fun tap(nowMs: Long, currentBpm: Double): Double? {
+    /** Every counted tap so far (bounces excluded); it keeps rising once the window is full. */
+    var serial = 0L
+        private set
+
+    /** The tempo the touch now down will set on its release, or null. */
+    private var pending: Double? = null
+
+    /**
+     * A touch-down at [nowMs]: it counts for the timing at once, but the tempo it makes (3+ taps)
+     * only applies on [release], so a long-press (which [reset]s) never applies it.
+     */
+    fun down(nowMs: Long, currentBpm: Double) {
+        pending = null
         if (count > 0) {
             val gap = nowMs - times[count - 1]
-            if (gap in 0 until MIN_INTERVAL_MS) return null
+            if (gap in 0 until MIN_INTERVAL_MS) return
             if (gap > TIMEOUT_MS || gap < 0) count = 0
         }
         if (count == maxTaps) {
@@ -29,13 +40,29 @@ class TapTempo(private val maxTaps: Int = 6) {
             count--
         }
         times[count++] = nowMs
-        if (count < MIN_TAPS) return null
+        serial++
+        if (count < MIN_TAPS) return
         val interval = (times[count - 1] - times[0]).toDouble() / (count - 1)
-        return snap(60_000.0 / interval, currentBpm)
+        pending = snap(60_000.0 / interval, currentBpm)
+    }
+
+    /** The finger lifted: the tempo to set (once), or null. */
+    fun release(): Double? = pending.also { pending = null }
+
+    /** The touch was cancelled (slid off): nothing applies; its time still counts. */
+    fun cancel() {
+        pending = null
+    }
+
+    /** A tap (down and release together); returns the tempo to set once there are 3+ taps, else null. */
+    fun tap(nowMs: Long, currentBpm: Double): Double? {
+        down(nowMs, currentBpm)
+        return release()
     }
 
     fun reset() {
         count = 0
+        pending = null
     }
 
     companion object {

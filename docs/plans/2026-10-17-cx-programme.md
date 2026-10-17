@@ -58,7 +58,8 @@ worked proposals), `docs/reviews/2026-10-17-consistency-review.md`, mockups in `
   first key or pad tap creates the hit).
 - Clear removes notes only (keeps Steps, Rate, Gate, Shuffle, motion); Shift + Clear on a synth slot resets settings.
 - Page follow: Shift + tap the current page toggles follow-the-playhead.
-- Beat edges follow the rate (every 3 at 1/16T, every 2 at 1/8); choosing 1/16T offers Steps 12.
+- Beat edges follow the rate (every 6 at 1/16T, every 2 at 1/8; the engine plays 1/16T at 6 steps a beat,
+  24 a bar); choosing 1/16T offers Steps 24 (16 → 24, 32 → 48, keeping the bars).
 - Pattern row on the display: 16 cells with content dots; tap = switch (queued), Shift + tap = copy the
   current pattern there; long-press = switch all slots at the next bar; hold A + tap B chains A → B.
 - Editing a non-playing pattern: selecting a pattern cell while playing edits it without switching (the

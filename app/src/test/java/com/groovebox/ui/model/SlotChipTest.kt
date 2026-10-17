@@ -27,7 +27,13 @@ class SlotChipTest {
 
     @Test
     fun theChipNamesTheSlotOneBased() {
-        assertEquals("slot 1 ▾", SlotChip.label(0))
+        assertEquals("slot 2 ▾", SlotChip.label(1))
         assertEquals("slot 8 ▾", SlotChip.label(7))
+    }
+
+    @Test
+    fun theKitSlotReadsKitAsCommitDoes() {
+        assertEquals("Kit ▾", SlotChip.label(0))
+        assertEquals("${TapeStrips.commitValue(0)} ▾", SlotChip.label(0))
     }
 }

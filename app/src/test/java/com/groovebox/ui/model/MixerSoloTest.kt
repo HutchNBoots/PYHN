@@ -21,8 +21,13 @@ class MixerSoloTest {
     }
 
     @Test
-    fun aMutedSoloedChannelStaysMuted() {
-        assertTrue(MixerSolo.effectiveMute(1, userMuted = true, soloed = setOf(1)))
+    fun soloWinsOverTheUsersMute() {
+        assertFalse(MixerSolo.effectiveMute(1, userMuted = true, soloed = setOf(1)))
+    }
+
+    @Test
+    fun aMutedChannelNotSoloedStaysMuted() {
+        assertTrue(MixerSolo.effectiveMute(4, userMuted = true, soloed = setOf(1)))
     }
 
     @Test
@@ -56,7 +61,7 @@ class MixerSoloTest {
 
     @Test
     fun theMuteValuesForTheEngine() {
-        val user = BooleanArray(MixLimits.CHANNELS).also { it[4] = true }
+        val user = BooleanArray(MixLimits.CHANNELS).also { it[4] = true; it[1] = true }
         val out = MixerSolo.engineMutes(user, setOf(1))
         assertEquals(MixLimits.CHANNELS, out.size)
         assertEquals(0.0, out[1], 0.0)
@@ -64,6 +69,7 @@ class MixerSoloTest {
         assertEquals(1.0, out[0], 0.0)
         val none = MixerSolo.engineMutes(user, emptySet())
         assertEquals(1.0, none[4], 0.0)
+        assertEquals(1.0, none[1], 0.0)
         assertEquals(0.0, none[0], 0.0)
     }
 }

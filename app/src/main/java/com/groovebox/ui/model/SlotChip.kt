@@ -9,5 +9,6 @@ package com.groovebox.ui.model
 object SlotChip {
     fun next(slot: Int): Int = if (slot !in 0 until SeqLimits.SLOTS) 0 else (slot + 1) % SeqLimits.SLOTS
 
-    fun label(slot: Int): String = "slot ${slot + 1} ▾"
+    /** "slot 2 ▾"; the drum slot reads "Kit ▾", as the Commit strip names it. */
+    fun label(slot: Int): String = if (slot == 0) "${TapeStrips.commitValue(0)} ▾" else "slot ${slot + 1} ▾"
 }

@@ -20,13 +20,15 @@ object MixerSync {
 
 /**
  * Solo on the Mixer (build-22), in the UI only until the engine has a solo (build-23): while any
- * channel is soloed, every channel that is not soloed is muted in the engine. The user's own
- * mutes stay as they were (and are what a session saves), so un-soloing brings them back.
+ * channel is soloed, every channel that is not soloed is muted in the engine and a soloed one
+ * plays even if the user muted it (solo wins). The user's own mutes stay as they were (and are
+ * what a session saves), so un-soloing brings them back.
  * Pure Kotlin.
  */
 object MixerSolo {
+    /** While anything is soloed, solo decides (a soloed channel plays even if muted); else the user's mute. */
     fun effectiveMute(channel: Int, userMuted: Boolean, soloed: Set<Int>): Boolean =
-        userMuted || silencedBySolo(channel, soloed)
+        if (soloed.isEmpty()) userMuted else channel !in soloed
 
     /** Muted only because another channel is soloed. */
     fun silencedBySolo(channel: Int, soloed: Set<Int>): Boolean = soloed.isNotEmpty() && channel !in soloed
