@@ -125,13 +125,14 @@ class GrooveState : KeyListener {
     val userPresets = UserPresetLibrary(edited)
 
     /** The Synth and Tape keys' octave (build-22), −2..+2: only what the keys play; the pattern is untouched. */
-    var keyOctave by mutableIntStateOf(0)
-        private set
+    val keyOctave: Int
+        get() = keyOctaveState
+    private var keyOctaveState by mutableIntStateOf(0)
 
     fun setKeyOctave(octave: Int) {
         val o = KeyOctave.clamp(octave)
-        if (o == keyOctave) return
-        keyOctave = o
+        if (o == keyOctaveState) return
+        keyOctaveState = o
         sessionChanged()
     }
 
@@ -1472,7 +1473,7 @@ class GrooveState : KeyListener {
             store.setTempo(s.tempo, force = true)
             tempoBpm = store.tempo
             keyScale = s.keyScale
-            keyOctave = KeyOctave.clamp(s.ui.keyOctave)
+            keyOctaveState = KeyOctave.clamp(s.ui.keyOctave)
             userPresets.restore(s.userPresets) // before the synths: a slot may be on a user preset
             synths.forEachIndexed { i, synth -> s.synths.getOrNull(i)?.let(synth::restore) ?: synth.refreshFromEngine() }
             drum.restore(s.drum)

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,6 +25,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -32,7 +34,9 @@ import com.groovebox.engine.EngineStats
 import com.groovebox.BuildConfig
 import com.groovebox.engine.NativeEngine
 import com.groovebox.ui.model.DrumLayout
+import com.groovebox.ui.model.KeyOctave
 import com.groovebox.ui.model.KeyboardLayout
+import com.groovebox.ui.model.SlotCopyGesture
 import com.groovebox.ui.model.LatencyStats
 import com.groovebox.ui.model.LatencySummary
 import com.groovebox.ui.model.PresetStripRules
@@ -70,6 +74,22 @@ private class OverlayBounds {
 @Composable
 fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
     val keyboardLayout = remember { KeyboardLayout(lowestNote = DrumLayout.LOWEST_NOTE, octaves = 2) }
+    // Build-22: the Synth and Tape keys follow the keyboard octave (Play rail); Seq keeps its own keys.
+    val playLayout = remember(state.keyOctave) { KeyboardLayout(lowestNote = KeyOctave.lowestNote(state.keyOctave), octaves = 2) }
+    // Build-22: the swipe / save flash on the Synth display (owner decision 1-1A).
+    var flash by remember { mutableStateOf<SlotFlash?>(null) }
+    var flashCount by remember { mutableStateOf(0) }
+    fun showFlash(big: String, small: String) {
+        flashCount++
+        flash = SlotFlash(big, small, flashCount)
+    }
+    LaunchedEffect(flash) {
+        if (flash == null) return@LaunchedEffect
+        delay(FLASH_MS)
+        flash = null
+    }
+    // Build-22: hold one slot button and tap another copies the sound.
+    val slotCopy = remember { SlotCopyGesture(isSynth = { !state.isDrum(it) }) }
     val latency = remember { LatencyStats() }
     var latencySummary by remember { mutableStateOf<LatencySummary?>(null) }
     var stats by remember { mutableStateOf<EngineStats?>(null) }
@@ -151,6 +171,30 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                     }
                 }
             }
+            // Build-22: watches the slot buttons (without consuming) for "hold one, tap another" = copy.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        for (c in event.changes) {
+                            when {
+                                c.changedToDownIgnoreConsumed() -> {
+                                    // Tape shows no slot buttons in the bar (its slot chip): the rects are stale there.
+                                    if (state.screen == Screen.Tape) continue
+                                    val slot = overlay.slots.indexOfFirst { it.contains(c.position) }
+                                    if (slot < 0) continue
+                                    slotCopy.down(c.id.value, slot)?.let { copy ->
+                                        state.copySound(copy.from, copy.to)
+                                        presetSlot = -1
+                                        showFlash("${copy.to + 1}", "${state.synth(copy.from).presetName} copied from ${copy.from + 1}")
+                                    }
+                                }
+                                c.changedToUpIgnoreConsumed() -> slotCopy.up(c.id.value)
+                            }
+                        }
+                    }
+                }
+            }
             // Build-21: while a tape lane asks "Clear T3?", a touch anywhere off the lanes cancels it.
             .pointerInput(state.tapeClearLane >= 0) {
                 if (state.tapeClearLane < 0) return@pointerInput
@@ -185,11 +229,29 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                     when (state.screen) {
                         Screen.Synth -> SynthMiddleRow(
                             state.selectedSynth, audioStarted, debug, middle, state.keyScale.displayName,
-                            onSlotSwipe = { state.swipeSlot(it, includeDrum = false) },
+                            // Build-22: a swipe flashes the slot and preset; finger right on slot 2 goes to the Drum screen (R11).
+                            onSlotSwipe = { steps ->
+                                state.swipeSlot(steps, includeDrum = true)
+                                val slot = state.selectedSlot
+                                if (!state.isDrum(slot)) showFlash("${slot + 1}", state.synth(slot).displayName)
+                            },
                             // ADR 0003 P1: long-press the display for the selected slot's presets.
                             onPresets = { presetSlot = state.selectedSlot },
+                            state = state,
+                            onSavePreset = {
+                                val name = state.saveUserPreset()
+                                showFlash("${state.selectedSlot + 1}", if (name != null) "Saved · $name" else "User presets full")
+                            },
+                            flash = flash,
                         )
-                        Screen.Drum -> DrumMiddleRow(state, audioStarted, debug, middle)
+                        Screen.Drum -> DrumMiddleRow(
+                            state, audioStarted, debug, middle,
+                            // Build-22 (review R11): finger left goes on to synth slot 2.
+                            onSlotSwipe = { steps ->
+                                state.swipeSlot(steps, includeDrum = true)
+                                if (!state.isDrum(state.selectedSlot)) showFlash("${state.selectedSlot + 1}", state.instrumentName(state.selectedSlot))
+                            },
+                        )
                         Screen.Seq -> SeqMiddleRow(state, audioStarted, debug, middle)
                         Screen.Tape -> TapeMiddleRow(state, audioStarted, debug, middle) { overlay.lanes = it }
                         Screen.Mixer -> MixerMiddleRow(state, audioStarted, debug, middle)
@@ -197,7 +259,7 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                     Box(Modifier.fillMaxWidth().weight(1f)) {
                         val keys = Modifier.fillMaxSize().onGloballyPositioned { overlay.keys = it.boundsInRoot() }
                         when (state.screen) {
-                            Screen.Synth -> SlotKeyboard(state, keyboardLayout, keys)
+                            Screen.Synth -> SlotKeyboard(state, playLayout, keys)
                             // Build-21: the kit plays from two pad blocks, not the keys.
                             Screen.Drum -> DrumPads(state, Modifier.fillMaxSize())
                             Screen.Seq -> SeqBottom(state, keyboardLayout, Modifier.fillMaxSize())
@@ -206,7 +268,7 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                                 if (state.isDrum(state.selectedSlot)) {
                                     DrumPads(state, Modifier.fillMaxSize())
                                 } else {
-                                    SlotKeyboard(state, keyboardLayout, keys)
+                                    SlotKeyboard(state, playLayout, keys)
                                 }
                             Screen.Mixer -> MixerPads(state, Modifier.fillMaxSize())
                         }
@@ -217,6 +279,8 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                                 modifier = Modifier
                                     .align(Alignment.TopCenter)
                                     .fillMaxWidth()
+                                    // Build-22 (review R12): the backdrop covers the whole top key row.
+                                    .fillMaxHeight(PRESET_STRIP_HEIGHT)
                                     .onGloballyPositioned { overlay.presets = it.boundsInRoot() },
                             )
                         }
@@ -249,3 +313,9 @@ fun SlotKeyboard(state: GrooveState, layout: KeyboardLayout, modifier: Modifier 
         playable = state::keyPlayable,
     )
 }
+
+/** How long the slot flash stays (build-22). */
+private const val FLASH_MS = 900L
+
+/** The preset strip's share of the keys' height: the sharps row ends at about 45 % (Keyboard.kt). */
+private const val PRESET_STRIP_HEIGHT = 0.48f

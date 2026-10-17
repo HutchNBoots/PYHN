@@ -28,21 +28,105 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.text.font.FontWeight
+import com.groovebox.engine.ParamSpec
+import com.groovebox.ui.model.DrumTapCells
+import com.groovebox.ui.theme.GrooveRadius
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlin.math.roundToInt
 import com.groovebox.engine.NativeEngine
 import com.groovebox.ui.model.DrumLayout
 import com.groovebox.ui.model.ParamMapping
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
 
-/** The Drum screen's middle row (F2.2): the kit display and the four strips for the selected sound. */
+/**
+ * The Drum screen's middle row (F2.2): the kit display and the four strips for the selected
+ * sound. Build-22: a swipe on the display (finger left) goes to synth slot 2 ([onSlotSwipe],
+ * review R11); on the Shift layer Rev and Choke are tap cells ([DrumTapCells]).
+ */
 @Composable
-fun DrumMiddleRow(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, modifier: Modifier = Modifier) {
+fun DrumMiddleRow(
+    state: GrooveState,
+    audioStarted: Boolean,
+    debug: DebugSlot,
+    modifier: Modifier = Modifier,
+    onSlotSwipe: ((Int) -> Unit)? = null,
+) {
     val d = LocalDesign.current
+    val drum = state.drum
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
-        DrumDisplay(state, audioStarted, debug, Modifier.weight(1f).fillMaxHeight())
-        StripRow(state.drum.strips, state.drum)
+        DrumDisplay(
+            state, audioStarted, debug,
+            Modifier.weight(1f).fillMaxHeight().then(if (onSlotSwipe != null) Modifier.slotSwipe(null, onSlotSwipe) else Modifier),
+        )
+        Row(Modifier.width(d.dp(332)).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
+            drum.strips.forEachIndexed { i, spec ->
+                val cell = Modifier.weight(1f).fillMaxHeight()
+                if (spec != null && DrumTapCells.isCell(spec.key)) {
+                    TapCells(i, spec, drum, cell)
+                } else {
+                    ColourStrip(i, spec, drum, cell)
+                }
+            }
+        }
     }
 }
+
+/**
+ * Rev or Choke as tap cells (build-22): the strip's label, then one cell per option, the
+ * current one filled in the strip colour; a tap chooses (one undo step; Rev replays the sound).
+ */
+@Composable
+private fun TapCells(position: Int, spec: ParamSpec, drum: DrumController, modifier: Modifier) {
+    val d = LocalDesign.current
+    val colour = GrooveColors.Strips[position]
+    val options = DrumTapCells.options(spec.key)
+    val current = drum.value(spec).roundToInt()
+    val locked = drum.isLocked(spec)
+    Column(
+        modifier
+            .clip(d.shape(GrooveRadius.STRIP))
+            .background(GrooveColors.Panel)
+            .padding(horizontal = d.dp(6), vertical = d.dp(10)),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(d.dp(6)),
+    ) {
+        BasicText(spec.label, style = d.label(14f, colour, FontWeight.Bold), maxLines = 1)
+        BasicText(
+            if (locked) "locked" else "tap",
+            style = d.meta(GrooveColors.TextDim),
+            maxLines = 1,
+        )
+        // Top to bottom: the last option first, so "On" / "B" sit up and "Off" / "None" down, like a strip.
+        for (i in options.indices.reversed()) {
+            val isOn = i == current
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clip(d.shape(GrooveRadius.CHIP))
+                    .background(if (isOn) colour.copy(alpha = 0.85f) else CellOff)
+                    .semantics {
+                        contentDescription = "${spec.label} ${options[i]}" + (if (isOn) ", on" else ", tap to choose") + (if (locked) ", locked" else "")
+                        selected = isOn
+                    }
+                    .pointerInput(spec, i) { detectTapGestures(onTap = { drum.tapCell(spec, i) }) },
+                contentAlignment = Alignment.Center,
+            ) {
+                BasicText(
+                    options[i],
+                    style = d.value(13f, if (isOn) GrooveColors.Ground else GrooveColors.Text, if (isOn) FontWeight.Medium else FontWeight.Normal),
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+private val CellOff = Color(0xFF26262B)
 
 /**
  * The kit display (build-21, docs/mockups/DrumProposed.dc.html): "Kit", the selected sound and
@@ -70,7 +154,7 @@ fun DrumDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, mod
             DisplayTitle("Kit", debug, Modifier.alignByBaseline())
             DisplaySubtitle("slot 1 · ${DrumLayout.shortName(key)} ($name)", audioStarted, Modifier.weight(1f).alignByBaseline())
             LayerLabel(
-                if (shifted) "SHIFT · pan / start / rev / choke" else "MAIN · pitch / decay / tone / level",
+                if (shifted) "SHIFT · sound" else "MAIN · sound",
                 shifted,
                 Modifier.alignByBaseline(),
             )
@@ -85,7 +169,10 @@ fun DrumDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, mod
                 ThisBeat(state, Modifier.fillMaxWidth())
             }
         }
-        Legend(drum.strips, drum)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(d.dp(10)), verticalAlignment = Alignment.CenterVertically) {
+            SoundUndoChip(state)
+            Box(Modifier.weight(1f)) { Legend(drum.strips, drum) }
+        }
     }
 }
 

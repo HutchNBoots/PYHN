@@ -22,6 +22,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import com.groovebox.ui.model.NoteNames
 import com.groovebox.ui.model.PitchRoll
 import com.groovebox.ui.model.RollBar
+import com.groovebox.ui.model.StepGrid
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
 
@@ -116,14 +117,17 @@ fun PitchRollView(state: GrooveState, modifier: Modifier = Modifier) {
                     }
                 }
             }
-            for (beat in 4 until PitchRoll.COLUMNS step 4) drawRect(RollColors.Beat, Offset(gutter + beat * colW, 0f), Size(one, size.height))
+            // Build-22: beat lines follow the rate (every 3 steps at 1/16T, 2 at 1/8).
+            val beatEvery = StepGrid.beatSteps(settings.rate)
+            for (beat in beatEvery until PitchRoll.COLUMNS step beatEvery) drawRect(RollColors.Beat, Offset(gutter + beat * colW, 0f), Size(one, size.height))
             // Steps past the pattern's end.
             val endCol = (settings.length - page * PitchRoll.COLUMNS).coerceIn(0, PitchRoll.COLUMNS)
             if (endCol < PitchRoll.COLUMNS) {
                 drawRect(RollColors.PastEnd, Offset(gutter + endCol * colW, 0f), Size((PitchRoll.COLUMNS - endCol) * colW, size.height))
             }
             // Read here, in the draw phase, so the playhead moving only redraws.
-            val playCol = state.stepOf(slot) - page * PitchRoll.COLUMNS
+            // Build-22: no playhead over a pattern edited while another plays.
+            val playCol = if (state.editingOther) -1 else state.stepOf(slot) - page * PitchRoll.COLUMNS
             if (playCol in 0 until PitchRoll.COLUMNS) {
                 val x = gutter + playCol * colW
                 drawRect(RollColors.Playhead.copy(alpha = 0.16f), Offset(x, 0f), Size(colW, size.height))

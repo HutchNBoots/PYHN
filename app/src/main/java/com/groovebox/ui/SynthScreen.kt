@@ -31,6 +31,18 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.max
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import com.groovebox.ui.model.KeyOctave
+import com.groovebox.ui.model.PresetGroups
+import com.groovebox.ui.theme.GrooveRadius
 import com.groovebox.engine.ParamSpec
 import com.groovebox.ui.model.SynthSection
 import com.groovebox.ui.theme.Design
@@ -40,6 +52,10 @@ import com.groovebox.ui.theme.LocalDesign
 /**
  * The Synth screen's middle row (docs/mockups/Main.dc.html, ADR 0002): section rail,
  * display and the four colour strips, for one synth slot.
+ *
+ * Build-22: the rail has a fifth item, Play (key, scale, keyboard octave, mode); the display's
+ * long-press opens the presets, Shift + long-press saves a user preset ([onSavePreset]); the
+ * sound Undo chip sits at its bottom-left ([state] given); [flash] is the swipe / save flash.
  */
 @Composable
 fun SynthMiddleRow(
@@ -50,8 +66,24 @@ fun SynthMiddleRow(
     keyName: String? = null,
     onSlotSwipe: ((Int) -> Unit)? = null,
     onPresets: (() -> Unit)? = null,
+    state: GrooveState? = null,
+    onSavePreset: (() -> Unit)? = null,
+    flash: SlotFlash? = null,
 ) {
     val d = LocalDesign.current
+    // A finger on the Undo chip: the display's long-press (presets, save) stands down.
+    var chipHeld by remember { mutableStateOf(false) }
+    val longPress: (() -> Unit)? = if (onPresets == null && onSavePreset == null) {
+        null
+    } else {
+        {
+            when {
+                chipHeld -> Unit
+                controller.shifted && onSavePreset != null -> onSavePreset()
+                else -> onPresets?.invoke()
+            }
+        }
+    }
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
         Rail(
             labels = SynthSection.entries.map { it.label },
@@ -67,15 +99,23 @@ fun SynthMiddleRow(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .then(if (onSlotSwipe != null) Modifier.slotSwipe(onPresets, onSlotSwipe) else Modifier)
+                .then(if (onSlotSwipe != null) Modifier.slotSwipe(longPress, onSlotSwipe) else Modifier)
                 .then(
                     if (onPresets != null) {
-                        Modifier.semantics { onLongClick("Presets for slot ${controller.slot + 1}") { onPresets(); true } }
+                        Modifier.semantics {
+                            onLongClick("Presets for slot ${controller.slot + 1}") { onPresets(); true }
+                            if (onSavePreset != null) {
+                                customActions = listOf(CustomAccessibilityAction("Save as a user preset") { onSavePreset(); true })
+                            }
+                        }
                     } else {
                         Modifier
                     },
                 ),
             keyName = keyName,
+            keyRange = state?.let { KeyOctave.rangeLabel(it.keyOctave) },
+            undo = state?.let { st -> { SoundUndoChip(st, onHeld = { chipHeld = it }) } },
+            flash = flash,
         )
         StripRow(controller.strips, controller)
     }
@@ -111,8 +151,10 @@ fun middleRowHeight(): Dp {
 }
 
 /**
- * A column of four buttons beside the display: the synth's sections, or the sequencer's
- * pages. One tap each; selection happens on touch-down.
+ * A column of buttons beside the display: the synth's sections (five since build-22, with
+ * Play), or the sequencer's pages. One tap each; selection happens on touch-down. Each
+ * button's touch area takes half of the gaps beside it, so the column has no dead bands
+ * (five items in the S25+ middle row are about 37 dp each).
  */
 @Composable
 fun Rail(
@@ -125,15 +167,14 @@ fun Rail(
 ) {
     val d = LocalDesign.current
     val select by rememberUpdatedState(onSelect)
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(d.dp(4))) {
+    val half = d.dp(2)
+    Column(modifier) {
         labels.forEachIndexed { i, label ->
             val isSelected = selected == i
             Box(
                 Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .clip(RoundedCornerShape(d.dp(10)))
-                    .background(if (isSelected) GrooveColors.Text else GrooveColors.Panel)
                     .semantics {
                         contentDescription = description(i)
                         this.selected = isSelected
@@ -143,7 +184,10 @@ fun Rail(
                             awaitFirstDown()
                             select(i)
                         }
-                    },
+                    }
+                    .padding(top = if (i == 0) d.dp(0) else half, bottom = if (i == labels.lastIndex) d.dp(0) else half)
+                    .clip(RoundedCornerShape(d.dp(10)))
+                    .background(if (isSelected) GrooveColors.Text else GrooveColors.Panel),
                 contentAlignment = Alignment.Center,
             ) {
                 val colour = if (isSelected) GrooveColors.Ground else if (mono) GrooveColors.TextDim else GrooveColors.Text
@@ -162,62 +206,108 @@ fun Rail(
 }
 
 /**
- * Owner decision 1: long-press a synth slot to show this thin strip of presets over the keys.
- * A tap loads a preset and keeps the strip open for auditioning. Build-21: playing the keys
- * keeps it open too; it closes on a tap outside the strip and keys, on the slot, or on its own
- * × at the right end ([onClose]). The current preset is cream (coral stays for the selected
- * slot). It never blocks the keys outside its own area.
+ * Owner decision 1: long-press a synth slot (or the display) to show this strip of presets over
+ * the keys. A tap loads a preset and keeps the strip open for auditioning; playing the keys keeps
+ * it open too; it closes on a tap outside the strip and keys, on the slot, or on its own × at the
+ * right end ([onClose]). Build-22: its backdrop covers the whole top key row; the presets sit in
+ * their groups (Start, Bass, Lead, Pad, Pluck, FX, then User for saved ones, scrolled to) with
+ * labels and dividers. The current preset is cream (coral stays for the selected slot).
  */
 @Composable
 fun PresetStrip(controller: SynthController, onClose: () -> Unit, modifier: Modifier) {
     val d = LocalDesign.current
     val close by rememberUpdatedState(onClose)
+    val groups = remember(controller.presetNames) { PresetGroups.groups(controller.presetNames) }
+    val user = controller.library.presets
     Row(
         modifier
-            .height(max(d.dp(44), Design.MinTouch))
-            .clip(RoundedCornerShape(d.dp(10)))
-            .background(GrooveColors.Ground.copy(alpha = 0.96f))
+            .heightIn(min = max(d.dp(44), Design.MinTouch))
+            .clip(d.shape(GrooveRadius.PANEL))
+            .background(GrooveColors.Panel)
             .semantics { contentDescription = "Presets for slot ${controller.slot + 1}" }
-            .padding(horizontal = d.dp(4), vertical = d.dp(4)),
-        horizontalArrangement = Arrangement.spacedBy(d.dp(4)),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(start = d.dp(8), end = d.dp(6), top = d.dp(6), bottom = d.dp(6)),
+        horizontalArrangement = Arrangement.spacedBy(d.dp(6)),
     ) {
         Row(
             Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(d.dp(4)),
-            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(d.dp(6)),
         ) {
-            controller.presetNames.forEachIndexed { i, name ->
-                val isSelected = i == controller.presetIndex
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .clip(RoundedCornerShape(d.dp(8)))
-                        .background(if (isSelected) GrooveColors.Text else GrooveColors.Panel)
-                        .semantics { selected = isSelected }
-                        .pointerInput(controller, i) { detectTapGestures(onTap = { controller.loadPreset(i) }) }
-                        .padding(horizontal = d.dp(12)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    BasicText(
-                        name,
-                        style = d.label(13f, if (isSelected) GrooveColors.Ground else GrooveColors.Text, if (isSelected) FontWeight.Bold else FontWeight.Medium),
-                        maxLines = 1,
-                    )
+            groups.forEachIndexed { g, (name, indexes) ->
+                if (g > 0) Divider()
+                PresetGroup(name, Modifier.fillMaxHeight()) {
+                    for (i in indexes) {
+                        PresetChip(controller.presetNames[i], i == controller.presetIndex && controller.userPresetName == null) {
+                            controller.loadPreset(i)
+                        }
+                    }
+                }
+            }
+            if (user.isNotEmpty()) {
+                Divider()
+                PresetGroup(PresetGroups.USER, Modifier.fillMaxHeight()) {
+                    for (p in user) {
+                        PresetChip(p.name, p.name == controller.userPresetName) { controller.loadUserPreset(p.name) }
+                    }
                 }
             }
         }
         Box(
             Modifier
                 .fillMaxHeight()
-                .width(max(d.dp(44), Design.MinTouch))
-                .clip(RoundedCornerShape(d.dp(8)))
-                .background(GrooveColors.Panel)
+                .width(d.dp(40))
+                .clip(d.shape(GrooveRadius.CONTROL))
+                .background(PresetCell)
                 .semantics { contentDescription = "Close the presets" }
                 .pointerInput(Unit) { detectTapGestures(onTap = { close() }) },
             contentAlignment = Alignment.Center,
         ) {
-            BasicText("×", style = d.label(20f, GrooveColors.Text, FontWeight.Bold), maxLines = 1)
+            BasicText("×", style = d.label(18f, GrooveColors.Text, FontWeight.Bold), maxLines = 1)
         }
+    }
+}
+
+private val PresetCell = Color(0xFF2B2B31)
+private val GroupDivider = Color(0xFF3A3A40)
+
+@Composable
+private fun Divider() {
+    val d = LocalDesign.current
+    Box(Modifier.fillMaxHeight().width(d.dp(1)).background(GroupDivider))
+}
+
+@Composable
+private fun PresetGroup(name: String, modifier: Modifier, chips: @Composable () -> Unit) {
+    val d = LocalDesign.current
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(d.dp(4))) {
+        BasicText(name, style = d.caption(GrooveColors.TextDim), maxLines = 1)
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(d.dp(4))) { chips() }
+    }
+}
+
+@Composable
+private fun PresetChip(name: String, isSelected: Boolean, onTap: () -> Unit) {
+    val d = LocalDesign.current
+    val tap by rememberUpdatedState(onTap)
+    Box(
+        Modifier
+            .width(d.dp(52))
+            .fillMaxHeight()
+            .clip(d.shape(GrooveRadius.CHIP))
+            .background(if (isSelected) GrooveColors.Text else PresetCell)
+            .semantics {
+                contentDescription = name
+                selected = isSelected
+            }
+            .pointerInput(Unit) { detectTapGestures(onTap = { tap() }) }
+            .padding(horizontal = d.dp(2)),
+        contentAlignment = Alignment.Center,
+    ) {
+        BasicText(
+            name,
+            style = d.label(10.5f, if (isSelected) GrooveColors.Ground else GrooveColors.Text, if (isSelected) FontWeight.Bold else FontWeight.Medium)
+                .copy(textAlign = TextAlign.Center, lineHeight = d.sp(11.5f)),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

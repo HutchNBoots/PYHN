@@ -165,7 +165,8 @@ fun LayerLabel(text: String, shifted: Boolean, modifier: Modifier = Modifier) {
 @Composable
 fun KeyName(text: String, modifier: Modifier = Modifier) {
     val d = LocalDesign.current
-    BasicText(text, modifier, style = d.valueText(GrooveColors.Shift, FontWeight.Medium), maxLines = 1)
+    // Cream, not amber: amber is Shift and held keys only (CX review R6).
+    BasicText(text, modifier, style = d.valueText(GrooveColors.Text, FontWeight.Medium), maxLines = 1)
 }
 
 /** One line under the picture: each strip's colour, label and value. */
