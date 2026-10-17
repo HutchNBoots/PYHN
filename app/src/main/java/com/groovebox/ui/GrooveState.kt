@@ -41,6 +41,7 @@ import com.groovebox.ui.model.SeqLimits
 import com.groovebox.ui.model.SlotSwipe
 import com.groovebox.ui.model.Step
 import com.groovebox.ui.model.StepPads
+import com.groovebox.ui.model.TapeClearConfirm
 import com.groovebox.ui.model.TapeOverview
 import com.groovebox.ui.model.TapeRecordAction
 import com.groovebox.ui.model.TapeRecordStatus
@@ -489,15 +490,16 @@ class GrooveState : KeyListener {
     // --- undo (build-20) ---
 
     /**
-     * The Seq footer's Undo chip: undo, or redo with Shift. Recorded writes the engine has
-     * already reported are applied first, so the restore sees them. A tiny window remains: a
-     * note the engine records after this poll but before the restore's commands reach the
-     * audio thread arrives in a later frame, after the restore (it then lands on the restored
-     * mirror; if the restore also rewrote that step, the engine's copy lacks the note).
+     * The Seq footer's Undo chip (build-21): a tap undoes, a long-press redoes ([redo]); Shift
+     * plays no part. Recorded writes the engine has already reported are applied first, so the
+     * restore sees them. A tiny window remains: a note the engine records after this poll but
+     * before the restore's commands reach the audio thread arrives in a later frame, after the
+     * restore (it then lands on the restored mirror; if the restore also rewrote that step, the
+     * engine's copy lacks the note).
      */
-    fun seqUndoPress() {
+    fun seqUndoPress(redo: Boolean) {
         applyRecorded(NativeEngine.pollRecorded())
-        if (shift.shifted) history.redo() else history.undo()
+        if (redo) history.redo() else history.undo()
     }
 
     private fun applyRecorded(recorded: List<RecordedEvent>) {
@@ -507,6 +509,14 @@ class GrooveState : KeyListener {
     // --- step pads ---
 
     fun padDown(pointerId: Int, pad: Int) = handle(pads.down(pointerId, page * PADS + pad, shift.shifted))
+
+    /**
+     * A tap on the Seq display's pitch roll (build-21): on a note, selects or deselects its
+     * [step] as a long-press on its pad would; on no note (null), deselects every step.
+     */
+    fun rollTap(step: Int?) {
+        if (step == null) deselectSteps() else handle(pads.toggleSelection(step))
+    }
 
     /** The pad under [pointerId] was held still for the long-press time. */
     fun padLongPress(pointerId: Int) = handle(pads.longPress(pointerId))
@@ -709,6 +719,11 @@ class GrooveState : KeyListener {
 
     /** Double-tap a tape lane (ADR 0003): arm it, or stop its take; see [TapeView.laneDoubleTap]. */
     fun tapeLaneDoubleTap(lane: Int) {
+        // While a lane asks "Clear T3?", a double-tap is a tap: it confirms there, cancels elsewhere.
+        if (tapeClearLane >= 0) {
+            tapeLaneTap(lane)
+            return
+        }
         val status = tapeStatus
         val busy = if (status == TapeRecordStatus.Recording) tapeRecordingTrack else tapeArmedTrack
         when (val action = TapeView.laneDoubleTap(lane, status, busy, tapeCanRecord)) {
@@ -721,10 +736,10 @@ class GrooveState : KeyListener {
         }
     }
 
-    /** The top bar's Undo button: undo, or redo with Shift. */
-    fun tapeUndoPress() {
-        if (shift.shifted) NativeEngine.tapeRedo() else NativeEngine.tapeUndo()
-    }
+    /** The top bar's Undo button (build-21): a tap undoes, a long-press redoes; Shift plays no part. */
+    fun tapeUndo() = NativeEngine.tapeUndo()
+
+    fun tapeRedo() = NativeEngine.tapeRedo()
 
     /**
      * Commit loop (F5.6) onto the selected track: the selected slot's current pattern, or
@@ -736,7 +751,46 @@ class GrooveState : KeyListener {
         NativeEngine.tapeCommit(tapeTrack, if (allSlots) -1 else selectedSlot)
     }
 
-    /** Clears one track (undoable, so no confirmation). */
+    // --- tape lane clear asks first (build-21) ---
+
+    private val tapeClear = TapeClearConfirm()
+
+    /** The lane showing "Clear T3?" (held, waiting for the confirming tap), or -1. */
+    var tapeClearLane by mutableIntStateOf(-1)
+        private set
+
+    private fun syncTapeClear() {
+        tapeClearLane = tapeClear.armedLane(nowMs) ?: -1
+    }
+
+    /** Touch-down on a lane: selects its track; a touch on another lane cancels an armed clear. */
+    fun tapeLaneDown(lane: Int) {
+        selectTrack(lane)
+        tapeClear.down(lane, nowMs)
+        syncTapeClear()
+    }
+
+    /** A hold on a lane: asks "Clear T3?" when it has audio. Returns true when it asked. */
+    fun tapeLaneHold(lane: Int): Boolean {
+        val asked = tapeClear.hold(lane, trackHasAudio(lane), nowMs)
+        syncTapeClear()
+        return asked
+    }
+
+    /** A tap on a lane: clears it when it is the one asking (within 3 s); any other tap cancels. */
+    fun tapeLaneTap(lane: Int) {
+        val confirmed = tapeClear.tap(lane, nowMs)
+        syncTapeClear()
+        if (confirmed) clearTrack(lane)
+    }
+
+    /** A touch anywhere outside the lanes cancels an armed clear. */
+    fun tapeTouchOutsideLanes() {
+        tapeClear.cancel()
+        syncTapeClear()
+    }
+
+    /** Clears one track (undoable; the lanes ask first, see [tapeLaneHold]). */
     fun clearTrack(track: Int) {
         if (track !in 0 until MixLimits.TRACKS) return
         NativeEngine.tapeClearTrack(track)
@@ -762,6 +816,7 @@ class GrooveState : KeyListener {
         tapeTempoMatches = t.tempoMatches
         for (i in 0 until MixLimits.TRACKS) trackHasAudio[i].value = t.trackHasAudio.getOrElse(i) { false }
         if (exportStatus != ExportStatus.Idle) pollExport()
+        if (tapeClearLane >= 0) syncTapeClear() // the 3 s ran out
 
         if (screen != Screen.Tape) return
         framesSinceOverview++

@@ -1,0 +1,43 @@
+package com.groovebox.ui.model
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PresetStripRulesTest {
+    @Test
+    fun playingTheKeysKeepsTheStripOpenForAuditioning() {
+        assertFalse(PresetStripRules.closesOn(PresetTouch.Keys))
+    }
+
+    @Test
+    fun aTouchOnTheStripItselfKeepsItOpen() {
+        assertFalse(PresetStripRules.closesOn(PresetTouch.Strip))
+    }
+
+    @Test
+    fun itsOwnCloseButtonClosesIt() {
+        assertTrue(PresetStripRules.closesOn(PresetTouch.Close))
+    }
+
+    @Test
+    fun aTapOutsideTheStripAndKeysClosesIt() {
+        // The display, the rail, the strips and the top bar (other slots included).
+        assertTrue(PresetStripRules.closesOn(PresetTouch.Elsewhere))
+    }
+
+    @Test
+    fun tappingTheSlotWhoseStripIsOpenClosesIt() {
+        assertTrue(PresetStripRules.closesOn(PresetTouch.OpenSlot))
+    }
+
+    @Test
+    fun theZoneOfATouch() {
+        // The strip sits over the top of the keys, so it wins where they overlap.
+        assertTrue(PresetStripRules.zone(inStrip = true, inClose = false, inKeys = true, inOpenSlot = false) == PresetTouch.Strip)
+        assertTrue(PresetStripRules.zone(inStrip = true, inClose = true, inKeys = true, inOpenSlot = false) == PresetTouch.Close)
+        assertTrue(PresetStripRules.zone(inStrip = false, inClose = false, inKeys = true, inOpenSlot = false) == PresetTouch.Keys)
+        assertTrue(PresetStripRules.zone(inStrip = false, inClose = false, inKeys = false, inOpenSlot = true) == PresetTouch.OpenSlot)
+        assertTrue(PresetStripRules.zone(inStrip = false, inClose = false, inKeys = false, inOpenSlot = false) == PresetTouch.Elsewhere)
+    }
+}

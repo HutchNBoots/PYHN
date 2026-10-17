@@ -19,7 +19,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,11 +40,14 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -48,10 +56,12 @@ import androidx.compose.ui.unit.max
 import com.groovebox.ui.model.ExportStatus
 import com.groovebox.ui.model.SeqLimits
 import com.groovebox.ui.model.TapeRecordStatus
+import com.groovebox.ui.model.UndoHold
 import com.groovebox.ui.theme.Design
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
 import java.util.Locale
+import kotlinx.coroutines.delay
 
 /**
  * The top bar on every screen (ADR 0002): screen tabs, the 8 sound slots, the tempo
@@ -216,15 +226,25 @@ fun TopBar(
 }
 
 /**
- * The Tape screen's Undo and Export WAV (ADR 0002). Undo undoes the last tape action; with
- * Shift it reads Redo and redoes. Export WAV (F7.1) is live when the tape has audio: a tap
- * renders the loop to a WAV (the button shows the progress) and then opens the share sheet.
+ * The Tape screen's Undo and Export WAV (ADR 0002). Undo (build-21): a tap undoes the last tape
+ * action, a long-press redoes it (the button briefly reads "Redo"); Shift no longer changes it,
+ * so it never redoes by accident ([UndoHold]). Export WAV (F7.1) is live when the tape has
+ * audio: a tap renders the loop to a WAV (the button shows the progress) and then opens the
+ * share sheet.
  */
 @Composable
 private fun TapeButtons(state: GrooveState, height: Dp) {
     val d = LocalDesign.current
-    val redo = state.shift.shifted
-    val enabled = if (redo) state.canRedo else state.canUndo
+    val haptics = LocalHapticFeedback.current
+    val hold = remember { UndoHold() }
+    var readsRedo by remember { mutableStateOf(false) }
+    var flash by remember { mutableIntStateOf(0) }
+    LaunchedEffect(flash) {
+        if (flash == 0) return@LaunchedEffect
+        delay(hold.flashMs)
+        readsRedo = false
+    }
+    val enabled = state.canUndo || state.canRedo
     Row(horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
         BarButton(
             width = d.dp(88),
@@ -233,19 +253,42 @@ private fun TapeButtons(state: GrooveState, height: Dp) {
             modifier = Modifier
                 .alpha(if (enabled) 1f else GrooveColors.INERT_ALPHA)
                 .semantics {
-                    contentDescription = if (redo) "Redo tape" else "Undo tape. With Shift, redo"
+                    contentDescription = "Undo tape. Hold to redo"
                     if (!enabled) disabled()
+                    onLongClick("Redo tape") { state.tapeRedo(); true }
                 }
                 .pointerInput(Unit) {
                     awaitEachGesture {
-                        awaitFirstDown()
-                        state.tapeUndoPress()
+                        val down = awaitFirstDown()
+                        hold.down(down.uptimeMillis)
+                        var cancelled = false
+                        var upAt = 0L
+                        val released = withTimeoutOrNull(hold.longPressMs) {
+                            val up = waitForUpOrCancellation()
+                            if (up == null) cancelled = true else upAt = up.uptimeMillis
+                            Unit
+                        } != null
+                        when {
+                            cancelled -> hold.cancel()
+                            released -> if (hold.up(upAt) == UndoHold.Action.Undo) state.tapeUndo()
+                            else -> {
+                                // Held to the long-press time: redo once, now.
+                                if (hold.poll(down.uptimeMillis + hold.longPressMs) == UndoHold.Action.Redo) {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    state.tapeRedo()
+                                    readsRedo = true
+                                }
+                                val up = waitForUpOrCancellation()
+                                if (up == null) hold.cancel() else hold.up(up.uptimeMillis)
+                                flash++
+                            }
+                        }
                     }
                 },
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
-                UndoIcon(redo, GrooveColors.Text, Modifier.size(d.dp(16)))
-                BasicText(if (redo) "Redo" else "Undo", style = d.label(14f, GrooveColors.Text, FontWeight.Medium))
+                UndoIcon(readsRedo, GrooveColors.Text, Modifier.size(d.dp(16)))
+                BasicText(if (readsRedo) "Redo" else "Undo", style = d.label(14f, GrooveColors.Text, FontWeight.Medium))
             }
         }
         val status = state.exportStatus

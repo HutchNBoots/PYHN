@@ -1,13 +1,16 @@
 package com.groovebox.ui
 
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import com.groovebox.engine.ParamSpec
 import com.groovebox.ui.model.Hit
+import com.groovebox.ui.model.NoteDrag
 import com.groovebox.ui.model.ParamMapping
 import com.groovebox.ui.model.Scale
 import com.groovebox.ui.model.SeqLayer
 import com.groovebox.ui.model.SeqStrips
-import com.groovebox.ui.model.Step
 import kotlin.math.roundToInt
 
 /**
@@ -19,7 +22,8 @@ import kotlin.math.roundToInt
  *    selected steps' hits (right thumb). On the drum slot the selected lane's hit on each
  *    step, created when a step lacks it; on a synth slot every note of each step;
  *  - Shift with steps selected: Note (synth), —, —, Motion (the latest motion lane of the
- *    step selected last).
+ *    step selected last). Note is relative (build-21, [NoteDrag]): a drag moves every note of
+ *    every selected step by the same interval and reads "+2" from where it started.
  * Values shown are the step selected last's. Every edit goes through the pattern store and
  * the undo history; one strip drag is one undo step ([gestureStart] .. [gestureEnd]).
  * Main thread only.
@@ -60,8 +64,40 @@ class SeqController(private val app: GrooveState) : StripHost {
     override fun pending(spec: ParamSpec): Boolean =
         spec.key == SeqStrips.Pattern.key && app.queuedOf(app.selectedSlot) >= 0
 
-    /** A step strip over a step without that hit: dimmed; moving it creates the hit. */
-    override fun dimmed(spec: ParamSpec): Boolean = spec in SeqStrips.step && focusHit() == null
+    /**
+     * A step strip over a step without that hit: dimmed; moving it creates the hit. The Note
+     * strip with no selected step playing a note: dimmed, and it does nothing.
+     */
+    override fun dimmed(spec: ParamSpec): Boolean = when {
+        spec in SeqStrips.step -> focusHit() == null
+        spec.key == SeqStrips.Note.key -> app.selectedSteps.none { app.step(it).on }
+        else -> false
+    }
+
+    /** The Note strip's open drag (build-21). */
+    private val noteDrag = NoteDrag()
+
+    /** The Note strip's value: the open drag's move, 0 between drags. Observable, so the strip follows it. */
+    private var noteMove by mutableIntStateOf(0)
+
+    private fun startNoteDrag() {
+        noteDrag.start(app.selectedSteps.associateWith { app.step(it) })
+        noteMove = 0
+    }
+
+    private fun endNoteDrag() {
+        noteDrag.end()
+        noteMove = 0
+    }
+
+    /** Writes the open Note drag moved by [move] (one undo step with the rest of the drag). */
+    private fun applyNoteDrag(move: Int) {
+        val slot = app.selectedSlot
+        val pattern = app.editPattern
+        val moved = noteDrag.moveTo(move, app.keyScale)
+        noteMove = noteDrag.offset
+        for ((step, s) in moved) app.history.edit(slot, pattern) { app.store.updateStep(slot, pattern, step) { s } }
+    }
 
     /** Open strip drags: spec key → their undo group's token. */
     private val drags = HashMap<String, Int>()
@@ -69,10 +105,12 @@ class SeqController(private val app: GrooveState) : StripHost {
     override fun gestureStart(spec: ParamSpec) {
         drags.remove(spec.key)?.let(app.history::end)
         drags[spec.key] = app.history.begin()
+        if (spec.key == SeqStrips.Note.key) startNoteDrag()
     }
 
     override fun gestureEnd(spec: ParamSpec) {
         drags.remove(spec.key)?.let(app.history::end)
+        if (spec.key == SeqStrips.Note.key) endNoteDrag()
     }
 
     override fun value(spec: ParamSpec): Double {
@@ -93,7 +131,7 @@ class SeqController(private val app: GrooveState) : StripHost {
                 ?: app.patternOf(app.selectedSlot).toDouble()
             SeqStrips.Key.key -> app.keyScale.root.toDouble()
             SeqStrips.ScaleStrip.key -> app.keyScale.scale.ordinal.toDouble()
-            SeqStrips.Note.key -> (focus?.let { app.step(it).notes.firstOrNull() } ?: spec.default.toInt()).toDouble()
+            SeqStrips.Note.key -> noteMove.toDouble()
             SeqStrips.HitVelocity.key -> hit?.velocity?.toDouble() ?: spec.default
             SeqStrips.HitLength.key -> hit?.let { SeqStrips.lengthIndex(it.length).toDouble() } ?: spec.default
             SeqStrips.HitChance.key -> hit?.probability?.toDouble() ?: spec.default
@@ -122,18 +160,14 @@ class SeqController(private val app: GrooveState) : StripHost {
             SeqStrips.Pattern.key -> app.selectPattern(v.roundToInt())
             SeqStrips.Key.key -> app.setKey(v.roundToInt())
             SeqStrips.ScaleStrip.key -> app.setScale(Scale.entries[v.roundToInt().coerceIn(0, Scale.entries.lastIndex)])
-            // F8.4: on a synth slot the chord moves through in-key notes only (chromatic with the scale off).
-            SeqStrips.Note.key -> for (step in app.selectedSteps) {
-                history.edit(slot, pattern) {
-                    store.updateStep(slot, pattern, step) { s ->
-                        if (!s.on) {
-                            s
-                        } else {
-                            val notes = app.keyScale.transpose(s.notes, v.roundToInt(), spec.min.toInt(), spec.max.toInt())
-                            Step(s.hits.zip(notes) { h, n -> h.copy(note = n) })
-                        }
-                    }
-                }
+            // Build-21: relative to where the drag started, in scale degrees with a scale on.
+            SeqStrips.Note.key -> if (noteDrag.active) {
+                applyNoteDrag(v.roundToInt())
+            } else {
+                // Not from a strip gesture: a one-off move from the steps as they are.
+                startNoteDrag()
+                applyNoteDrag(v.roundToInt())
+                endNoteDrag()
             }
             SeqStrips.HitVelocity.key -> app.editSelectedHits { it.copy(velocity = v.toFloat()) }
             SeqStrips.HitLength.key -> app.editSelectedHits { it.copy(length = SeqStrips.lengthAt(v)) }
@@ -142,8 +176,15 @@ class SeqController(private val app: GrooveState) : StripHost {
         }
     }
 
-    /** Double-tap: back to the default; on the Motion strip, removes the selected steps' values. */
+    /**
+     * Double-tap: back to the default; on the Motion strip, removes the selected steps' values;
+     * on the Note strip, the drag back to 0 (no change: a double-tap moves no note).
+     */
     override fun reset(spec: ParamSpec) {
+        if (spec.key == SeqStrips.Note.key) {
+            if (noteDrag.active) applyNoteDrag(0)
+            return
+        }
         val target = SeqStrips.motionTarget(spec)
         if (target != null) {
             val slot = app.selectedSlot

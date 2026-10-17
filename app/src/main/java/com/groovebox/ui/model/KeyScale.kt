@@ -94,24 +94,15 @@ data class KeyScale(val root: Int = 0, val scale: Scale = Scale.Off) {
     }
 
     /**
-     * The Note strip on a synth step (F8.4): the chord moved so its first note lands on the
-     * in-key note nearest [target], each note moving by the same number of scale degrees, so
-     * every note ends in key; kept inside [low]..[high] as a whole. With the scale off this is
-     * the plain chromatic transpose.
+     * [note] moved by [degrees] scale degrees (the Note strip with steps selected, build-21).
+     * An in-key note lands on the in-key note that many degrees away; an out-of-key note (entered
+     * before the scale was on) moves with the in-key note just below it and keeps its distance
+     * above it. With the scale off a degree is a semitone. Not clamped to any range.
      */
-    fun transpose(notes: List<Int>, target: Int, low: Int, high: Int): List<Int> {
-        if (!isOn) return SeqStrips.transpose(notes, target, low, high)
-        val t = snap(target, low, high)
-        if (notes.isEmpty()) return listOf(t)
-        val degrees = notes.map { degreeOf(snap(it, low, high)) }
-        val lowest = degreeOf(step(low - 1, +1, low, high)) // the first in-key note in range
-        val highest = degreeOf(step(high + 1, -1, low, high)) // the last
-        var delta = degreeOf(t) - degrees.first()
-        val lo = degrees.min() + delta
-        val hi = degrees.max() + delta
-        if (lo < lowest) delta += lowest - lo
-        if (hi > highest) delta -= hi - highest
-        return degrees.map { noteOfDegree((it + delta).coerceIn(lowest, highest)) }.distinct()
+    fun moveByDegrees(note: Int, degrees: Int): Int {
+        if (!isOn) return note + degrees
+        val below = if (inKey(note)) note else step(note, -1, Int.MIN_VALUE / 2, note)
+        return noteOfDegree(degreeOf(below) + degrees) + (note - below)
     }
 
     /** Synth notes outside the key that the keyboard must not play (F8.2); drums are never gated (F8.7). */

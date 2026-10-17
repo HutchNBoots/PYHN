@@ -9,42 +9,51 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import com.groovebox.engine.NativeEngine
 import com.groovebox.ui.model.DrumLayout
 import com.groovebox.ui.model.ParamMapping
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
 
-/** The Drum screen's middle row (F2.2): the kit display and the four strips for the key last played. */
+/** The Drum screen's middle row (F2.2): the kit display and the four strips for the selected sound. */
 @Composable
-fun DrumMiddleRow(drum: DrumController, audioStarted: Boolean, debug: DebugSlot, modifier: Modifier = Modifier) {
+fun DrumMiddleRow(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, modifier: Modifier = Modifier) {
     val d = LocalDesign.current
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
-        DrumDisplay(drum, audioStarted, debug, Modifier.weight(1f).fillMaxHeight())
-        StripRow(drum.strips, drum)
+        DrumDisplay(state, audioStarted, debug, Modifier.weight(1f).fillMaxHeight())
+        StripRow(state.drum.strips, state.drum)
     }
 }
 
 /**
- * The kit display: "Kit", the edited key's sound, the layer, a picture of the sound (its
- * ring inside its decay/level envelope, reversed and trimmed as set) and a map of the 16 keys.
+ * The kit display (build-21, docs/mockups/DrumProposed.dc.html): "Kit", the selected sound and
+ * the layer; the kit grid on the left (the same as on Seq: touch a sound to select and hear it);
+ * on the right a picture of the sound (its ring inside its decay/level envelope, reversed and
+ * trimmed as set) over a "this beat" strip of its 16 steps on the current page.
  */
 @Composable
-fun DrumDisplay(drum: DrumController, audioStarted: Boolean, debug: DebugSlot, modifier: Modifier = Modifier) {
+fun DrumDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, modifier: Modifier = Modifier) {
     val d = LocalDesign.current
+    val drum = state.drum
     val key = drum.selectedKey
     val name = drum.soundName(key)
     val shifted = drum.shifted
@@ -53,29 +62,84 @@ fun DrumDisplay(drum: DrumController, audioStarted: Boolean, debug: DebugSlot, m
         modifier
             .clip(RoundedCornerShape(d.dp(16)))
             .background(GrooveColors.Panel)
-            .padding(horizontal = d.dp(18), vertical = d.dp(14))
+            .padding(horizontal = d.dp(16), vertical = d.dp(12))
             .semantics { contentDescription = "Drum display, $name" },
         verticalArrangement = Arrangement.spacedBy(d.dp(8)),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
             DisplayTitle("Kit", debug, Modifier.alignByBaseline())
-            DisplaySubtitle("$name · key ${key + 1} · slot 1", audioStarted, Modifier.weight(1f).alignByBaseline())
+            DisplaySubtitle("slot 1 · ${DrumLayout.shortName(key)} ($name)", audioStarted, Modifier.weight(1f).alignByBaseline())
             LayerLabel(
                 if (shifted) "SHIFT · pan / start / rev / choke" else "MAIN · pitch / decay / tone / level",
                 shifted,
                 Modifier.alignByBaseline(),
             )
         }
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            DrumPicture(drum, key, Modifier.fillMaxSize())
-            if (debug.open) debug.panel()
+        Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(d.dp(14))) {
+            KitGrid(state, Modifier.width(d.dp(212)).fillMaxHeight())
+            Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(d.dp(6))) {
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    DrumPicture(drum, Modifier.fillMaxSize())
+                    if (debug.open) debug.panel()
+                }
+                ThisBeat(state, Modifier.fillMaxWidth())
+            }
         }
         Legend(drum.strips, drum)
     }
 }
 
+/**
+ * One row of the selected sound's 16 steps on the current page of the kit's current pattern:
+ * a hit is lit by its velocity, the playhead's step is ringed green, steps past the pattern's
+ * end are faint. Read only (the pads and the Seq screen edit steps).
+ */
 @Composable
-private fun DrumPicture(drum: DrumController, key: Int, modifier: Modifier) {
+private fun ThisBeat(state: GrooveState, modifier: Modifier) {
+    val d = LocalDesign.current
+    state.revision // recompose on pattern edits
+    val slot = NativeEngine.DRUM_SLOT
+    val pattern = state.patternOf(slot)
+    val note = state.laneNote
+    val first = state.page * PAGE_STEPS
+    val length = state.store.settings(slot, pattern).length
+    val velocities = FloatArray(PAGE_STEPS) { c ->
+        state.store.step(slot, pattern, first + c).hits.firstOrNull { it.note == note }?.velocity ?: 0f
+    }
+    val label = d.value(10f, GrooveColors.TextDim)
+    val playhead = state.stepOf(slot) - first
+    Row(
+        modifier.semantics {
+            contentDescription = "This beat: ${velocities.count { it > 0f }} hits of ${DrumLayout.shortName(state.laneKey)} on page ${state.page + 1}"
+        },
+        horizontalArrangement = Arrangement.spacedBy(d.dp(6)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicText("this beat", Modifier.width(d.dp(64)), style = label, maxLines = 1)
+        Canvas(Modifier.weight(1f).height(d.dp(14))) {
+            val gap = d.px(6f)
+            val w = (size.width - gap * 15) / 16
+            val r = CornerRadius(d.px(3f))
+            for (c in 0 until PAGE_STEPS) {
+                val x = c * (w + gap)
+                val v = velocities[c]
+                val inside = first + c < length
+                val colour = if (v > 0f) GrooveColors.Text.copy(alpha = 0.35f + 0.65f * v.coerceIn(0f, 1f)) else BeatOff
+                drawRoundRect(colour, Offset(x, 0f), Size(w, size.height), r, alpha = if (inside) 1f else 0.35f)
+                if (c == playhead) {
+                    val s = d.px(2f)
+                    drawRoundRect(GrooveColors.Strips[2], Offset(x + s / 2, s / 2), Size(w - s, size.height - s), r, style = Stroke(s))
+                }
+            }
+        }
+    }
+}
+
+private val BeatOff = Color(0xFF26262B)
+private const val PAGE_STEPS = 16
+
+@Composable
+private fun DrumPicture(drum: DrumController, modifier: Modifier) {
     val d = LocalDesign.current
     val pitch = drum.value("drum.pitch")
     val decay = drum.value("drum.decay")
@@ -86,14 +150,10 @@ private fun DrumPicture(drum: DrumController, key: Int, modifier: Modifier) {
     val wave = remember(pitch, decay, level, start, reverse) { DrumLayout.shape(pitch, decay, level, start, reverse) }
     val env = remember(decay, level, start, reverse) { DrumLayout.envelope(decay, level, start, reverse) }
     val stroke = d.px(3f)
-    val gap = d.px(20f)
     val divider = d.px(2f)
-    val cell = d.px(16f)
-    val cellGap = d.px(5f)
 
     Canvas(modifier) {
-        val mapWidth = 4 * cell + 3 * cellGap
-        val w = size.width - mapWidth - gap
+        val w = size.width
         val h = size.height
         val mid = h / 2
         val amp = mid - stroke * 2
@@ -121,20 +181,5 @@ private fun DrumPicture(drum: DrumController, key: Int, modifier: Modifier) {
         }
         drawPath(line, GrooveColors.Strips[0], alpha = (0.45 + 0.55 * tone).toFloat(), style = Stroke(stroke, join = StrokeJoin.Round))
         drawLine(GrooveColors.Divider, Offset(0f, mid), Offset(w, mid), divider / 2)
-
-        // Map of the 16 keys, lowest at the bottom left; the edited key in amber.
-        val left = size.width - mapWidth
-        drawLine(GrooveColors.Divider, Offset(left - gap / 2, h * 0.05f), Offset(left - gap / 2, h * 0.95f), divider)
-        val top = (h - (4 * cell + 3 * cellGap)) / 2
-        for (k in 0 until DrumLayout.KEY_COUNT) {
-            val col = k % 4
-            val row = 3 - k / 4
-            drawRoundRect(
-                if (k == key) GrooveColors.Shift else GrooveColors.Divider,
-                topLeft = Offset(left + col * (cell + cellGap), top + row * (cell + cellGap)),
-                size = Size(cell, cell),
-                cornerRadius = CornerRadius(d.px(4f)),
-            )
-        }
     }
 }

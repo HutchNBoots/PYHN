@@ -35,6 +35,8 @@ import com.groovebox.ui.model.DrumLayout
 import com.groovebox.ui.model.KeyboardLayout
 import com.groovebox.ui.model.LatencyStats
 import com.groovebox.ui.model.LatencySummary
+import com.groovebox.ui.model.PresetStripRules
+import com.groovebox.ui.model.PresetTouch
 import com.groovebox.ui.model.SeqLimits
 import com.groovebox.ui.theme.Design
 import com.groovebox.ui.theme.GrooveColors
@@ -43,11 +45,22 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlin.math.min
 
-/** Where the preset strip and the slot buttons are, so a touch anywhere else can close the strip. */
+/** Where the preset strip, the keys and the slot buttons are, so a touch elsewhere can close the strip. */
 private class OverlayBounds {
     var presets: Rect = Rect.Zero
+    var keys: Rect = Rect.Zero
+
+    /** The tape lanes: a touch outside them cancels an armed lane clear (build-21). */
+    var lanes: Rect = Rect.Zero
     val slots = Array(SeqLimits.SLOTS) { Rect.Zero }
-    fun contains(p: Offset, slot: Int) = presets.contains(p) || slots.getOrNull(slot)?.contains(p) == true
+
+    /** Build-21: where a touch lands while [slot]'s strip is open ([keysShown]: the keys are on screen). */
+    fun zone(p: Offset, slot: Int, keysShown: Boolean): PresetTouch = PresetStripRules.zone(
+        inStrip = presets.contains(p),
+        inClose = false, // the strip's × closes it from its own tap
+        inKeys = keysShown && keys.contains(p),
+        inOpenSlot = slots.getOrNull(slot)?.contains(p) == true,
+    )
 }
 
 /**
@@ -119,15 +132,34 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
         Modifier
             .fillMaxSize()
             .background(GrooveColors.Ground)
-            // Watches touches before the children see them, without consuming any,
-            // so a key touched to close the preset strip still plays.
+            // Watches touches before the children see them, without consuming any. Build-21:
+            // playing the keys keeps the strip open so presets can be auditioned; a touch
+            // anywhere else but the strip closes it (the open slot's tap and the × close it
+            // from their own handlers).
             .pointerInput(presetSlot) {
                 if (presetSlot < 0) return@pointerInput
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.changes.any { it.changedToDownIgnoreConsumed() && !overlay.contains(it.position, presetSlot) }) {
+                        val keysShown = state.screen == Screen.Synth || (state.screen == Screen.Tape && !state.isDrum(state.selectedSlot))
+                        if (event.changes.any {
+                                it.changedToDownIgnoreConsumed() &&
+                                    overlay.zone(it.position, presetSlot, keysShown) == PresetTouch.Elsewhere
+                            }
+                        ) {
                             presetSlot = -1
+                        }
+                    }
+                }
+            }
+            // Build-21: while a tape lane asks "Clear T3?", a touch anywhere off the lanes cancels it.
+            .pointerInput(state.tapeClearLane >= 0) {
+                if (state.tapeClearLane < 0) return@pointerInput
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.any { it.changedToDownIgnoreConsumed() && !overlay.lanes.contains(it.position) }) {
+                            state.tapeTouchOutsideLanes()
                         }
                     }
                 }
@@ -158,23 +190,32 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                             // ADR 0003 P1: long-press the display for the selected slot's presets.
                             onPresets = { presetSlot = state.selectedSlot },
                         )
-                        Screen.Drum -> DrumMiddleRow(state.drum, audioStarted, debug, middle)
+                        Screen.Drum -> DrumMiddleRow(state, audioStarted, debug, middle)
                         Screen.Seq -> SeqMiddleRow(state, audioStarted, debug, middle)
-                        Screen.Tape -> TapeMiddleRow(state, audioStarted, debug, middle)
+                        Screen.Tape -> TapeMiddleRow(state, audioStarted, debug, middle) { overlay.lanes = it }
                         Screen.Mixer -> MixerMiddleRow(state, audioStarted, debug, middle)
                     }
                     Box(Modifier.fillMaxWidth().weight(1f)) {
+                        val keys = Modifier.fillMaxSize().onGloballyPositioned { overlay.keys = it.boundsInRoot() }
                         when (state.screen) {
-                            Screen.Synth, Screen.Drum -> SlotKeyboard(state, keyboardLayout, Modifier.fillMaxSize())
+                            Screen.Synth -> SlotKeyboard(state, keyboardLayout, keys)
+                            // Build-21: the kit plays from two pad blocks, not the keys.
+                            Screen.Drum -> DrumPads(state, Modifier.fillMaxSize())
                             Screen.Seq -> SeqBottom(state, keyboardLayout, Modifier.fillMaxSize())
-                            // The keys play the selected slot over the tape.
-                            Screen.Tape -> SlotKeyboard(state, keyboardLayout, Modifier.fillMaxSize())
+                            // The keys (the pads with slot 1 selected) play the selected slot over the tape.
+                            Screen.Tape ->
+                                if (state.isDrum(state.selectedSlot)) {
+                                    DrumPads(state, Modifier.fillMaxSize())
+                                } else {
+                                    SlotKeyboard(state, keyboardLayout, keys)
+                                }
                             Screen.Mixer -> MixerPads(state, Modifier.fillMaxSize())
                         }
                         if (presetSlot >= 0) {
                             PresetStrip(
                                 state.synth(presetSlot),
-                                Modifier
+                                onClose = { presetSlot = -1 },
+                                modifier = Modifier
                                     .align(Alignment.TopCenter)
                                     .fillMaxWidth()
                                     .onGloballyPositioned { overlay.presets = it.boundsInRoot() },

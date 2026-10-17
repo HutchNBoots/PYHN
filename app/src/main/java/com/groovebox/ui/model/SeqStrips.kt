@@ -31,8 +31,12 @@ object SeqStrips {
     val Tempo = ParamSpec(4, "seq.tempo", "Tempo", SeqLimits.MIN_TEMPO, SeqLimits.MAX_TEMPO, SeqLimits.DEFAULT_TEMPO, Curve.Linear, "bpm")
     val Pattern = ParamSpec(5, "seq.pattern", "Pattern", 0.0, (SeqLimits.PATTERNS - 1).toDouble(), 0.0, Curve.Int, "pattern")
 
-    /** Synth step note: C1..C7. Moving it transposes the whole chord. */
-    val Note = ParamSpec(6, "seq.note", "Note", 24.0, 96.0, 60.0, Curve.Int, "note")
+    /**
+     * The selected synth steps' Note strip (build-21): relative. Its value is the current drag's
+     * move, in semitones (scale degrees with a scale on), 0 where the drag started; every note
+     * of every selected step moves by it, within [NOTE_LOW]..[NOTE_HIGH].
+     */
+    val Note = ParamSpec(6, "seq.note", "Note", -MAX_NOTE_MOVE.toDouble(), MAX_NOTE_MOVE.toDouble(), 0.0, Curve.Int, "st")
 
     /** The session's key (F8): its root, 0..11 = C..B. Shift layer, no step selected. */
     val Key = ParamSpec(
@@ -44,6 +48,13 @@ object SeqStrips {
         11, "seq.scale", "Scale", 0.0, (Scale.entries.size - 1).toDouble(), 0.0, Curve.Enum,
         Scale.entries.joinToString("|") { it.label },
     )
+
+    /** The furthest one Note drag moves (either way); 1.5 strip heights cover twice this. */
+    const val MAX_NOTE_MOVE = 36
+
+    /** Synth step notes stay inside C1..C7. */
+    const val NOTE_LOW = 24
+    const val NOTE_HIGH = 96
 
     /** Key prefix of the Motion strip's spec; the rest of the key is the lane's target. */
     const val MOTION_PREFIX = "seq.motion:"
@@ -117,6 +128,13 @@ object SeqStrips {
         }
     }
 
+    /** The Note strip's move: "+2", "−5", "0". */
+    fun formatMove(move: Int): String = when {
+        move > 0 -> "+$move"
+        move < 0 -> "\u2212${-move}"
+        else -> "0"
+    }
+
     fun percent(v: Double): String = "${(v * 100).roundToInt()}%"
 
     /**
@@ -135,24 +153,13 @@ object SeqStrips {
         Rate.key -> RATE_NAMES.getOrElse(value.roundToInt()) { "?" }
         Tempo.key -> String.format(Locale.ROOT, "%.1f", value)
         Pattern.key -> (value.roundToInt() + 1).toString()
-        Note.key -> NoteNames.name(value.roundToInt())
+        Note.key -> formatMove(value.roundToInt())
         HitVelocity.key, HitChance.key -> percent(value)
         HitLength.key -> formatLength(lengthAt(value))
         HitNudge.key -> formatNudge(value.toFloat())
         Key.key -> KeyScale.KEY_NAMES[value.roundToInt().coerceIn(0, 11)]
         ScaleStrip.key -> Scale.entries[value.roundToInt().coerceIn(0, Scale.entries.lastIndex)].label
         else -> ParamMapping.format(spec, value)
-    }
-
-    /** The chord moved so its first note lands on [root], kept inside [low]..[high] as a whole. */
-    fun transpose(notes: List<Int>, root: Int, low: Int, high: Int): List<Int> {
-        if (notes.isEmpty()) return listOf(root.coerceIn(low, high))
-        var delta = root - notes.first()
-        val lo = notes.min() + delta
-        val hi = notes.max() + delta
-        if (lo < low) delta += low - lo
-        if (hi > high) delta -= hi - high
-        return notes.map { (it + delta).coerceIn(low, high) }
     }
 }
 
@@ -161,4 +168,32 @@ object NoteNames {
     private val NAMES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
     fun name(note: Int): String = NAMES[Math.floorMod(note, 12)] + (Math.floorDiv(note, 12) - 1)
+
+    /**
+     * What a lit synth step pad reads (build-21): its note ("A2"); for several notes a simple
+     * major or minor triad by name ("Am", "C", in any voicing or doubling) when the name has at
+     * most [maxChars] characters, else the lowest note and the count ("C3·3").
+     */
+    fun padLabel(notes: List<Int>, maxChars: Int = 4): String {
+        if (notes.isEmpty()) return ""
+        val lowest = notes.min()
+        if (notes.size == 1) return name(lowest)
+        triad(notes)?.takeIf { it.length <= maxChars }?.let { return it }
+        return "${name(lowest)}\u00B7${notes.size}"
+    }
+
+    /** "C" or "Am" when [notes]' pitch classes are exactly a major or minor triad, else null. */
+    private fun triad(notes: List<Int>): String? {
+        val classes = notes.map { Math.floorMod(it, 12) }.toSet()
+        if (classes.size != 3) return null
+        for (root in classes) {
+            val shape = classes.map { Math.floorMod(it - root, 12) }.toSet()
+            if (shape == MAJOR) return NAMES[root]
+            if (shape == MINOR) return NAMES[root] + "m"
+        }
+        return null
+    }
+
+    private val MAJOR = setOf(0, 4, 7)
+    private val MINOR = setOf(0, 3, 7)
 }

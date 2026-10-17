@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.setValue
 import com.groovebox.engine.NativeEngine
 import com.groovebox.engine.ParamSpec
@@ -41,8 +42,17 @@ class DrumController(
 
     /** Short key labels for the keyboard, by MIDI note. */
     val keyLabels: Map<Int, String> by lazy {
-        soundNames.mapIndexed { key, name -> DrumLayout.noteOf(key) to DrumLayout.shortName(name) }.toMap()
+        (0 until DrumLayout.KEY_COUNT).associate { key -> DrumLayout.noteOf(key) to DrumLayout.shortName(key) }
     }
+
+    private val heldPads = mutableStateMapOf<Int, Unit>()
+
+    /** A Drum pad (build-21) is held: it lights while held. Set by the pads only. */
+    fun padHeld(key: Int, held: Boolean) {
+        if (held) heldPads[key] = Unit else heldPads.remove(key)
+    }
+
+    fun isPadHeld(key: Int): Boolean = key in heldPads
 
     fun soundName(key: Int): String = soundNames.getOrNull(key)?.takeIf { it.isNotBlank() } ?: "Sound ${key + 1}"
 

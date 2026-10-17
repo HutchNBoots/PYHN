@@ -156,36 +156,23 @@ class KeyScaleTest {
         assertEquals(67, penta.snap(66, 24, 96))
     }
 
+    /** Build-21 Note strip: degrees keep in-key notes in key, step monotonically, and 0 changes nothing. */
     @Test
-    fun transposeMovesByScaleDegreesSoEveryNoteIsInKey() {
-        val c = KeyScale(0, Scale.Major)
-        // C E G moved to D: D F A (diatonic, not D F# A).
-        assertEquals(listOf(62, 65, 69), c.transpose(listOf(60, 64, 67), 62, 24, 96))
-        // An out-of-key target snaps first: C♯ → C.
-        assertEquals(listOf(60, 64, 67), c.transpose(listOf(62, 65, 69), 61, 24, 96))
-        assertEquals(listOf(62), c.transpose(emptyList(), 62, 24, 96))
-        // Kept inside the range as a whole.
-        assertEquals(listOf(89, 93, 96), c.transpose(listOf(60, 64, 67), 96, 24, 96))
-        assertEquals(listOf(24, 28, 31), c.transpose(listOf(60, 64, 67), 10, 24, 96))
-        // Off is the chromatic transpose.
-        assertEquals(SeqStrips.transpose(listOf(60, 64, 67), 62, 24, 96), KeyScale.OFF.transpose(listOf(60, 64, 67), 62, 24, 96))
-    }
-
-    /** F8.4 for the Note strip: any target lands on an in-key first note, monotonic over the strip. */
-    @Test
-    fun noteStripTransposeIsInKeyAndMonotonic() {
+    fun movingByDegreesIsInKeyMonotonicAndZeroIsIdentity() {
         for (scale in Scale.entries) for (root in 0..11) {
             val k = KeyScale(root, scale)
-            for (chord in listOf(listOf(60), listOf(60, 63, 67), listOf(61, 66))) {
+            for (note in 24..96) {
+                assertEquals("$root $scale $note", note, k.moveByDegrees(note, 0))
                 var last = Int.MIN_VALUE
-                for (target in 24..96) {
-                    val out = k.transpose(chord, target, 24, 96)
-                    assertTrue("$root $scale $chord $target $out", out.all { k.inKey(it) && it in 24..96 })
-                    assertTrue("monotonic $root $scale $chord $target", out.first() >= last)
-                    last = out.first()
+                for (d in -20..20) {
+                    val out = k.moveByDegrees(note, d)
+                    if (k.inKey(note)) assertTrue("$root $scale $note $d", k.inKey(out))
+                    assertTrue("monotonic $root $scale $note $d", out > last)
+                    last = out
                 }
             }
         }
+        assertEquals(62, KeyScale.OFF.moveByDegrees(60, 2))
     }
 
     @Test

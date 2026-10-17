@@ -124,6 +124,12 @@ class StepPads {
         return if (hadLoop) PadAction.ClearLoop else null
     }
 
+    /** A tap on [step]'s note in the Seq display's pitch roll (build-21): selects or deselects it, as a long-press would. */
+    fun toggleSelection(step: Int): PadAction.Selection {
+        if (!selection.remove(step)) selection.add(step)
+        return PadAction.Selection(selected)
+    }
+
     fun clearSelection() {
         selection.clear()
         // A pad still held keeps its gesture, but no longer adds pads.

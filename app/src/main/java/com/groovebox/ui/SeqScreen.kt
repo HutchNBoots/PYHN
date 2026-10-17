@@ -5,7 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +22,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -31,22 +37,26 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import com.groovebox.ui.model.DrumLayout
 import com.groovebox.ui.model.KeyboardLayout
 import com.groovebox.ui.model.NoteNames
 import com.groovebox.ui.model.PadMark
 import com.groovebox.ui.model.SeqLayer
 import com.groovebox.ui.model.SeqStrips
+import com.groovebox.ui.model.UndoHold
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 /** Colours of the Sequencer mockup (docs/mockups/Sequencer.dc.html) beyond the shared palette. */
@@ -155,13 +165,14 @@ private fun SeqDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugSl
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             if (drum) {
-                // Build-20 lanes: the kit's 16 sounds on the left (left thumb, ADR 0003).
+                // Build-20 lanes: the kit's 16 sounds on the left (left thumb, ADR 0003); build-21: the shared kit grid.
                 Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(d.dp(12))) {
-                    SoundGrid(state, Modifier.width(d.dp(196)).fillMaxHeight())
+                    KitGrid(state, Modifier.width(d.dp(196)).fillMaxHeight())
                     Overview(state, Modifier.weight(1f))
                 }
             } else {
-                Overview(state, Modifier.fillMaxWidth())
+                // Build-21: a synth slot shows its notes as a pitch roll of the current page.
+                PitchRollView(state, Modifier.fillMaxSize())
             }
             if (debug.open) debug.panel()
         }
@@ -170,8 +181,8 @@ private fun SeqDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugSl
 }
 
 /**
- * A tap on this element that no child took (the sound grid consumes its touches) and that
- * did not move past the touch slop (a slot swipe).
+ * A tap on this element that no child took (the kit grid consumes its touches, the pitch roll
+ * and the Undo chip their releases) and that did not move past the touch slop (a slot swipe).
  */
 private fun Modifier.displayTap(onTap: () -> Unit): Modifier = pointerInput(Unit) {
     awaitEachGesture {
@@ -182,85 +193,9 @@ private fun Modifier.displayTap(onTap: () -> Unit): Modifier = pointerInput(Unit
             val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: return@awaitEachGesture
             if ((change.position - down.position).getDistance() > slop) return@awaitEachGesture
             if (!change.pressed) {
-                onTap()
+                if (!change.isConsumed) onTap()
                 return@awaitEachGesture
             }
-        }
-    }
-}
-
-/**
- * The kit's 16 sounds, 4 × 4 (build-20). Touching one makes it the lane the pads show and
- * plays it, like its key; a dot marks the sounds the pattern plays somewhere. Its touches are
- * consumed, so they neither swipe the slot nor deselect.
- */
-@Composable
-private fun SoundGrid(state: GrooveState, modifier: Modifier) {
-    val d = LocalDesign.current
-    val used = state.notesInPattern()
-    val lane = state.laneKey
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(d.dp(4))) {
-        for (row in 0 until 4) {
-            Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(d.dp(4))) {
-                for (col in 0 until 4) {
-                    val key = row * 4 + col
-                    SoundCell(state, key, key == lane, DrumLayout.noteOf(key) in used)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RowScope.SoundCell(state: GrooveState, key: Int, isLane: Boolean, used: Boolean) {
-    val d = LocalDesign.current
-    val name = state.drum.keyLabels[DrumLayout.noteOf(key)] ?: "${key + 1}"
-    Box(
-        Modifier
-            .weight(1f)
-            .fillMaxHeight()
-            .clip(RoundedCornerShape(d.dp(7)))
-            .background(if (isLane) GrooveColors.Text else SeqColors.Cell)
-            .semantics {
-                contentDescription = state.drum.soundName(key) +
-                    (if (isLane) ", the lane the pads show" else ", tap to show its lane and play it") +
-                    (if (used) ", in this pattern" else "")
-                selected = isLane
-            }
-            .pointerInput(key) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    state.laneDown(key)
-                    try {
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            event.changes.forEach { it.consume() }
-                            val change = event.changes.firstOrNull { it.id == down.id }
-                            if (change == null || !change.pressed) break
-                        }
-                    } finally {
-                        state.laneUp(key)
-                    }
-                }
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        BasicText(
-            name,
-            style = d.value(11f, if (isLane) GrooveColors.Ground else GrooveColors.TextDim, if (isLane) FontWeight.Medium else FontWeight.Normal),
-            maxLines = 1,
-            overflow = TextOverflow.Clip,
-        )
-        if (used) {
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(d.dp(3))
-                    .size(d.dp(4))
-                    .clip(CircleShape)
-                    .background(if (isLane) GrooveColors.Ground else GrooveColors.TextDim),
-            )
         }
     }
 }
@@ -381,7 +316,7 @@ private fun ClearButton(state: GrooveState, modifier: Modifier) {
 }
 
 /**
- * The Seq footer: the Undo chip at its left end (left thumb; Shift = redo), then the selected
+ * The Seq footer: the Undo chip at its left end (left thumb; hold = redo), then the selected
  * step's values and motion lane (or the pattern's settings when none is selected).
  */
 @Composable
@@ -437,33 +372,70 @@ private fun Footer(state: GrooveState) {
     }
 }
 
-/** Undo (Shift: Redo) of the sequencer's edits, at the left end of the footer (build-20). Acts on touch-down. */
+/**
+ * Undo of the sequencer's edits, at the left end of the footer (build-20, left thumb). Build-21:
+ * a tap undoes, a long-press redoes (the chip briefly reads "Redo"); Shift no longer changes it,
+ * so it never redoes by accident ([UndoHold], as the Tape screen's Undo). The undo acts on the
+ * release, as it must wait to know the touch is not a long-press. Its touches are consumed, so
+ * they neither deselect steps nor swipe the slot.
+ */
 @Composable
 private fun UndoChip(state: GrooveState) {
     val d = LocalDesign.current
-    val redo = state.shift.shifted
-    val enabled = if (redo) state.seqCanRedo else state.seqCanUndo
-    val label = if (redo) "Redo" else "Undo"
+    val haptics = LocalHapticFeedback.current
+    val hold = remember { UndoHold() }
+    var readsRedo by remember { mutableStateOf(false) }
+    var flash by remember { mutableIntStateOf(0) }
+    LaunchedEffect(flash) {
+        if (flash == 0) return@LaunchedEffect
+        delay(hold.flashMs)
+        readsRedo = false
+    }
+    val enabled = state.seqCanUndo || state.seqCanRedo
+    val label = if (readsRedo) "Redo" else "Undo"
     Box(
         Modifier
             .height(d.dp(26))
             .width(d.dp(58))
             .alpha(if (enabled) 1f else GrooveColors.INERT_ALPHA)
             .clip(RoundedCornerShape(d.dp(8)))
-            .background(if (redo) GrooveColors.Shift else SeqColors.Cell)
+            .background(if (readsRedo) GrooveColors.Text else SeqColors.Cell)
             .semantics {
-                contentDescription = "$label sequencer edit" + (if (enabled) "" else ", nothing to ${label.lowercase()}") +
-                    (if (redo) "" else ". With Shift: redo")
+                contentDescription = "Undo sequencer edit" + (if (state.seqCanUndo) "" else ", nothing to undo") +
+                    ". Hold to redo" + (if (state.seqCanRedo) "" else ", nothing to redo")
+                onLongClick("Redo sequencer edit") { state.seqUndoPress(redo = true); true }
             }
             .pointerInput(Unit) {
                 awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false).consume()
-                    state.seqUndoPress()
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    hold.down(down.uptimeMillis)
+                    var cancelled = false
+                    var upAt = 0L
+                    val released = withTimeoutOrNull(hold.longPressMs) {
+                        val up = waitForUpOrCancellation()
+                        if (up == null) cancelled = true else { upAt = up.uptimeMillis; up.consume() }
+                    } != null
+                    when {
+                        cancelled -> hold.cancel()
+                        released -> if (hold.up(upAt) == UndoHold.Action.Undo) state.seqUndoPress(redo = false)
+                        else -> {
+                            // Held to the long-press time: redo once, now.
+                            if (hold.poll(down.uptimeMillis + hold.longPressMs) == UndoHold.Action.Redo) {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                state.seqUndoPress(redo = true)
+                                readsRedo = true
+                            }
+                            val up = waitForUpOrCancellation()
+                            if (up == null) hold.cancel() else { up.consume(); hold.up(up.uptimeMillis) }
+                            flash++
+                        }
+                    }
                 }
             },
         contentAlignment = Alignment.Center,
     ) {
-        BasicText(label, style = d.label(12f, if (redo) GrooveColors.Ground else GrooveColors.Text, FontWeight.Medium), maxLines = 1)
+        BasicText(label, style = d.label(12f, if (readsRedo) GrooveColors.Ground else GrooveColors.Text, FontWeight.Medium), maxLines = 1)
     }
 }
 
@@ -536,6 +508,8 @@ private fun StepPad(state: GrooveState, pad: Int, modifier: Modifier) {
     }
     val shape = RoundedCornerShape(d.dp(12))
     val laneName = lane?.let { state.drum.keyLabels[it] ?: "sound" }
+    // Build-21: a lit synth pad names its note, chord or lowest note and count.
+    val noteLabel = if (lane == null && step.on) NoteNames.padLabel(step.notes) else null
 
     Column(
         modifier
@@ -545,7 +519,7 @@ private fun StepPad(state: GrooveState, pad: Int, modifier: Modifier) {
             .border(d.dp(edgeWidth), edgeColour, shape)
             .semantics {
                 val what = when {
-                    laneName == null -> if (step.on) "on" else "off"
+                    laneName == null -> if (step.on) "on, ${step.notes.joinToString(" ") { NoteNames.name(it) }}" else "off"
                     lit -> "$laneName on"
                     else -> "$laneName off"
                 }
@@ -602,6 +576,14 @@ private fun StepPad(state: GrooveState, pad: Int, modifier: Modifier) {
                 if (motion) Spacer(Modifier.width(d.dp(3)))
             }
             if (motion) Box(Modifier.size(d.dp(6)).clip(CircleShape).background(SeqColors.Motion))
+        }
+        if (noteLabel != null) {
+            BasicText(
+                noteLabel,
+                style = d.value(12f, if (lit || isPlay) GrooveColors.Ground else GrooveColors.Text, FontWeight.Medium),
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+            )
         }
         // Build-20: only other sounds than the lane play here: a small dot.
         if (mark == PadMark.Other) {

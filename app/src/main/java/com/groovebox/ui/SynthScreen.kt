@@ -163,41 +163,61 @@ fun Rail(
 
 /**
  * Owner decision 1: long-press a synth slot to show this thin strip of presets over the keys.
- * A tap loads a preset and keeps the strip open for auditioning; touching anywhere else
- * (or tapping the slot) closes it. It never blocks the keys outside its own area.
+ * A tap loads a preset and keeps the strip open for auditioning. Build-21: playing the keys
+ * keeps it open too; it closes on a tap outside the strip and keys, on the slot, or on its own
+ * × at the right end ([onClose]). The current preset is cream (coral stays for the selected
+ * slot). It never blocks the keys outside its own area.
  */
 @Composable
-fun PresetStrip(controller: SynthController, modifier: Modifier) {
+fun PresetStrip(controller: SynthController, onClose: () -> Unit, modifier: Modifier) {
     val d = LocalDesign.current
+    val close by rememberUpdatedState(onClose)
     Row(
         modifier
             .height(max(d.dp(44), Design.MinTouch))
             .clip(RoundedCornerShape(d.dp(10)))
             .background(GrooveColors.Ground.copy(alpha = 0.96f))
             .semantics { contentDescription = "Presets for slot ${controller.slot + 1}" }
-            .horizontalScroll(rememberScrollState())
             .padding(horizontal = d.dp(4), vertical = d.dp(4)),
         horizontalArrangement = Arrangement.spacedBy(d.dp(4)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        controller.presetNames.forEachIndexed { i, name ->
-            val isSelected = i == controller.presetIndex
-            Box(
-                Modifier
-                    .fillMaxHeight()
-                    .clip(RoundedCornerShape(d.dp(8)))
-                    .background(if (isSelected) GrooveColors.Strips[0] else GrooveColors.Panel)
-                    .semantics { selected = isSelected }
-                    .pointerInput(controller, i) { detectTapGestures(onTap = { controller.loadPreset(i) }) }
-                    .padding(horizontal = d.dp(12)),
-                contentAlignment = Alignment.Center,
-            ) {
-                BasicText(
-                    name,
-                    style = d.label(13f, if (isSelected) GrooveColors.Ground else GrooveColors.Text),
-                    maxLines = 1,
-                )
+        Row(
+            Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(d.dp(4)),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            controller.presetNames.forEachIndexed { i, name ->
+                val isSelected = i == controller.presetIndex
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(d.dp(8)))
+                        .background(if (isSelected) GrooveColors.Text else GrooveColors.Panel)
+                        .semantics { selected = isSelected }
+                        .pointerInput(controller, i) { detectTapGestures(onTap = { controller.loadPreset(i) }) }
+                        .padding(horizontal = d.dp(12)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    BasicText(
+                        name,
+                        style = d.label(13f, if (isSelected) GrooveColors.Ground else GrooveColors.Text, if (isSelected) FontWeight.Bold else FontWeight.Medium),
+                        maxLines = 1,
+                    )
+                }
             }
+        }
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .width(max(d.dp(44), Design.MinTouch))
+                .clip(RoundedCornerShape(d.dp(8)))
+                .background(GrooveColors.Panel)
+                .semantics { contentDescription = "Close the presets" }
+                .pointerInput(Unit) { detectTapGestures(onTap = { close() }) },
+            contentAlignment = Alignment.Center,
+        ) {
+            BasicText("×", style = d.label(20f, GrooveColors.Text, FontWeight.Bold), maxLines = 1)
         }
     }
 }

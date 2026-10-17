@@ -37,6 +37,16 @@ class StepPadsTest {
         assertEquals(PadAction.Toggle(4), pads.up(0))
     }
 
+    // --- the pitch roll (build-21): a tap on a note bar toggles its step like a long-press ---
+
+    @Test
+    fun aRollTapTogglesTheStepInTheSelection() {
+        assertEquals(sel(3), pads.toggleSelection(3))
+        assertEquals(sel(3, 9), pads.toggleSelection(9))
+        assertEquals(sel(9), pads.toggleSelection(3))
+        assertEquals(listOf(9), pads.selected)
+    }
+
     // --- long-press selection ---
 
     @Test

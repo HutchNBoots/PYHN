@@ -24,11 +24,14 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -63,10 +66,16 @@ private object TapeColors {
 
 /** The Tape screen's middle row (F5): the four-track display and the strips. */
 @Composable
-fun TapeMiddleRow(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, modifier: Modifier = Modifier) {
+fun TapeMiddleRow(
+    state: GrooveState,
+    audioStarted: Boolean,
+    debug: DebugSlot,
+    modifier: Modifier = Modifier,
+    onLanesPositioned: (Rect) -> Unit = {},
+) {
     val d = LocalDesign.current
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
-        TapeDisplay(state, audioStarted, debug, Modifier.weight(1f).fillMaxHeight())
+        TapeDisplay(state, audioStarted, debug, Modifier.weight(1f).fillMaxHeight(), onLanesPositioned)
         val tape = state.tape
         val specs = tape.strips
         Row(Modifier.width(d.dp(332)).fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(d.dp(8))) {
@@ -79,7 +88,7 @@ fun TapeMiddleRow(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, m
 }
 
 @Composable
-private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, modifier: Modifier) {
+private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, modifier: Modifier, onLanesPositioned: (Rect) -> Unit) {
     val d = LocalDesign.current
     val mix = state.mix
     val shifted = state.shift.shifted
@@ -114,7 +123,13 @@ private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugS
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             // A saved tape still loading (F7.6): the lanes fill in as it lands, dimmed until then.
-            TapeLanes(state, Modifier.fillMaxSize().alpha(if (state.tapeLoading) 0.45f else 1f))
+            TapeLanes(
+                state,
+                Modifier
+                    .fillMaxSize()
+                    .onGloballyPositioned { onLanesPositioned(it.boundsInRoot()) }
+                    .alpha(if (state.tapeLoading) 0.45f else 1f),
+            )
             if (debug.open) debug.panel()
         }
         val export = state.exportStatus
@@ -127,7 +142,8 @@ private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugS
  * The four lanes, drawn from the peak overviews, with the loop bracket above them and the
  * moving head. Everything that changes while playing is read in the draw phase, so the head
  * moving only redraws this canvas. Tap a lane to select its track, double-tap it to record
- * onto it (or stop its take), hold it to clear it.
+ * onto it (or stop its take). Build-21: hold it and it asks "Clear T3?" (coral); a tap on that
+ * lane within 3 s clears it, anything else cancels.
  */
 @Composable
 private fun TapeLanes(state: GrooveState, modifier: Modifier) {
@@ -136,12 +152,15 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
     val measurer = rememberTextMeasurer()
     val nameStyle = d.value(12f, TapeColors.Name)
     val tagStyle = d.value(10f, TapeColors.Record, FontWeight.Medium)
+    val askStyle = d.label(14f, TapeColors.Record, FontWeight.Bold)
     val top = d.px(10f) // room for the loop bracket
     val gap = d.px(6f)
     val nameWidth = d.px(36f)
     val radius = CornerRadius(d.px(8f))
     val column = d.px(2f)
+    val clearLane = state.tapeClearLane
     val description = "Tape tracks, ${TapeView.trackName(state.tapeTrack)} selected. " +
+        (if (clearLane >= 0) "Tap ${TapeView.trackName(clearLane)} again to clear it. " else "") +
         "Tap a lane to select it, double-tap to record onto it, hold to clear it"
 
     Canvas(
@@ -150,14 +169,14 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
             .pointerInput(top, gap) {
                 fun laneAt(y: Float): Int? = TapeView.laneAt(y - top, size.height - top, MixLimits.TRACKS, gap)
                 detectTapGestures(
-                    onPress = { p -> laneAt(p.y)?.let(state::selectTrack) },
+                    onPress = { p -> laneAt(p.y)?.let(state::tapeLaneDown) },
+                    onTap = { p -> laneAt(p.y)?.let(state::tapeLaneTap) },
                     // ADR 0003: Record within the left thumb's reach (arm this lane, or stop its take).
                     onDoubleTap = { p -> laneAt(p.y)?.let(state::tapeLaneDoubleTap) },
                     onLongPress = { p ->
                         val lane = laneAt(p.y)
-                        if (lane != null && state.trackHasAudio(lane)) {
+                        if (lane != null && state.tapeLaneHold(lane)) {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            state.clearTrack(lane)
                         }
                     },
                 )
@@ -217,6 +236,30 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
                 )
             }
 
+            // Asking before a clear: a solid coral outline and "Clear T3?" across the lane.
+            if (t == clearLane) {
+                drawRoundRect(TapeColors.Record.copy(alpha = 0.16f), Offset(0f, y), Size(size.width, laneH), radius)
+                drawRoundRect(
+                    TapeColors.Record,
+                    Offset(edge / 2, y + edge / 2),
+                    Size(size.width - edge, laneH - edge),
+                    radius,
+                    style = Stroke(edge),
+                )
+                val ask = measurer.measure("Clear ${TapeView.trackName(t)}?", askStyle)
+                val askLeft = waveLeft + (waveW - ask.size.width) / 2
+                val askTop = y + (laneH - ask.size.height) / 2
+                val pad = d.px(10f)
+                // A dark plate under the question so it reads over the waveform.
+                drawRoundRect(
+                    GrooveColors.Ground,
+                    Offset(askLeft - pad, y + edge * 2),
+                    Size(ask.size.width + pad * 2, laneH - edge * 4),
+                    CornerRadius(d.px(6f)),
+                )
+                drawText(ask, topLeft = Offset(askLeft, askTop))
+            }
+
             val name = measurer.measure(TapeView.trackName(t), nameStyle.copy(color = if (isSelected) GrooveColors.Text else TapeColors.Name))
             drawText(name, topLeft = Offset(d.px(8f), y + (laneH - name.size.height) / 2))
             val tag = when {
@@ -272,6 +315,12 @@ private fun TapeFooter(state: GrooveState) {
         return
     }
     val recordNeeds = state.tapeRecordNeeds
+    val clearLane = state.tapeClearLane
+    if (clearLane >= 0) {
+        val name = TapeView.trackName(clearLane)
+        BasicText("tap $name again to clear it · anything else keeps it · Undo brings it back", style = d.value(13f, TapeColors.Record), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        return
+    }
     val (text, colour) = when (state.tapeStatus) {
         TapeRecordStatus.Recording ->
             "recording ${TapeView.trackName(state.tapeRecordingTrack)} · Record (or double-tap the lane) stops on the next bar" to TapeColors.Record

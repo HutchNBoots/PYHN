@@ -137,7 +137,9 @@ class SeqStripsTest {
         assertEquals("133.4", SeqStrips.format(SeqStrips.Tempo, 133.4))
         assertEquals("1", SeqStrips.format(SeqStrips.Pattern, 0.0))
         assertEquals("16", SeqStrips.format(SeqStrips.Pattern, 15.0))
-        assertEquals("E3", SeqStrips.format(SeqStrips.Note, 52.0))
+        assertEquals("+2", SeqStrips.format(SeqStrips.Note, 2.0))
+        assertEquals("\u22125", SeqStrips.format(SeqStrips.Note, -5.0))
+        assertEquals("0", SeqStrips.format(SeqStrips.Note, 0.0))
         assertEquals("C", SeqStrips.format(SeqStrips.Key, 0.0))
         assertEquals("C♯", SeqStrips.format(SeqStrips.Key, 1.0))
         assertEquals("A", SeqStrips.format(SeqStrips.Key, 9.0))
@@ -165,16 +167,6 @@ class SeqStripsTest {
         assertEquals("A2", NoteNames.name(45))
         assertEquals("C#-1", NoteNames.name(1))
         assertEquals("B4", NoteNames.name(71))
-    }
-
-    @Test
-    fun transposeMovesTheWholeChordWithinRange() {
-        assertEquals(listOf(62, 66, 69), SeqStrips.transpose(listOf(60, 64, 67), 62, 24, 96))
-        assertEquals(listOf(70), SeqStrips.transpose(emptyList(), 70, 24, 96))
-        assertEquals(listOf(24), SeqStrips.transpose(emptyList(), 10, 24, 96))
-        // A chord that would leave the range stops at its edge, intervals kept.
-        assertEquals(listOf(89, 93, 96), SeqStrips.transpose(listOf(60, 64, 67), 95, 24, 96))
-        assertEquals(listOf(48, 54), SeqStrips.transpose(listOf(50, 56), 40, 48, 63))
     }
 
     @Test
