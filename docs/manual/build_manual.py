@@ -379,7 +379,7 @@ SEC32 = f'''
       [("touches", "10", "warn"), ("long-presses", "3", "warn"), ("risk", "forgetting to deselect", "warn")],
       ["Every new pitch costs select → key → deselect.", "Bass notes below C3 can't be played in from the keys.", "A key also sets the step's velocity from where you touched it."],
       ["A strip of keys always visible on Seq: a key sets the “pen” note and a pad tap writes it. The line above becomes 6 touches, no long-press."])}
-{task("3-2-t4", "Am – F – C – G, one chord per bar; then add the 7th", "Seq, slot 4, empty.",
+{task("3-2-t4", "Am – F – C – G on the four beats; then add the 7th", "Seq, slot 4, empty.",
       steps([("Long-press pad 1", "L", "Y", "pads", False), ("Hold A3, C4 and E4 together (three fingers)", "both + 1", "S", "keys", False),
              ("Tap the display; repeat on pads 5, 9, 13", "L", "Y", "display, pads", False)]),
       [("touches", "12", "warn"), ("fingers per chord", "3", "bad"), ("add one note", "not possible", "bad")],
@@ -440,6 +440,9 @@ SEC32 = f'''
 
 
 def page():
+    import manual_more
+    sec32b, sec8 = manual_more.build(task, steps, gaps, E)
+    sec32 = SEC32.replace('<h3 id="s3-2-views">', sec32b + '\n<h3 id="s3-2-views">')
     findings = "".join(
         f'<li class="f-{lvl}"><span class="sev">{ {"high": "High", "med": "Medium", "low": "Low"}[lvl] }</span>'
         f'<span class="where">{E(where)}</span><p>{E(what)}</p><p class="fix">{E(fix)}</p></li>'
@@ -531,6 +534,11 @@ figure.shot img {{ display:block; width:100%; height:auto; border-radius:8px; ma
 figcaption {{ font-size:13px; color:var(--dim); padding:8px 4px 2px }}
 ol.proposals li {{ margin:6px 0; max-width:75ch }}
 .todo {{ color:var(--dim) }}
+.np {{ font:500 11px var(--mono); text-transform:uppercase; letter-spacing:.06em; padding:2px 7px; border-radius:6px; background:var(--coral-bg); color:var(--coral); margin-right:6px }}
+.note {{ border-left:3px solid var(--amber); padding:4px 12px; background:var(--amber-bg); border-radius:0 8px 8px 0 }}
+table.ideas td {{ font-size:13.5px }} table.ideas td.c {{ white-space:nowrap }} .sub2 {{ color:var(--dim); font-size:12.5px; margin-top:2px }}
+.pill {{ font:500 11px var(--mono); padding:2px 7px; border-radius:6px; background:var(--sunk) }}
+.pill.v-high {{ background:var(--green-bg); color:var(--green) }} .pill.v-med {{ background:var(--amber-bg); color:var(--amber) }} .pill.v-low {{ color:var(--dim) }}
 a {{ color:var(--blue) }}
 :focus-visible {{ outline:2px solid var(--blue); outline-offset:2px }}
 @media (max-width:900px) {{ .wrap {{ grid-template-columns:minmax(0,1fr); gap:8px }} nav.toc {{ position:static }} h1 {{ font-size:32px }}
@@ -544,7 +552,8 @@ a {{ color:var(--blue) }}
   <a href="#s1">1 Synth sounds</a><a class="sub" href="#s1-1">1.1 Pick a sound</a><a class="sub" href="#s1-2">1.2 Shape it</a><a class="sub" href="#s1-3">1.3 Play it</a><a class="sub" href="#s1-4">1.4 Keep it</a>
   <a href="#s2">2 Drum kit</a><a class="sub" href="#s2-1">2.1 Play the kit</a><a class="sub" href="#s2-2">2.2 Edit one sound</a>
   <a href="#s3-1">3.1 A drum beat</a>
-  <a href="#s3-2">3.2 A synth part</a><a class="sub" href="#s3-2-view">Viewing notes and chords</a><a class="sub" href="#s3-2-enter">Entering</a><a class="sub" href="#s3-2-edit">Editing</a><a class="sub" href="#s3-2-more">Recording, motion, length</a><a class="sub" href="#s3-2-views">Proposed views</a>
+  <a href="#s3-2">3.2 A synth part</a><a class="sub" href="#s3-2-view">Viewing notes and chords</a><a class="sub" href="#s3-2-enter">Entering</a><a class="sub" href="#s3-2-edit">Editing</a><a class="sub" href="#s3-2-more">Recording, motion, length</a><a class="sub" href="#s3-2-tricks">Fast routes</a><a class="sub" href="#s3-2-bass">Bassline</a><a class="sub" href="#s3-2-chords">Chords</a><a class="sub" href="#s3-2-melody">Melody</a><a class="sub" href="#s3-2-arrange">Editing and arranging</a><a class="sub" href="#s3-2-feel">Feel</a><a class="sub" href="#s3-2-perform">Performance</a><a class="sub" href="#s3-2-views">Proposed views</a>
+  <a href="#s8">8 Ideas from other grooveboxes</a><a class="sub" href="#s8-double">Double my beat</a><a class="sub" href="#s8-quantise">Quantise my beat</a><a class="sub" href="#s8-questions">Open questions</a>
   <a href="#later">Not written yet</a>
 </nav>
 <main>
@@ -564,7 +573,7 @@ a {{ color:var(--blue) }}
 <section id="findings"><h2><span class="num">★</span>Top findings so far</h2>
 <p>Ranked across the sections below; they merge with the <a href="https://github.com/HutchNBoots/PYHN/blob/ccr-8d023090-x5f91s/docs/reviews/2026-10-17-consistency-review.md">consistency review</a> into one list before any build is planned.</p>
 <ol class="findings">{findings}</ol></section>
-{SEC1}{SEC2}{SEC31}{SEC32}
+{SEC1}{SEC2}{SEC31}{sec32}{sec8}
 <section id="later"><h2><span class="num">…</span>Not written yet</h2>
 <ul class="todo"><li>0 Getting started (the screen, the grip, Shift, Play and Record, gestures)</li><li>3.3 Patterns and 3.4 Putting parts together</li>
 <li>4 Tape (paused at the owner's request)</li><li>5 Mix and effects · 6 Performing live · 7 Session · Appendix</li></ul></section>

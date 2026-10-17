@@ -85,6 +85,11 @@ figure.shot img { display:block; width:100%; height:auto; border-radius:8px; max
 figcaption { font-size:13px; color:var(--dim); padding:8px 4px 2px }
 ol.proposals li { margin:6px 0; max-width:75ch }
 .todo { color:var(--dim) }
+.np { font:500 11px var(--mono); text-transform:uppercase; letter-spacing:.06em; padding:2px 7px; border-radius:6px; background:var(--coral-bg); color:var(--coral); margin-right:6px }
+.note { border-left:3px solid var(--amber); padding:4px 12px; background:var(--amber-bg); border-radius:0 8px 8px 0 }
+table.ideas td { font-size:13.5px } table.ideas td.c { white-space:nowrap } .sub2 { color:var(--dim); font-size:12.5px; margin-top:2px }
+.pill { font:500 11px var(--mono); padding:2px 7px; border-radius:6px; background:var(--sunk) }
+.pill.v-high { background:var(--green-bg); color:var(--green) } .pill.v-med { background:var(--amber-bg); color:var(--amber) } .pill.v-low { color:var(--dim) }
 a { color:var(--blue) }
 :focus-visible { outline:2px solid var(--blue); outline-offset:2px }
 @media (max-width:900px) { .wrap { grid-template-columns:minmax(0,1fr); gap:8px } nav.toc { position:static } h1 { font-size:32px }
@@ -98,7 +103,8 @@ a { color:var(--blue) }
   <a href="#s1">1 Synth sounds</a><a class="sub" href="#s1-1">1.1 Pick a sound</a><a class="sub" href="#s1-2">1.2 Shape it</a><a class="sub" href="#s1-3">1.3 Play it</a><a class="sub" href="#s1-4">1.4 Keep it</a>
   <a href="#s2">2 Drum kit</a><a class="sub" href="#s2-1">2.1 Play the kit</a><a class="sub" href="#s2-2">2.2 Edit one sound</a>
   <a href="#s3-1">3.1 A drum beat</a>
-  <a href="#s3-2">3.2 A synth part</a><a class="sub" href="#s3-2-view">Viewing notes and chords</a><a class="sub" href="#s3-2-enter">Entering</a><a class="sub" href="#s3-2-edit">Editing</a><a class="sub" href="#s3-2-more">Recording, motion, length</a><a class="sub" href="#s3-2-views">Proposed views</a>
+  <a href="#s3-2">3.2 A synth part</a><a class="sub" href="#s3-2-view">Viewing notes and chords</a><a class="sub" href="#s3-2-enter">Entering</a><a class="sub" href="#s3-2-edit">Editing</a><a class="sub" href="#s3-2-more">Recording, motion, length</a><a class="sub" href="#s3-2-tricks">Fast routes</a><a class="sub" href="#s3-2-bass">Bassline</a><a class="sub" href="#s3-2-chords">Chords</a><a class="sub" href="#s3-2-melody">Melody</a><a class="sub" href="#s3-2-arrange">Editing and arranging</a><a class="sub" href="#s3-2-feel">Feel</a><a class="sub" href="#s3-2-perform">Performance</a><a class="sub" href="#s3-2-views">Proposed views</a>
+  <a href="#s8">8 Ideas from other grooveboxes</a><a class="sub" href="#s8-double">Double my beat</a><a class="sub" href="#s8-quantise">Quantise my beat</a><a class="sub" href="#s8-questions">Open questions</a>
   <a href="#later">Not written yet</a>
 </nav>
 <main>
@@ -554,7 +560,7 @@ a { color:var(--blue) }
 </article>
 
 <article class="task" id="3-2-t4">
-  <header><span class="tid">3 2 T4</span><h4>&ldquo;Am – F – C – G, one chord per bar; then add the 7th&rdquo;</h4></header>
+  <header><span class="tid">3 2 T4</span><h4>&ldquo;Am – F – C – G on the four beats; then add the 7th&rdquo;</h4></header>
   
   <p class="start"><span class="lbl">Start</span>Seq, slot 4, empty.</p>
   <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Long-press pad 1</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>pads</td><td>–</td></tr><tr><td class="n">2</td><td>Hold A3, C4 and E4 together (three fingers)</td><td><span class="thumb tb">both + 1</span></td><td><span class="zone st" title="stretch"></span>keys</td><td>–</td></tr><tr><td class="n">3</td><td>Tap the display; repeat on pads 5, 9, 13</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>display, pads</td><td>–</td></tr></tbody></table></div>
@@ -633,6 +639,336 @@ a { color:var(--blue) }
 </article>
 <figure class="shot"><img src="img/part-triplet.jpg" alt="1/16T with length 12: the pads still group in fours." loading="lazy" width="1170" height="540"><figcaption>1/16T with length 12: the pads still group in fours.</figcaption></figure>
 
+
+<h3 id="s3-2-tricks">Two hidden fast routes</h3>
+<p><b>Hold several pads, then play one key:</b> every selected step gets that note. This is the cheapest way to enter a repeated note, a bassline or a hand-made arpeggio, and nothing on screen says so (<code>GrooveState.kt:421</code>).</p>
+<p><b>With Shift latched, a pad tap selects or deselects</b> and never deletes, so you can enter notes without long-presses (<code>StepPads.kt:111</code>). The catch: Undo reads Redo, and holding two pads starts a step loop.</p>
+
+<h3 id="s3-2-bass">Bassline</h3>
+
+<article class="task" id="3-2-t10">
+  <header><span class="tid">3 2 T10</span><h4>&ldquo;Root notes on A with octave jumps: A on 1, 3, 7, 9, 11, 15, high A on 4 and 12&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 2, empty pattern, stopped.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Long-press pad 1 and keep holding</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>pads</td><td>–</td></tr><tr><td class="n">2</td><td>Touch pads 3, 7, 9, 11, 15 (they join)</td><td><span class="thumb tr">R</span></td><td><span class="zone st" title="stretch"></span>pads (7, 9 centre)</td><td>–</td></tr><tr><td class="n">3</td><td>Tap A3: all six steps get A3</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>keys</td><td>–</td></tr><tr><td class="n">4</td><td>Tap the display</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>display</td><td>–</td></tr><tr><td class="n">5</td><td>Long-press pad 4, hold; touch pad 12; tap A4</td><td><span class="thumb tl">L, R</span></td><td><span class="zone in" title="in reach"></span>pads, keys</td><td>–</td></tr><tr><td class="n">6</td><td>Tap the display</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>display</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="ok"><b>12</b> touches</li><li class="warn"><b>1</b> hidden trick</li><li class="warn"><b>pads shrink as keys appear</b> risk</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>The fast route is undiscoverable; most players do select → key → deselect per note (24 touches).</li><li>All six notes get one key-touch velocity.</li><li>A bass usually lives at A1/A2, below the keys.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Always-visible pen keys: tap A3, then tap the pads; tap A4, then tap 4 and 12. 10 touches, nothing moves under the thumbs.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t11">
+  <header><span class="tid">3 2 T11</span><h4>&ldquo;Put a low E (E2) on step 13, below the keys&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 2, a bassline.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Long-press pad 13</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>pads</td><td>–</td></tr><tr><td class="n">2</td><td>Tap E3</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>keys</td><td>–</td></tr><tr><td class="n">3</td><td>Tap Shift</td><td><span class="thumb tr">R</span></td><td><span class="zone st" title="stretch"></span>top bar, right</td><td>–</td></tr><tr><td class="n">4</td><td>Drag Note down 12 semitones to E2</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>strip 1</td><td><span class="shift">Shift</span></td></tr><tr><td class="n">5</td><td>Tap Shift off, tap the display</td><td><span class="thumb tr">R, L</span></td><td><span class="zone st" title="stretch"></span>top bar, display</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="warn"><b>6</b> touches</li><li class="warn"><b>2</b> stretches</li><li class="warn"><b>double-tap Note = C4</b> risk</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>72 notes on one strip is fiddly; fine mode needs a second finger.</li><li>The alternative, the sound's Octave −1, moves the whole slot and the key labels lie.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>A keyboard octave shift on Seq with labels following, or Octave ± on the empty Shift strip 2.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t12">
+  <header><span class="tid">3 2 T12</span><h4>&ldquo;Accent the downbeats, make step 7 a short blip, leave 8 silent&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Bassline playing, nothing selected.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Long-press pad 1, hold; touch 5, 9, 13</td><td><span class="thumb tl">L, R</span></td><td><span class="zone st" title="stretch"></span>pads</td><td>–</td></tr><tr><td class="n">2</td><td>Drag Velocity to 100%; tap the display</td><td><span class="thumb tr">R, L</span></td><td><span class="zone in" title="in reach"></span>strip 1, display</td><td>–</td></tr><tr><td class="n">3</td><td>Long-press pad 7; drag Length to 1/4; tap the display</td><td><span class="thumb tl">L, R, L</span></td><td><span class="zone st" title="stretch"></span>pads, strip 2</td><td>–</td></tr><tr><td class="n">4</td><td>Tap pad 8 to empty it</td><td><span class="thumb tl">L</span></td><td><span class="zone st" title="stretch"></span>pads</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="warn"><b>10</b> touches</li><li class="bad"><b>barely</b> accent audible</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Accents are nearly inaudible: 80% → 100% is about +1.5 dB (<code>Voice.cpp:174</code>) unless Filter Vel is raised.</li><li>Velocity and length aren't drawn anywhere.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Velocity as fill height; an Accent toggle with a clear boost to level and filter; tails for length.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t13">
+  <header><span class="tid">3 2 T13</span><h4>&ldquo;Slide from step 3 into step 4, like an acid line&rdquo;</h4></header>
+  <p class="how"><span class="np">Not possible today</span> A per-step slide doesn't exist; the steps below get the closest thing.</p>
+  <p class="start"><span class="lbl">Start</span>Seq, slot 2 (a Poly preset), playing.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Synth tab; Osc; Shift; Mode to Mono; Glide up; Shift off</td><td><span class="thumb tl">L / R</span></td><td><span class="zone st" title="stretch"></span>top bar, rail, strips</td><td><span class="shift">Shift</span></td></tr><tr><td class="n">2</td><td>Seq tab; long-press pad 3; Length to 1½ so it overlaps step 4; tap the display</td><td><span class="thumb tl">L / R</span></td><td><span class="zone st" title="stretch"></span>top bar, pads, strip 2</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="bad"><b>10</b> touches</li><li class="bad"><b>2</b> screen switches</li><li class="bad"><b>5</b> stretches</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Glide hits every note that starts while the last one sounds, release tail included (<code>Voice.cpp:77</code>): all notes slide a little or none do.</li><li>Velocity on the slid note is ignored.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>A Slide flag on the empty Shift strip 2 (glide only into that step, legato); a tie line on the pad. 4 touches, no screen switch.</li></ul></div>
+  </div>
+</article>
+
+<h3 id="s3-2-chords">Chords</h3>
+<p class="note">T4 above places chords on pads 1, 5, 9, 13 of a 16-step pattern: that is one chord per <b>beat</b>. One chord per bar is T14.</p>
+
+<article class="task" id="3-2-t14">
+  <header><span class="tid">3 2 T14</span><h4>&ldquo;Am | F | C | G, one chord per bar, each ringing for the whole bar&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 4, empty, stopped.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Drag Length (pattern) to 64</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>strip 2</td><td>–</td></tr><tr><td class="n">2</td><td>Long-press pad 1; hold A3 + C4 + E4 together</td><td><span class="thumb tl">L, both + 1 finger</span></td><td><span class="zone st" title="stretch"></span>pads, keys</td><td>–</td></tr><tr><td class="n">3</td><td>Drag Length (step) to 16; tap the display</td><td><span class="thumb tr">R, L</span></td><td><span class="zone in" title="in reach"></span>strip 2, display</td><td>–</td></tr><tr><td class="n">4</td><td>Page 2: same with F3 A3 C4; page 3: C4 E4 G4; page 4: G3 B3 D4</td><td><span class="thumb tl">L / R</span></td><td><span class="zone in" title="in reach"></span>rail, pads, keys</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="bad"><b>≈28</b> touches</li><li class="bad"><b>3</b> fingers per chord</li><li class="warn"><b>4</b> page trips</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>A bar is a page, so a 4-bar progression is four page trips and a Length per chord.</li><li>Step Length tops out at 16 steps; a 2-bar chord means Rate 1/8 for the whole part.</li><li>The tail isn't drawn and pages don't follow the playhead.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>“Hold until the next chord” length (tie to the next lit step); a pitch roll showing chord bars; page copy for repeats.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t15">
+  <header><span class="tid">3 2 T15</span><h4>&ldquo;Make it Am7, and play the F as F/A&rdquo;</h4></header>
+  <p class="how"><span class="np">Not possible today</span> Adding one note to a chord, or a 4-note chord with two thumbs, isn't possible.</p>
+  <p class="start"><span class="lbl">Start</span>T14's progression.</p>
+  
+  <ul class="score"><li class="bad"><b>not possible</b> add a note</li><li class="bad"><b>needs 4 fingers</b> 4-note chord</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>A chord is only “the keys held together”. Adding the 7th means a live-record overdub timed onto the downbeat (2 screen switches, timing risk).</li><li>An inversion means replaying the chord; voicings above B4 need the Note strip afterwards.</li><li>The footer never names the chord.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>First key replaces, later keys toggle: a 7th is 1 tap, an inversion 2 taps; the keys light the step's notes. Optionally a chord-shape strip (triad / 7th / sus) on the empty Shift strip 3.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t16">
+  <header><span class="tid">3 2 T16</span><h4>&ldquo;Stab Am on 1, 4, 7, 11, 14&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 4, empty.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Long-press pad 1, hold; touch 4, 7, 11, 14</td><td><span class="thumb tl">L, R</span></td><td><span class="zone st" title="stretch"></span>pads</td><td>–</td></tr><tr><td class="n">2</td><td>Lift; hold A3 + C4 + E4</td><td><span class="thumb tb">both + 1</span></td><td><span class="zone st" title="stretch"></span>keys</td><td>–</td></tr><tr><td class="n">3</td><td>Tap the display</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>display</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="ok"><b>9 (5 via the pen)</b> touches</li><li class="warn"><b>3</b> fingers</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>“A tap enters the last chord” is invisible, so you can't see what the pen holds.</li><li>Changing to F for the next stab is a full select → chord → deselect.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Show the pen chord in the footer (“pen: Am”); pen keys always visible.</li></ul></div>
+  </div>
+</article>
+
+<h3 id="s3-2-melody">Melody</h3>
+
+<article class="task" id="3-2-t17">
+  <header><span class="tid">3 2 T17</span><h4>&ldquo;Step-write an 8-note lead with rests between phrases and a long last note&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 3, empty.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Tap Shift (latch)</td><td><span class="thumb tr">R</span></td><td><span class="zone st" title="stretch"></span>top bar, right</td><td>–</td></tr><tr><td class="n">2</td><td>For each note: tap the pad (selects), tap the key, tap the pad again</td><td><span class="thumb tl">L / R</span></td><td><span class="zone in" title="in reach"></span>pads, keys</td><td><span class="shift">Shift</span></td></tr><tr><td class="n">3</td><td>Shift off; long-press the last note; Length to 4; tap the display</td><td><span class="thumb tr">R, L, R, L</span></td><td><span class="zone st" title="stretch"></span>top bar, pads, strip 2</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="bad"><b>29 (25 the usual way)</b> touches</li><li class="warn"><b>0–8</b> long-presses</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Step Length isn't on the Shift layer, so a long note forces Shift off.</li><li>The line can't be read back (T1).</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Pen keys + tap pad = 2 touches per note; Shift + drag along the pads draws a note's length.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t18">
+  <header><span class="tid">3 2 T18</span><h4>&ldquo;Hand-made arpeggio: A C E A up the 16ths; then an A octave bounce&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 3, empty (no arpeggiator in v1).</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Long-press 1, hold; touch 5, 9, 13; tap A3; tap the display</td><td><span class="thumb tl">L, R, L</span></td><td><span class="zone st" title="stretch"></span>pads, keys</td><td>–</td></tr><tr><td class="n">2</td><td>Same for 2, 6, 10, 14 → C4; 3, 7, 11, 15 → E4; 4, 8, 12, 16 → A4</td><td><span class="thumb tl">L / R</span></td><td><span class="zone st" title="stretch"></span>pads, keys</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="warn"><b>24</b> touches</li><li class="warn"><b>4</b> long-presses</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Each new pitch needs a fresh selection gesture.</li><li>No “repeat this beat” and no fill gesture.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Pen keys + tap; an every-Nth-step fill (Shift + drag across pads); the v1.1 arpeggiator writing hits.</li></ul></div>
+  </div>
+</article>
+
+<h3 id="s3-2-arrange">Editing and arranging</h3>
+
+<article class="task" id="3-2-t19">
+  <header><span class="tid">3 2 T19</span><h4>&ldquo;Move the note on step 6 to step 7&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 3, a lead.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Long-press pad 6 to read it (“C4”); tap the display</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>pads, display</td><td>–</td></tr><tr><td class="n">2</td><td>Long-press pad 7; tap C4; tap the display</td><td><span class="thumb tl">L</span></td><td><span class="zone st" title="stretch"></span>pads, keys</td><td>–</td></tr><tr><td class="n">3</td><td>Tap pad 6 to delete it</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>pads</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="warn"><b>6</b> touches</li><li class="bad"><b>no</b> values kept</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>The obvious route (tap 6 off, tap 7 on) enters the last-played chord, not step 6's note.</li><li>Velocity, length, chance and nudge don't come along.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Hold a lit pad and drag it onto another pad = move with all values; Shift + drag = copy.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t20">
+  <header><span class="tid">3 2 T20</span><h4>&ldquo;Take the E out of this chord · insert a rest and push the rest of the line later&rdquo;</h4></header>
+  <p class="how"><span class="np">Not possible today</span> Deleting a step is one tap; shifting the line isn't possible.</p>
+  <p class="start"><span class="lbl">Start</span>Seq, a part.</p>
+  
+  <ul class="score"><li class="warn"><b>4–5 (replay)</b> remove one chord note</li><li class="bad"><b>not possible</b> insert / delete a step</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>No insert or delete that shifts the line; you move each later note by hand, from the end (about 6 touches per note).</li><li>Tapping a lit pad is also how you add, so a stray tap is a silent delete.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>With a step selected, Shift + swipe the pads right / left inserts / deletes a step from there on.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t21">
+  <header><span class="tid">3 2 T21</span><h4>&ldquo;Shift the whole pattern one step later&rdquo;</h4></header>
+  <p class="how"><span class="np">Not possible today</span> </p>
+  <p class="start"><span class="lbl">Start</span>Seq, slot 2, bassline.</p>
+  
+  <ul class="score"><li class="bad"><b>not possible</b> rotate</li><li class="warn"><b>Nudge +50% on all, half a step only</b> workaround</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Nudge moves at most half a step, and a multi-select overwrites existing nudges.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Shift + swipe across the pads (no selection) rotates one step per pad width, wrapping at Length; one undo step.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t22">
+  <header><span class="tid">3 2 T22</span><h4>&ldquo;Copy step 3&#x27;s chord onto 11 and 15&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 4.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Long-press pad 3 to read it; tap the display</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>pads, display</td><td>–</td></tr><tr><td class="n">2</td><td>Long-press 11, hold; touch 15</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>pads</td><td>–</td></tr><tr><td class="n">3</td><td>Hold A3 + C4 + E4; tap the display</td><td><span class="thumb tb">both + 1, L</span></td><td><span class="zone st" title="stretch"></span>keys, display</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="warn"><b>8 (2 if it was the last chord played)</b> touches</li><li class="bad"><b>no</b> values copied</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>No copy; the pen route needs you to know what the pen holds.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Shift + drag a lit pad onto other pads; selecting a step loads its notes into the pen.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t23">
+  <header><span class="tid">3 2 T23</span><h4>&ldquo;Double my loop: bar 2 the same as bar 1, then change its last two notes&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 2, 16-step bass.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Drag Length to 32</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>strip 2</td><td>–</td></tr><tr><td class="n">2</td><td>Tap page 2</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>rail</td><td>–</td></tr><tr><td class="n">3</td><td>Re-enter bar 1 by hand, then vary it</td><td><span class="thumb tl">L / R</span></td><td><span class="zone st" title="stretch"></span>pads, keys</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="bad"><b>2 + 12–25</b> touches</li><li class="bad"><b>not possible</b> duplicate</li><li class="warn"><b>old hidden steps reappear</b> risk</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Shortening Length keeps the hidden steps, so lengthening brings old notes back (<code>PatternStore.kt:194</code>).</li><li>Melodic re-entry costs far more than drums.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>A ×2 chip (see “Ideas” below): 1 touch doubles the length with the content; Shift + tap a page copies the current page there.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t24">
+  <header><span class="tid">3 2 T24</span><h4>&ldquo;Move the whole bassline up two semitones&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 2, 11 lit steps.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Tap Shift (latch)</td><td><span class="thumb tr">R</span></td><td><span class="zone st" title="stretch"></span>top bar, right</td><td>–</td></tr><tr><td class="n">2</td><td>For each lit step: tap pad, drag Note up 2, tap pad</td><td><span class="thumb tl">L / R</span></td><td><span class="zone in" title="in reach"></span>pads, strip 1</td><td><span class="shift">Shift</span></td></tr><tr><td class="n">3</td><td>Tap Shift off</td><td><span class="thumb tr">R</span></td><td><span class="zone st" title="stretch"></span>top bar, right</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="bad"><b>35</b> touches</li><li class="bad"><b>multi-select flattens (T5)</b> risk</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>No relative transpose; you must know each target note name.</li><li>Octave and Fine live on the sound, not the part.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Relative Note on a multi-selection (“+2”) plus select-all (Shift + tap a page selects its lit steps). 4 touches.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t25">
+  <header><span class="tid">3 2 T25</span><h4>&ldquo;I wrote it in A minor: make it C minor&rdquo;</h4></header>
+  <p class="how"><span class="np">Not possible today</span> Moving the part to the new key isn't possible as one action.</p>
+  <p class="start"><span class="lbl">Start</span>Seq, a part written in A minor.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Tap Shift; drag Key to C; tap Shift off</td><td><span class="thumb tr">R</span></td><td><span class="zone st" title="stretch"></span>top bar, strip 3</td><td><span class="shift">Shift</span></td></tr></tbody></table></div>
+  <ul class="score"><li class="ok"><b>3 for the setting</b> touches</li><li class="bad"><b>no</b> part moves</li><li class="warn"><b>3 per ringed step</b> repair</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Stored notes don't move (F8): out-of-key steps get a ring and the part still plays in A.</li><li>“Key” means which keys work, not which key the part is in.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>On a key change the footer offers “transpose parts +3” as one undoable action; a double-tap “snap out-of-key steps”.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t26">
+  <header><span class="tid">3 2 T26</span><h4>&ldquo;Layer a second synth on the same bassline (slot 2 → slot 6)&rdquo;</h4></header>
+  <p class="how"><span class="np">Not possible today</span> </p>
+  <p class="start"><span class="lbl">Start</span>Seq, slot 2, bass done.</p>
+  
+  <ul class="score"><li class="bad"><b>not possible</b> copy to a slot</li><li class="bad"><b>≈15+</b> re-enter</li><li class="warn"><b>8 touches, frozen audio</b> tape workaround</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>The most common layering move costs a full rewrite; committing to tape freezes it and Tape has no slot picker.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Hold a slot's overview row and swipe to another slot = copy this pattern there. 2 touches.</li></ul></div>
+  </div>
+</article>
+
+<h3 id="s3-2-feel">Feel</h3>
+
+<article class="task" id="3-2-t27">
+  <header><span class="tid">3 2 T27</span><h4>&ldquo;Swing the bass the same as the drums&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 1 at Shuffle 30%, playing.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Read “shuffle 30%” in the footer</td><td><span class="thumb t–">–</span></td><td><span class="zone in" title="in reach"></span>display</td><td>–</td></tr><tr><td class="n">2</td><td>Swipe to slot 2</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>display</td><td>–</td></tr><tr><td class="n">3</td><td>Drag Shuffle to 30%</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>strip 1</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="ok"><b>2</b> touches</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Shuffle is per slot and per pattern; a new pattern starts at 0%.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>One session swing by default; new patterns inherit the slot's last settings.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t28">
+  <header><span class="tid">3 2 T28</span><h4>&ldquo;Make all the notes shorter · then half-time&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 2, nothing selected.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Drag Gate down</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>strip 3</td><td>–</td></tr><tr><td class="n">2</td><td>Drag Rate to 1/8</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>strip 4</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="ok"><b>2</b> touches</li><li class="warn"><b>only some notes</b> applies to</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Steps with their own Length ignore Gate, and nothing shows which do.</li><li>Gate tops at 100%, so it never gives legato.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Show own-length steps as tails; Shift + Gate = set every step's Length to the gate.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t29">
+  <header><span class="tid">3 2 T29</span><h4>&ldquo;Record a lead live and keep my timing · or quantise it after&rdquo;</h4></header>
+  <p class="how"><span class="np">Not possible today</span> </p>
+  <p class="start"><span class="lbl">Start</span>As T7.</p>
+  
+  <ul class="score"><li class="warn"><b>always on</b> quantise</li><li class="bad"><b>not possible</b> keep feel</li><li class="bad"><b>not possible</b> quantise after</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Notes snap to the nearest step with nudge 0 and the pattern gate; held length is dropped; a second pass stacks notes.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Recording keeps the feel (offset → nudge, held length → Length) and a Q chip tightens it in one tap (see “Ideas”).</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t30">
+  <header><span class="tid">3 2 T30</span><h4>&ldquo;Let the fill on 14–16 only play sometimes&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 3, lead.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Long-press pad 14, hold; touch 15, 16</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>pads</td><td>–</td></tr><tr><td class="n">2</td><td>Drag Chance to 50%</td><td><span class="thumb tr">R</span></td><td><span class="zone in" title="in reach"></span>strip 3</td><td>–</td></tr><tr><td class="n">3</td><td>Tap the display</td><td><span class="thumb tl">L</span></td><td><span class="zone in" title="in reach"></span>display</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="ok"><b>5</b> touches</li><li class="warn"><b>empty steps get the last chord</b> risk</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Moving a strip over an empty selected step writes the last-played chord there.</li><li>The chance bar is small; the overview shows nothing; no “every 2nd loop”.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Skip empty steps unless a key is played; dimmer overview cells; later 1:2 / 1:4 conditions.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t31">
+  <header><span class="tid">3 2 T31</span><h4>&ldquo;Humanise it: loosen velocity and timing a bit&rdquo;</h4></header>
+  <p class="how"><span class="np">Not possible today</span> </p>
+  <p class="start"><span class="lbl">Start</span>Seq, slot 3, 12 lit steps.</p>
+  
+  <ul class="score"><li class="bad"><b>48</b> touches by hand</li><li class="bad"><b>not possible</b> random spread</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>A multi-selection sets one absolute value, so “a bit different each” is one step at a time.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>The empty Shift strip 3 as “Spread”: on a selection it randomises velocity and nudge around their values, seeded and undoable. 4 touches.</li></ul></div>
+  </div>
+</article>
+
+<h3 id="s3-2-perform">Performance</h3>
+
+<article class="task" id="3-2-t32">
+  <header><span class="tid">3 2 T32</span><h4>&ldquo;Mute the bass while I jam · solo the lead&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 3, playing.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Mixer tab; Shift; tap slot 2's level bar; Shift off; Seq tab</td><td><span class="thumb tl">L / R</span></td><td><span class="zone st" title="stretch"></span>top bar, mixer</td><td><span class="shift">Shift</span></td></tr></tbody></table></div>
+  <ul class="score"><li class="bad"><b>5 touches, 2 switches</b> mute</li><li class="bad"><b>not possible</b> solo</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Mute lives on another screen; no solo; Seq and Synth don't show mute state.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>A Mute chip beside Undo in the Seq and Synth footers; Shift + Mute = solo. 1 touch.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t33">
+  <header><span class="tid">3 2 T33</span><h4>&ldquo;Chorus: drums, bass and chords to pattern 2 together&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, patterns 1 playing; pattern 2 written in slots 1, 2, 4.</p>
+  <div class="tbl"><table class="steps"><thead><tr><th>#</th><th>Action</th><th>Thumb</th><th>Where</th><th>Shift</th></tr></thead><tbody><tr><td class="n">1</td><td>Tap Shift; drag Pattern to 2</td><td><span class="thumb tr">R</span></td><td><span class="zone st" title="stretch"></span>top bar, strip 2</td><td><span class="shift">Shift</span></td></tr><tr><td class="n">2</td><td>Swipe to slot 2; Pattern to 2; swipe to slot 4; Pattern to 2</td><td><span class="thumb tl">L, R</span></td><td><span class="zone in" title="in reach"></span>display, strip 2</td><td><span class="shift">Shift</span></td></tr><tr><td class="n">3</td><td>Tap Shift off</td><td><span class="thumb tr">R</span></td><td><span class="zone st" title="stretch"></span>top bar, right</td><td>–</td></tr></tbody></table></div>
+  <ul class="score"><li class="warn"><b>7</b> touches</li><li class="warn"><b>slots switch at different bars</b> risk</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>You can't write pattern 2 while pattern 1 plays: Seq only edits the playing pattern.</li><li>No view of which patterns hold notes; no copy to start from.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Switch all slots at once; edit any pattern while another plays (a pattern row on the display); copy into an empty pattern.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t34">
+  <header><span class="tid">3 2 T34</span><h4>&ldquo;Let me hear just this part while I fix it&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, slot 2, playing.</p>
+  
+  <ul class="score"><li class="bad"><b>10–14 touches</b> isolate</li><li class="bad"><b>not possible</b> hear one step</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>Muting the others is a Mixer detour; a step loop pins both thumbs.</li><li>Hearing a step's note without changing it isn't possible: a key overwrites it.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>Shift + Mute = solo; long-pressing a pad plays its note or chord once.</li></ul></div>
+  </div>
+</article>
+
+<article class="task" id="3-2-t35">
+  <header><span class="tid">3 2 T35</span><h4>&ldquo;Is it safe to edit while it&#x27;s playing?&rdquo;</h4></header>
+  
+  <p class="start"><span class="lbl">Start</span>Seq, any synth slot.</p>
+  
+  <ul class="score"><li class="warn"><b>3</b> hidden rules</li></ul>
+  <div class="fi">
+    <div class="friction"><h5>Friction</h5><ul><li>With Record armed, keys played into a selected step also record at the playhead, so stray notes stack.</li><li>When a queued pattern switch lands, your selection disappears.</li><li>Pads stay on the chosen page while the playhead moves on.</li></ul></div>
+    <div class="ideal"><h5>Ideal flow</h5><ul><li>While Record is armed, selecting a step stops note recording; optional page follow; keep the selection after a switch.</li></ul></div>
+  </div>
+</article>
+<div class="gaps"><h5>Gaps</h5><ul><li>No move, copy, insert or rotate.</li><li>No relative transpose or transpose-to-key.</li><li>No per-step slide; no unquantised record; no humanise spread.</li><li>No copy of a part to another slot; mute only on the Mixer; no solo.</li><li>Can't edit a pattern that isn't playing.</li><li>Shift-layer strips 2 and 3 are unused with steps selected: room for Slide and Spread.</li></ul></div>
 <h3 id="s3-2-views">Proposed views</h3>
 <ol class="proposals">
 <li><b>Note names on lit pads.</b> A small “A2” label, or “C·3” for a three-note chord. The cheapest win.</li>
@@ -642,6 +978,40 @@ a { color:var(--blue) }
 <li><b>Read without risk.</b> Selecting a step doesn't arm the keys until a key is deliberately pressed; a long-press that drifts cancels instead of toggling.</li>
 </ol>
 <div class="gaps"><h5>Gaps</h5><ul><li>No copy of a pattern, page or step.</li><li>Clear also resets Length, Rate, Gate and Shuffle.</li><li>Undo is lost on restart and doesn't cover key, scale or tempo.</li></ul></div>
+</section>
+<section id="s8"><h2><span class="num">8</span>Ideas from other grooveboxes</h2>
+<p class="lede">Workflows musicians use all the time on pocket grooveboxes and pad controllers that this app doesn't support yet, each mapped onto our two-thumb grammar. Ideas only: no names, layouts or looks are borrowed. Ranked by value to the Noodler against effort (S ≈ 1–3 days, UI only; M touches the engine or the save format; L is a new subsystem). “+ Shift” means a stretch to the Shift button and back.</p>
+<div class="tbl"><table class="ideas"><thead><tr><th>#</th><th>Goal</th><th>Today</th><th>Proposed flow</th><th>Touches</th><th>Value</th><th>Effort</th><th>Release</th></tr></thead><tbody><tr><td class="n">1</td><td><b>How do I double my beat?</b><div class="sub2">One button doubles the loop and copies its notes and automation.</div></td><td>Not possible (≈18 touches by hand).</td><td><b>×2 chip</b> in the Seq footer beside Undo: Length × 2, content copied with every value and motion; Shift + ×2 halves.</td><td class="c">1</td><td class="c"><span class="pill v-high">High</span></td><td class="c">S</td><td class="c">v1</td></tr><tr><td class="n">2</td><td><b>Copy bar 1 into bar 2 / 3 / 4</b><div class="sub2">Page copy and paste.</div></td><td>Not possible.</td><td>Shift + tap page <i>n</i> on the rail copies the page you're viewing there.</td><td class="c">1 + Shift</td><td class="c"><span class="pill v-high">High</span></td><td class="c">S</td><td class="c">v1</td></tr><tr><td class="n">3</td><td><b>Make a variation of this pattern</b><div class="sub2">Duplicate a clip or pattern.</div></td><td>Not possible; new patterns are empty.</td><td><b>Dup chip</b>: copies into the next empty pattern and queues it; Shift + Dup copies without switching.</td><td class="c">1</td><td class="c"><span class="pill v-high">High</span></td><td class="c">S</td><td class="c">v1</td></tr><tr><td class="n">4</td><td><b>How do I quantise my beat?</b><div class="sub2">Quantise with a strength; record loose, tighten after.</div></td><td>Recording always snaps and loses the feel.</td><td>Recording keeps the feel (offset → nudge); <b>Q chip</b> tightens 100%, Shift + Q 50%.</td><td class="c">1</td><td class="c"><span class="pill v-high">High</span></td><td class="c">S / M</td><td class="c">v1</td></tr><tr><td class="n">5</td><td><b>Drop the kick for a bar</b><div class="sub2">Mute / solo per track or sound.</div></td><td>Partial: slot mute on the Mixer only.</td><td>Shift + tap a sound-grid cell mutes that sound; Shift + double-tap solos.</td><td class="c">1 + Shift</td><td class="c"><span class="pill v-high">High</span></td><td class="c">S–M</td><td class="c">v1</td></tr><tr><td class="n">6</td><td><b>Hats on every 2nd step</b><div class="sub2">Fill / Euclidean helpers.</div></td><td>Not possible; tap each pad.</td><td>Shift + tap pad A, then pad B: fills the lane every B − A steps.</td><td class="c">2 + Shift</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">S</td><td class="c">v1</td></tr><tr><td class="n">7</td><td><b>Give me a click and a count-in</b><div class="sub2">Metronome and count-in.</div></td><td>None.</td><td>Shift + tap Record toggles the click; arming while stopped gives a 1-bar count-in.</td><td class="c">1 + Shift</td><td class="c"><span class="pill v-high">High</span></td><td class="c">M</td><td class="c">v1</td></tr><tr><td class="n">8</td><td><b>That was good, keep it!</b><div class="sub2">Capture what you just played without recording.</div></td><td>Not possible; an idea played unarmed is lost.</td><td>The engine keeps the last 8 bars of played notes; long-press Record keeps them as a pattern.</td><td class="c">1</td><td class="c"><span class="pill v-high">High</span></td><td class="c">M</td><td class="c">v1 / v1.1</td></tr><tr><td class="n">9</td><td><b>Play chords with two thumbs</b><div class="sub2">Chord and scale modes on pads.</div></td><td>Badly: 3–4 fingers.</td><td>A Play rail item on Synth: Chord (1 / 3 / 4 notes in key), Spread, Key, Scale.</td><td class="c">1 per chord</td><td class="c"><span class="pill v-high">High</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">10</td><td><b>Sweep a filter over the whole mix · stutter the bar end</b><div class="sub2">Master performance effects.</div></td><td>None.</td><td>A Master channel on the Mixer: DJ filter, Repeat, Drive, Click level.</td><td class="c">2</td><td class="c"><span class="pill v-high">High</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">11</td><td><b>Arpeggiate this chord</b><div class="sub2">Arpeggiator.</div></td><td>Backlog.</td><td>Play rail · Shift: Arp mode, Rate, Octaves, Latch; records steps when armed.</td><td class="c">2 + hold</td><td class="c"><span class="pill v-high">High</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">12</td><td><b>Roll the hats twice on this step</b><div class="sub2">Ratchet / retrigger.</div></td><td>None.</td><td>Step Shift strip 2 = Ratchet (1–4).</td><td class="c">3 + Shift</td><td class="c"><span class="pill v-high">High</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">13</td><td><b>Surprise me</b><div class="sub2">Random and generative sequencers.</div></td><td>Chance only.</td><td><b>Dice chip</b>: re-rolls the lane or the notes in key; undoable.</td><td class="c">1</td><td class="c"><span class="pill v-high">High</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">14</td><td><b>Play this only every 4th time / only in the fill</b><div class="sub2">Conditional steps and fill.</div></td><td>Chance only.</td><td>Step Shift strip 3 = Cond (1:2 … 4:4, First, Fill); hold the overview for Fill.</td><td class="c">3 + Shift</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">15</td><td><b>Copy these steps over there</b><div class="sub2">Copy / paste steps with spacing.</div></td><td>None.</td><td>With steps selected, Shift + tap a pad pastes them there.</td><td class="c">2 + Shift</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">S</td><td class="c">v1</td></tr><tr><td class="n">16</td><td><b>Switch everything to the chorus</b><div class="sub2">Scenes, chains, song mode.</div></td><td>Partial: per slot.</td><td>Pattern row with content dots; Shift + tap switches all slots; hold A + tap B chains.</td><td class="c">1 + Shift</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">17</td><td><b>Save this jam and start a new one</b><div class="sub2">Sets / projects.</div></td><td>One autosaved session.</td><td>Long-press the Tape tab: sketchbook strip (New, Duplicate, load).</td><td class="c">2</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">18</td><td><b>Undo that sound tweak</b><div class="sub2">Undo everywhere.</div></td><td>Seq and Tape only.</td><td>One history across screens; the Undo chip on every display footer.</td><td class="c">1</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">M</td><td class="c">v1</td></tr><tr><td class="n">19</td><td><b>Transpose the whole tune up 2</b><div class="sub2">Live transpose.</div></td><td>Partial: octave only; Note strip bug.</td><td>Shift + tap a key transposes every synth slot relative to C.</td><td class="c">1 + Shift</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">20</td><td><b>Record over it · erase the snare while it plays</b><div class="sub2">Replace record; erase while recording.</div></td><td>Overdub only.</td><td>Shift + Record = replace; hold a grid cell + Clear erases that sound as the playhead passes.</td><td class="c">2</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">21</td><td><b>Roll the hats with my thumb</b><div class="sub2">Note repeat.</div></td><td>None.</td><td>Shift + hold a kit key repeats at the Seq Rate; strip 1 becomes Rate while held.</td><td class="c">1 + Shift</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">22</td><td><b>Lock the cutoff only on step 7</b><div class="sub2">Per-step parameter locks on any parameter.</div></td><td>Only by recording motion.</td><td>Selected steps stay selected across screens; a strip drag on Synth writes that step's motion.</td><td class="c">≈5</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">23</td><td><b>Same swing on drums and bass</b><div class="sub2">Global swing.</div></td><td>Per slot and pattern.</td><td>Shift + double-tap Shuffle copies it to all slots.</td><td class="c">1 + Shift</td><td class="c"><span class="pill v-low">Low</span></td><td class="c">S</td><td class="c">v1</td></tr><tr><td class="n">24</td><td><b>Tap in the tempo</b><div class="sub2">Tap tempo.</div></td><td>Drag only.</td><td>Tap the tempo readout 3+ times; long-press = 120.</td><td class="c">3–4</td><td class="c"><span class="pill v-low">Low</span></td><td class="c">S</td><td class="c">v1</td></tr><tr><td class="n">25</td><td><b>Share this loop</b><div class="sub2">Export a loop directly.</div></td><td>Commit to tape, then export.</td><td>Shift + Export renders the current patterns × N bars offline.</td><td class="c">2 + Shift</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">S–M</td><td class="c">v1.1</td></tr><tr><td class="n">26</td><td><b>Cut this bar and paste it there (tape)</b><div class="sub2">Tape lift / drop / splice.</div></td><td>Clear, undo, loop region only.</td><td>Tape Shift: long-press a lane lifts the loop region; double-tap drops it.</td><td class="c">2 + Shift</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">L</td><td class="c">later</td></tr><tr><td class="n">27</td><td><b>Tape stop · scrub · stutter</b><div class="sub2">Tape performance tricks.</div></td><td>Fixed speeds and reverse.</td><td>Drag the lane picture to scrub, flick down for tape stop (owner call).</td><td class="c">1</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">M</td><td class="c">v1.1</td></tr><tr><td class="n">28</td><td><b>Turn this tape loop into a drum sound</b><div class="sub2">Resample.</div></td><td>None.</td><td>Tape: Shift + long-press a lane puts the loop region on the selected kit sound (no mic needed).</td><td class="c">2 + Shift</td><td class="c"><span class="pill v-high">High</span></td><td class="c">L</td><td class="c">later</td></tr><tr><td class="n">29</td><td><b>Sample my voice</b><div class="sub2">Mic sampling.</div></td><td>None (spec: later).</td><td>Same as #28 with the mic; permission asked on first use only.</td><td class="c">–</td><td class="c"><span class="pill v-med">Medium</span></td><td class="c">L</td><td class="c">later</td></tr><tr><td class="n">30</td><td><b>Export stems</b><div class="sub2">Per-track export.</div></td><td>Master only.</td><td>Shift + long-press Export: the 4 tape tracks + the mix.</td><td class="c">2</td><td class="c"><span class="pill v-low">Low</span></td><td class="c">S–M</td><td class="c">v1.1</td></tr><tr><td class="n">31</td><td><b>Shift the whole beat one step later</b><div class="sub2">Rotate a lane.</div></td><td>None.</td><td>Shift + swipe on the overview rotates one step per detent.</td><td class="c">1 + Shift</td><td class="c"><span class="pill v-low">Low</span></td><td class="c">S</td><td class="c">v1.1</td></tr><tr><td class="n">32</td><td><b>Sync to other gear</b><div class="sub2">MIDI and clock.</div></td><td>v1.1 backlog.</td><td>No change.</td><td class="c">–</td><td class="c"><span class="pill v-low">Low</span></td><td class="c">L</td><td class="c">v1.1</td></tr></tbody></table></div>
+<p><b>Suggested v1 bundle:</b> one footer row on Seq — Undo · ×2 · Dup · Q — all for the left thumb; page copy and step paste on Shift + tap; sound mute and solo; click and count-in; swing to all slots and tap tempo. Capture (#8) is the closest match to “never lose an idea” but needs an audio-thread review.</p>
+
+<h3 id="s8-double">Worked proposal: “How do I double my beat?”</h3>
+<p><b>Today:</b> drag Length 16 → 32, tap page 2, re-enter every hit lane by lane: about 18 touches for a beat, 12–25 for a bassline. Shortening a pattern keeps its hidden steps, so lengthening can also bring old notes back.</p>
+<ol class="proposals">
+<li><b>×2 chip (recommended).</b> In the Seq footer beside Undo. Length L becomes 2L; steps 1…L are copied into L+1…2L with every hit value and the motion lanes. Dimmed above 32 steps; works for odd lengths (12 → 24). The playhead keeps its place, so nothing jumps; the pads move to the new page and flash “×2 · 32 steps”. One undo step. Shift + ×2 halves. <b>1 touch, left thumb, no Shift.</b></li>
+<li><b>Page copy (with it).</b> Shift + tap a page number copies the page you're viewing there: the tool for “now vary bar 2” or “bar 1 into bar 4”. 1 touch + Shift.</li>
+<li><b>Lengthening repeats automatically (not recommended).</b> No new control, but hidden, and you can't make empty space on purpose.</li>
+<li><b>Double all slots (later).</b> Shift + long-press ×2. Useful before a tape commit, heavy-handed otherwise.</li>
+</ol>
+<p class="meta">Implementation: Kotlin only (PatternStore and PatternHistory, through the existing setters). No audio-callback change.</p>
+
+<h3 id="s8-quantise">Worked proposal: “How do I quantise my beat?”</h3>
+<p><b>The catch:</b> today you can't play an unquantised beat in the first place. Live recording snaps every hit to the nearest step with nudge 0 and drops held lengths, so quantising has two parts: let recording keep the feel, then give a one-touch way to tighten it. Our hits already have nudge (±½ step) and length, so a loose hit is exactly “nearest step + nudge”: no save-format change.</p>
+<ol class="proposals">
+<li><b>Recording keeps the feel (prerequisite).</b> The engine already knows the exact frame of each played note; it writes the offset as nudge and the held time as length. Arithmetic only on the audio thread (no allocation or lock), one extra field in the recorded-event queue, with a host test that the offset is sample-exact.</li>
+<li><b>Q chip (recommended).</b> In the footer beside Undo and ×2. Tap = tighten 100% (nudge × 0) for the selected steps, else the current drum sound, else the whole synth pattern. Shift + Q = the whole pattern at 50%: tighter but still human. Recorded lengths round to the nearest 1/16. Swing is applied on top, so it stays. The chip glows when there's something loose to tighten. One undo step. <b>1 touch.</b></li>
+<li><b>A live Quantise % per pattern (v1.1 option).</b> Dial between loose and tight while listening; nothing is lost. But every strip slot is taken, and “stored vs heard nudge” gets confusing.</li>
+<li><b>Quantise while recording (fallback).</b> Keep today's snap as an option (Shift + long-press Record toggles Snap / Feel). Default: Feel.</li>
+</ol>
+<p><b>The resulting flow for “I jammed a beat and it's sloppy”:</b> play (the feel is kept), then tap <b>Q</b>. Today that's 2 + N touches per lane, and only works on nudges you set yourself.</p>
+
+<h3 id="s8-questions">Open questions for the owner</h3>
+<ol class="proposals">
+<li>Should live record keep the feel by default (recommended) or keep snapping?</li>
+<li>Footer chips Undo · ×2 · Dup · Q: room for all four, or Dup and Q on Shift + ×2 / Shift + Undo?</li>
+<li>Capture (keep what you just played) in v1?</li>
+<li>Sound mute on Seq takes Shift + tap on the grid: acceptable that tap-to-hear is lost while Shift is latched?</li>
+<li>Kick position in the drum grid: bottom-left or top-left?</li>
+</ol>
 </section>
 <section id="later"><h2><span class="num">…</span>Not written yet</h2>
 <ul class="todo"><li>0 Getting started (the screen, the grip, Shift, Play and Record, gestures)</li><li>3.3 Patterns and 3.4 Putting parts together</li>
