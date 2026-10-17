@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Drum screen proposed</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1040px; height: 480px; box-sizing: border-box; background: #121214; color: #ECE9E2; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px">
+
+<div style="height: 48px; display: flex; align-items: center; gap: 10px">
+<div style="display: flex; gap: 4px">
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Synth</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #ECE9E2; color: #121214; font-weight: 700; font-size: 14px">Drum</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Seq</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Tape</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Mixer</span>
+</div>
+<div style="display: flex; gap: 4px">
+<sc-for list="{{slots}}" as="s" hint-placeholder-count="8">
+<span style="{{s.style}}">{{s.n}}</span>
+</sc-for>
+</div>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 22px">120.0 <span style="font-size: 12px; color: #A9A69F">BPM</span></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #3DD68C; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="#121214"></rect></svg></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="none" stroke="#FF6B57" stroke-width="2"></circle></svg></span>
+<span style="min-width: 72px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px">Shift</span>
+</div>
+
+<div style="height: 220px; display: flex; gap: 10px">
+<div style="flex-grow: 1; border-radius: 16px; background: #1C1C20; padding: 12px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; min-width: 0">
+<div style="display: flex; align-items: baseline; gap: 10px">
+<span style="font-size: 20px; font-weight: 700">Kit</span>
+<span style="font-size: 13px; color: #A9A69F">slot 1 · Snare (Crack Snare)</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #A9A69F">MAIN · pitch / decay / tone / level</span>
+</div>
+<div style="flex-grow: 1; display: flex; gap: 14px; min-height: 0">
+<div role="img" aria-label="Kit grid, the same as on Seq: Kick bottom-left, Snare selected, Ride muted" style="width: 212px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(0, 1fr)); gap: 4px">
+<sc-for list="{{kit}}" as="k" hint-placeholder-count="16">
+<span style="{{k.style}}">{{k.name}}<span style="{{k.dot}}"></span></span>
+</sc-for>
+</div>
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+<svg role="img" aria-label="Decay shape of the snare" width="100%" height="110" viewBox="0 0 400 110" preserveAspectRatio="none">
+<path d="M0 6 C40 6 70 60 150 86 C230 104 320 108 400 109 L400 110 L0 110 Z" fill="#FFC23D" opacity="0.18"></path>
+<path d="M0 55 L6 10 L12 95 L18 20 L24 88 L30 30 L36 80 L42 38 L48 74 L56 44 L64 68 L74 48 L86 64 L100 52 L120 60 L150 55 L200 57 L400 55" fill="none" stroke="#FF6B57" stroke-width="2"></path>
+</svg>
+<div style="display: flex; gap: 6px; align-items: center">
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #A9A69F; width: 64px">this beat</span>
+<sc-for list="{{lane}}" as="c" hint-placeholder-count="16">
+<span style="{{c.style}}"></span>
+</sc-for>
+</div>
+</div>
+</div>
+<div style="display: flex; align-items: center; gap: 6px">
+<span style="height: 30px; padding: 0 12px; border-radius: 8px; display: flex; align-items: center; font-size: 13px; font-weight: 700; background: #2B2B31; color: #ECE9E2">Undo</span>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #A9A69F; margin-left: 8px">Pitch 0 st · Decay 62% · Tone 8.4k · Level 80%</span>
+</div>
+</div>
+<div style="width: 332px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<div style="{{s.box}}">
+<span style="{{s.fillStyle}}"></span>
+<span style="{{s.labelStyle}}">{{s.label}}</span>
+<span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #FFFFFF">{{s.value}}</span>
+</div>
+</sc-for>
+</div>
+</div>
+
+<div role="img" aria-label="Drum pads: the 16 kit sounds as two 4 by 2 blocks, one under each thumb, in the same order as the grid" style="flex-grow: 1; display: flex; gap: 18px">
+<sc-for list="{{blocks}}" as="b" hint-placeholder-count="2">
+<div style="flex: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 6px">
+<sc-for list="{{b.pads}}" as="p" hint-placeholder-count="8">
+<span style="{{p.style}}">{{p.name}}</span>
+</sc-for>
+</div>
+</sc-for>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1040,"height":480}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const mono = 'font-family: IBM Plex Mono, monospace; ';
+    const slots = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
+      n,
+      style: 'width: 38px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; ' + mono + 'font-size: 14px; ' +
+        (n === 1 ? 'background: #FF6B57; color: #121214' : 'background: #1C1C20; color: #A9A69F')
+    }));
+    const names = ['MdTom', 'HiTom', 'Block', 'Shakr', 'OHat', 'Crash', 'Ride', 'LoTom', 'Clap', 'Rim', 'CHat', 'Tick', 'Kick', 'Punch', 'Crack', 'Snare'];
+    const used = new Set(['Kick', 'Snare', 'CHat', 'OHat', 'Clap']);
+    const kit = names.map((name) => {
+      const sel = name === 'Snare';
+      const muted = name === 'Ride';
+      return {
+        name: muted ? name + ' M' : name,
+        style: 'position: relative; border-radius: 8px; display: flex; align-items: center; justify-content: center; ' + mono + 'font-size: 11px; ' +
+          (sel ? 'background: #ECE9E2; color: #121214; font-weight: 500' : muted ? 'background: transparent; border: 1.5px dashed #FF6B57; color: #FF6B57' : 'background: #26262B; color: #ECE9E2'),
+        dot: used.has(name) ? 'position: absolute; right: 5px; top: 5px; width: 5px; height: 5px; border-radius: 3px; background: ' + (sel ? '#121214' : '#A9A69F') : 'display: none'
+      };
+    });
+    const snare = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0.3, 0];
+    const lane = snare.map((v, i) => ({
+      style: 'flex: 1; height: 14px; border-radius: 3px; background: ' + (v > 0 ? 'rgba(236,233,226,' + (0.35 + 0.65 * v).toFixed(2) + ')' : '#26262B') + (i === 8 ? '; box-shadow: inset 0 0 0 2px #3DD68C' : '')
+    }));
+    const colours = ['#FF6B57', '#FFC23D', '#3DD68C', '#4F8BFF'];
+    const strips = [
+      { label: 'Pitch', value: '0 st', pct: 50 }, { label: 'Decay', value: '62%', pct: 62 },
+      { label: 'Tone', value: '8.4k', pct: 70 }, { label: 'Level', value: '80%', pct: 80 }
+    ].map((s, i) => ({
+      ...s,
+      box: 'position: relative; overflow: hidden; border-radius: 14px; background: #1C1C20; padding: 10px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px',
+      labelStyle: 'position: relative; font-size: 14px; font-weight: 700; color: ' + colours[i],
+      fillStyle: 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + Math.min(s.pct, 76) + '%; background: ' + colours[i] + '38; border-top: 3px solid ' + colours[i]
+    }));
+    // The 16 sounds as two 4 x 2 blocks, same order as the grid: left block = bottom two grid rows, right block = top two.
+    const pad = (name) => ({
+      name,
+      style: 'border-radius: 10px; display: flex; align-items: flex-end; padding: 0 0 8px 10px; ' + mono + 'font-size: 12px; ' +
+        (name === 'Snare' ? 'background: #ECE9E2; color: #121214; font-weight: 500' :
+          name === 'Ride' ? 'background: #1C1C20; color: #FF6B57; box-shadow: inset 0 0 0 1.5px #FF6B57' : 'background: #2B2B31; color: #ECE9E2')
+    });
+    const blocks = [
+      { pads: ['Clap', 'Rim', 'CHat', 'Tick', 'Kick', 'Punch', 'Crack', 'Snare'].map(pad) },
+      { pads: ['MdTom', 'HiTom', 'Block', 'Shakr', 'OHat', 'Crash', 'Ride', 'LoTom'].map(pad) }
+    ];
+    return { slots, kit, lane, strips, blocks };
+  }
+}
+</script>
+</body>
+</html>
