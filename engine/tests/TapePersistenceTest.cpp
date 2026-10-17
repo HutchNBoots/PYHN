@@ -527,7 +527,7 @@ TEST(TapePersistence, LaunchOrderRestoresTheTape) {
     ASSERT_TRUE(g->setTapeStorageDir(dir.path()));
     for (int i = 0; i < 10000; ++i) {
         const int slot = i % kSlotCount, note = 48 + i % 24;
-        g->sequencer().setStep(slot, i % 16, (i / 16) % 64, true, &note, 1, 0.8f, -1.0f, 1.0f);
+        g->sequencer().setStep(slot, i % 16, (i / 16) % 64, {Hit{note, 0.8f}});
         if (i % 1000 == 999) g->applyPendingCommands();  // AudioEngine::submit with no stream
     }
     g->applyPendingCommands();
@@ -543,4 +543,39 @@ TEST(TapePersistence, LaunchOrderRestoresTheTape) {
     for (int i = 0; i < 200; ++i) g->render(out.data(), 256, 2);
     EXPECT_TRUE(g->flushTape(2000, {}));
     EXPECT_EQ(readAll(dir.file(tapefile::kMetaName)), metaBefore) << "nothing changed, nothing rewritten";
+}
+
+// Build-20: the tape's tempo is saved with it, as its bar length (tape-meta.bin frames per
+// bar, the first take's tempo rounded to frames as the sequencer rounds it, which maps back
+// to one 0.1 BPM tempo). So tapes saved before build-20 load with their own tempo too. In a
+// session at another tempo the loaded tape plays varispeed, and records only at its tempo.
+TEST(TapePersistence, TheTapeTempoIsSavedAndLoadsBack) {
+    TempDir dir;
+    constexpr int64_t kBar1337 = 86163;  // 133.7 BPM at 48 kHz
+    {
+        Saved a(dir.path(), kBar1337);
+        firstTake(a.rig, 0, 2);
+        ASSERT_TRUE(a.flushRunning());
+        EXPECT_EQ(readMeta(dir.path()).barFrames, kBar1337);
+    }
+    Saved b(dir.path(), 96000);  // the session is at 120 BPM
+    b.loadRunning();
+    TapeState s = b.rig.state();
+    EXPECT_EQ(s.barFrames, kBar1337);
+    EXPECT_EQ(s.lengthBars, 2);
+    EXPECT_NEAR(s.tempoBpm, 133.7f, 1e-4f);
+    EXPECT_FALSE(s.tempoMatches);
+    b.rig.play();
+    b.rig.run(9600);
+    // Varispeed at 86163 / 96000 tape frames per frame.
+    EXPECT_NEAR(static_cast<double>(b.rig.state().headFrame), 9600.0 * kBar1337 / 96000.0, 1.0);
+    b.rig.tape->armRecord(1);
+    b.rig.run(96);
+    EXPECT_EQ(b.rig.state().armedTrack, -1);
+    b.rig.bar = kBar1337;  // back at the tape's tempo
+    b.rig.run(96);
+    EXPECT_TRUE(b.rig.state().tempoMatches);
+    b.rig.tape->armRecord(1);
+    b.rig.run(96);
+    EXPECT_EQ(b.rig.state().armedTrack, 1);
 }

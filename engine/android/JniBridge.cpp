@@ -45,8 +45,8 @@ constexpr jsize kTransportSize = 3 + 3 * groove::kSlotCount;
 constexpr jsize kRecordSize = 6;
 constexpr int kMaxRecordsPerPoll = 64;
 // TapeState.SIZE: [lengthFrames, lengthBars, barFrames, headFrame, recordingTrack, armedTrack,
-// canUndo, canRedo, hasAudio x4, loading].
-constexpr jsize kTapeStateSize = 9 + groove::Tape::kTracks;
+// canUndo, canRedo, hasAudio x4, loading, tempoBpm, tempoMatches].
+constexpr jsize kTapeStateSize = 11 + groove::Tape::kTracks;
 constexpr jsize kOverviewBins = groove::Tape::kOverviewBins;
 // NativeEngine.METER_BUFFER_SIZE: [level x15 (channels 0..11, delay, reverb, master), reserved,
 // clip x15 (1 or 0, same order), reserved]. Levels are linear peak amplitudes.
@@ -301,23 +301,34 @@ JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeSetPatternSe
     engine().submit([&] { return seq().setPatternSettings(slot, pattern, length, rate, shuffle, gate); });
 }
 
-JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeSetStep(JNIEnv* env, jobject, jint slot,
-                                                                            jint pattern, jint step, jboolean on,
-                                                                            jintArray notes, jfloat velocity,
-                                                                            jfloat gate, jfloat probability) {
-    if (!validSlot(slot) || !validPattern(pattern) || !validStep(step)) return;
-    std::array<jint, groove::kMaxNotesPerStep> buffer{};
-    jsize count = 0;
-    if (notes != nullptr) {
-        count = std::min<jsize>(env->GetArrayLength(notes), groove::kMaxNotesPerStep);  // extra notes ignored
-        if (count > 0) env->GetIntArrayRegion(notes, 0, count, buffer.data());
+// NativeEngine.HIT_FIELDS: note, velocity, length, probability, nudge (Pattern.h, Hit).
+constexpr jint kHitFields = 5;
+
+JNIEXPORT jboolean JNICALL Java_com_groovebox_engine_NativeEngine_nativeSetStep(JNIEnv* env, jobject, jint slot,
+                                                                                jint pattern, jint step,
+                                                                                jfloatArray hits, jint hitCount) {
+    if (!validSlot(slot) || !validPattern(pattern) || !validStep(step)) return JNI_TRUE;  // ignored, as the engine does
+    const jint count = std::clamp<jint>(hitCount, 0, groove::kMaxHitsPerStep);  // extra hits ignored
+    std::array<jfloat, static_cast<std::size_t>(groove::kMaxHitsPerStep * kHitFields)> buffer{};
+    if (count > 0) {
+        if (hits == nullptr || env->GetArrayLength(hits) < count * kHitFields) return JNI_FALSE;
+        env->GetFloatArrayRegion(hits, 0, count * kHitFields, buffer.data());
     }
-    std::array<int, groove::kMaxNotesPerStep> values{};
-    for (jsize i = 0; i < count; ++i) values[static_cast<std::size_t>(i)] = buffer[static_cast<std::size_t>(i)];
-    engine().submit([&] {
-        return seq().setStep(slot, pattern, step, on == JNI_TRUE, values.data(), static_cast<int>(count), velocity,
-                             gate, probability);
-    });
+    std::array<groove::Hit, groove::kMaxHitsPerStep> values{};
+    for (jint i = 0; i < count; ++i) {
+        const jfloat* f = &buffer[static_cast<std::size_t>(i * kHitFields)];
+        groove::Hit& h = values[static_cast<std::size_t>(i)];
+        // The note travels as a float (exact for 0..127); clamp before rounding. The engine
+        // clamps every other field (Sequencer::sanitizeHit).
+        h.note = std::isnan(f[0]) ? 0 : static_cast<int>(std::lround(std::clamp(f[0], 0.0f, 127.0f)));
+        h.velocity = f[1];
+        h.length = f[2];
+        h.probability = f[3];
+        h.nudge = f[4];
+    }
+    return engine().submit([&] { return seq().setStep(slot, pattern, step, values.data(), static_cast<int>(count)); })
+               ? JNI_TRUE
+               : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeSetMotionValue(JNIEnv*, jobject, jint slot,
@@ -495,6 +506,8 @@ JNIEXPORT void JNICALL Java_com_groovebox_engine_NativeEngine_nativeGetTapeState
         values[8 + i] = t.hasAudio[i] ? 1.0 : 0.0;
     }
     values[8 + groove::Tape::kTracks] = t.loading ? 1.0 : 0.0;
+    values[9 + groove::Tape::kTracks] = static_cast<jdouble>(t.tempoBpm);
+    values[10 + groove::Tape::kTracks] = t.tempoMatches ? 1.0 : 0.0;
     env->SetDoubleArrayRegion(out, 0, kTapeStateSize, values.data());
 }
 

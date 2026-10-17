@@ -1,11 +1,13 @@
 package com.groovebox.storage
 
+import com.groovebox.ui.model.Hit
 import com.groovebox.ui.model.KeyScale
 import com.groovebox.ui.model.LanePoint
 import com.groovebox.ui.model.LaneSnapshot
 import com.groovebox.ui.model.PatternSettings
 import com.groovebox.ui.model.PatternSnapshot
 import com.groovebox.ui.model.Scale
+import com.groovebox.ui.model.SeqLimits
 import com.groovebox.ui.model.Step
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -38,11 +40,16 @@ import java.util.zip.CRC32
  *  - 1: M4, the first shipped format.
  *  - 2: F8, the key and scale at the end of the payload (root int, scale name). A version 1
  *    file loads with the scale off, which is how it played.
+ *  - 3: build-20, steps as hits: per step its index, a hit count (0..8), then per hit note
+ *    int, velocity, length, probability, nudge floats. Versions 0..2 stored one set of values
+ *    per step (on, notes, velocity, gate, probability): they load as one hit per note with
+ *    the step's velocity, its gate as the length (-1 = the pattern's gate) and probability,
+ *    nudge 0; steps that were off, or had no note, are dropped.
  *
  * Pure Kotlin.
  */
 object SessionCodec {
-    const val VERSION = 2
+    const val VERSION = 3
     private const val MAGIC = 0x47425853 // "GBXS"
     private const val HEADER_BYTES = 12
     private const val TRAILER_BYTES = 4
@@ -157,7 +164,7 @@ object SessionCodec {
             }
         }
         out.writeInt(s.patterns.size)
-        for (p in s.patterns) writePattern(out, p)
+        for (p in s.patterns) writePattern(out, p, version)
         if (version >= 2) {
             out.writeInt(s.keyScale.root)
             out.writeUTF(s.keyScale.scale.name)
@@ -201,13 +208,13 @@ object SessionCodec {
         } else {
             emptyMap()
         }
-        val patterns = List(count(input)) { readPattern(input) }
+        val patterns = List(count(input)) { readPattern(input, version) }
         // A root out of range falls back to C and an unknown scale name to Off, rather than failing the load.
         val keyScale = if (version >= 2) KeyScale.of(input.readInt(), Scale.named(input.readUTF())) else KeyScale.OFF
         return Session(tempo, ui, synths, drum, mix, channels, patterns, current, locks, keyScale)
     }
 
-    private fun writePattern(out: DataOutputStream, p: PatternSnapshot) {
+    private fun writePattern(out: DataOutputStream, p: PatternSnapshot, version: Int) {
         out.writeInt(p.slot)
         out.writeInt(p.pattern)
         out.writeInt(p.settings.length)
@@ -217,11 +224,24 @@ object SessionCodec {
         out.writeInt(p.steps.size)
         for ((i, step) in p.steps.toSortedMap()) {
             out.writeInt(i)
-            out.writeBoolean(step.on)
-            writeInts(out, step.notes)
-            out.writeFloat(step.velocity)
-            out.writeFloat(step.gate)
-            out.writeFloat(step.probability)
+            if (version >= 3) {
+                out.writeInt(step.hits.size)
+                for (h in step.hits) {
+                    out.writeInt(h.note)
+                    out.writeFloat(h.velocity)
+                    out.writeFloat(h.length)
+                    out.writeFloat(h.probability)
+                    out.writeFloat(h.nudge)
+                }
+            } else {
+                // The older layout (upgrade-path tests only): the first hit's values for the step.
+                val first = step.hits.firstOrNull() ?: Hit(0)
+                out.writeBoolean(step.on)
+                writeInts(out, step.notes)
+                out.writeFloat(first.velocity)
+                out.writeFloat(first.length)
+                out.writeFloat(first.probability)
+            }
         }
         out.writeInt(p.lanes.size)
         for (lane in p.lanes) {
@@ -235,7 +255,7 @@ object SessionCodec {
         }
     }
 
-    private fun readPattern(input: DataInputStream): PatternSnapshot {
+    private fun readPattern(input: DataInputStream, version: Int): PatternSnapshot {
         val slot = input.readInt()
         val pattern = input.readInt()
         val settings = PatternSettings(input.readInt(), input.readInt(), input.readFloat(), input.readFloat())
@@ -243,13 +263,22 @@ object SessionCodec {
         val steps = LinkedHashMap<Int, Step>(n)
         repeat(n) {
             val i = input.readInt()
-            steps[i] = Step(
-                on = input.readBoolean(),
-                notes = readInts(input),
-                velocity = input.readFloat(),
-                gate = input.readFloat(),
-                probability = input.readFloat(),
-            )
+            if (version >= 3) {
+                val hits = input.readInt()
+                if (hits < 0 || hits > SeqLimits.HITS) throw IOException("bad hit count $hits")
+                steps[i] = Step(List(hits) { Hit(input.readInt(), input.readFloat(), input.readFloat(), input.readFloat(), input.readFloat()) })
+            } else {
+                val on = input.readBoolean()
+                val notes = readInts(input)
+                val velocity = input.readFloat()
+                val gate = input.readFloat()
+                val probability = input.readFloat()
+                // Version 2 and older: one hit per note, sharing the step's values; off steps are dropped.
+                if (on && notes.isNotEmpty()) {
+                    val length = if (gate.isNaN() || gate < 0f) SeqLimits.PATTERN_GATE else gate
+                    steps[i] = Step(notes.map { Hit(it, velocity, length, probability, 0f) })
+                }
+            }
         }
         val lanes = List(count(input)) {
             val target = input.readInt()

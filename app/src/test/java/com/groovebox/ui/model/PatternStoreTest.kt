@@ -16,8 +16,13 @@ class RecordingSink : PatternSink {
         calls += "settings $slot $pattern $length $rate $shuffle $gate"
     }
 
-    override fun setStep(slot: Int, pattern: Int, step: Int, on: Boolean, notes: IntArray, velocity: Float, gate: Float, probability: Float) {
-        calls += "step $slot $pattern $step $on ${notes.toList()} $velocity $gate $probability"
+    override fun setStep(slot: Int, pattern: Int, step: Int, hits: FloatArray, hitCount: Int) {
+        require(hitCount in 0..SeqLimits.HITS && hits.size >= hitCount * SeqLimits.HIT_FIELDS) { "bad hit buffer" }
+        val text = (0 until hitCount).joinToString(" ") { h ->
+            val o = h * SeqLimits.HIT_FIELDS
+            "[${hits[o].toInt()} ${hits[o + 1]} ${hits[o + 2]} ${hits[o + 3]} ${hits[o + 4]}]"
+        }
+        calls += "step $slot $pattern $step $text".trimEnd()
     }
 
     override fun setMotionValue(slot: Int, pattern: Int, target: Int, step: Int, value: Float) {
@@ -62,51 +67,154 @@ class PatternStoreTest {
 
     // --- step edits ---
 
+    private fun hits(vararg notes: Int, velocity: Float = 0.8f) = Step(notes.map { Hit(it, velocity) })
+
     @Test
-    fun toggleTurnsAStepOnWithTheGivenNotesAndSendsIt() {
+    fun toggleTurnsAnEmptyStepOnWithTheGivenNotesAndSendsEveryHit() {
         store.toggleStep(1, 2, 5, listOf(60, 64), 0.9f)
-        assertEquals(Step(on = true, notes = listOf(60, 64), velocity = 0.9f), store.step(1, 2, 5))
-        assertEquals(listOf("step 1 2 5 true [60, 64] 0.9 -1.0 1.0"), sink.calls)
+        assertEquals(hits(60, 64, velocity = 0.9f), store.step(1, 2, 5))
+        assertTrue(store.step(1, 2, 5).on)
+        assertEquals(listOf("step 1 2 5 [60 0.9 -1.0 1.0 0.0] [64 0.9 -1.0 1.0 0.0]"), sink.calls)
     }
 
     @Test
-    fun toggleOffKeepsTheNotes() {
+    fun toggleOffEmptiesTheStep() {
         store.toggleStep(1, 0, 3, listOf(60), 0.8f)
         store.toggleStep(1, 0, 3, listOf(72), 0.5f)
-        assertEquals(Step(on = false, notes = listOf(60), velocity = 0.8f), store.step(1, 0, 3))
-        assertEquals("step 1 0 3 false [60] 0.8 -1.0 1.0", sink.calls.last())
+        assertEquals(Step(), store.step(1, 0, 3))
+        assertEquals("step 1 0 3", sink.calls.last())
     }
 
     @Test
-    fun setStepNotesTurnsTheStepOn() {
+    fun aLaneToggleAddsOrRemovesOnlyThatSound() {
+        // Owner's acceptance 1: kick on 1 5 9 13, snare on 5 13; both play on 5 and 13.
+        for (i in listOf(0, 4, 8, 12)) assertTrue(store.toggleHit(0, 0, i, 48, 0.8f))
+        for (i in listOf(4, 12)) assertTrue(store.toggleHit(0, 0, i, 50, 0.8f))
+        assertEquals(listOf(48, 50), store.step(0, 0, 4).notes)
+        assertEquals(listOf(48), store.step(0, 0, 8).notes)
+        assertEquals(listOf(48, 50), store.step(0, 0, 12).notes)
+        // Taking the kick off step 5 keeps the snare.
+        assertTrue(store.toggleHit(0, 0, 4, 48, 0.8f))
+        assertEquals(listOf(50), store.step(0, 0, 4).notes)
+        assertEquals("step 0 0 4 [50 0.8 -1.0 1.0 0.0]", sink.calls.last())
+    }
+
+    @Test
+    fun aLaneToggleKeepsTheOtherHitsFields() {
+        store.setStep(0, 0, 2, Step(listOf(Hit(54, 0.5f, 2f, 0.4f, -0.25f))))
+        store.toggleHit(0, 0, 2, 48, 1f)
+        assertEquals(Step(listOf(Hit(54, 0.5f, 2f, 0.4f, -0.25f), Hit(48, 1f))), store.step(0, 0, 2))
+    }
+
+    @Test
+    fun aStepHoldsAtMostEightSounds() {
+        for (n in 48 until 56) assertTrue(store.toggleHit(0, 0, 0, n, 0.8f))
+        val calls = sink.calls.size
+        assertFalse("a ninth sound is refused", store.toggleHit(0, 0, 0, 60, 0.8f))
+        assertEquals(8, store.step(0, 0, 0).hits.size)
+        assertEquals(calls, sink.calls.size)
+        // Removing still works when full.
+        assertTrue(store.toggleHit(0, 0, 0, 50, 0.8f))
+        assertEquals(7, store.step(0, 0, 0).hits.size)
+    }
+
+    @Test
+    fun setStepNotesReplacesTheChordAndKeepsTheStepsSharedFields() {
+        store.setStep(2, 0, 0, Step(listOf(Hit(40, 0.5f, 3f, 0.6f, 0.1f))))
         store.setStepNotes(2, 0, 0, listOf(48, 51, 55), 0.7f)
-        assertEquals(Step(true, listOf(48, 51, 55), 0.7f), store.step(2, 0, 0))
+        assertEquals(Step(listOf(48, 51, 55).map { Hit(it, 0.7f, 3f, 0.6f, 0.1f) }), store.step(2, 0, 0))
+        store.setStepNotes(2, 0, 1, listOf(60), 0.9f)
+        assertEquals(Step(listOf(Hit(60, 0.9f))), store.step(2, 0, 1))
     }
 
     @Test
-    fun stepsAreClamped() {
-        store.setStep(1, 0, 0, Step(true, listOf(-5, 60, 200, 61, 62), velocity = 2f, gate = 3f, probability = -1f))
-        assertEquals(Step(true, listOf(0, 60, 127, 61), velocity = 1f, gate = 1f, probability = 0f), store.step(1, 0, 0))
-        store.setStep(1, 0, 1, Step(true, listOf(60), gate = 0.01f, velocity = Float.NaN, probability = Float.NaN))
-        assertEquals(Step(true, listOf(60), velocity = 0.8f, gate = 0.05f, probability = 1f), store.step(1, 0, 1))
-        store.setStep(1, 0, 2, Step(true, listOf(60), gate = -0.3f))
-        assertEquals(-1f, store.step(1, 0, 2).gate, 0f)
+    fun editHitsOnALaneEditsOrCreatesOnlyThatHit() {
+        store.setStep(0, 0, 4, Step(listOf(Hit(48, 1f), Hit(50, 0.9f))))
+        store.editHits(0, 0, 4, lane = 50, entry = { emptyList() }) { it.copy(nudge = 0.25f) }
+        assertEquals(Step(listOf(Hit(48, 1f), Hit(50, 0.9f, nudge = 0.25f))), store.step(0, 0, 4))
+        // The lane has no hit here: it is created with the defaults, then edited.
+        store.editHits(0, 0, 5, lane = 54, entry = { emptyList() }) { it.copy(length = 2f) }
+        assertEquals(Step(listOf(Hit(54, SeqLimits.DEFAULT_VELOCITY, length = 2f))), store.step(0, 0, 5))
+    }
+
+    @Test
+    fun editHitsWithoutALaneEditsEveryHitOrCreatesTheEntry() {
+        store.setStep(1, 0, 0, Step(listOf(Hit(60, 0.5f), Hit(64, 0.6f))))
+        store.editHits(1, 0, 0, lane = null, entry = { error("not needed") }) { it.copy(probability = 0.5f) }
+        assertEquals(Step(listOf(Hit(60, 0.5f, probability = 0.5f), Hit(64, 0.6f, probability = 0.5f))), store.step(1, 0, 0))
+        store.editHits(1, 0, 1, lane = null, entry = { listOf(Hit(57, 0.7f), Hit(60, 0.7f)) }) { it.copy(velocity = 0.3f) }
+        assertEquals(Step(listOf(Hit(57, 0.3f), Hit(60, 0.3f))), store.step(1, 0, 1))
+    }
+
+    @Test
+    fun editHitsOnAFullStepWithoutTheLaneChangesNothing() {
+        store.setStep(0, 0, 0, Step((48 until 56).map { Hit(it) }))
+        val n = sink.calls.size
+        store.editHits(0, 0, 0, lane = 60, entry = { emptyList() }) { it.copy(velocity = 0.2f) }
+        assertEquals(n, sink.calls.size)
+    }
+
+    @Test
+    fun clearLaneRemovesOneSoundFromEveryStep() {
+        for (i in listOf(0, 4, 8)) store.toggleHit(0, 3, i, 48, 1f)
+        for (i in listOf(4, 12)) store.toggleHit(0, 3, i, 50, 1f)
+        store.setSettings(0, 3, PatternSettings(length = 32))
+        sink.calls.clear()
+        store.clearLane(0, 3, 50)
+        assertEquals(listOf("step 0 3 4 [48 1.0 -1.0 1.0 0.0]", "step 0 3 12"), sink.calls)
+        assertEquals(listOf(48), store.step(0, 3, 4).notes)
+        assertEquals(32, store.settings(0, 3).length)
+    }
+
+    @Test
+    fun hitsAreClamped() {
+        store.setStep(
+            1, 0, 0,
+            Step(
+                listOf(
+                    Hit(-5, velocity = 2f, length = 99f, probability = -1f, nudge = 3f),
+                    Hit(200, velocity = 0f, length = 0.001f, probability = 2f, nudge = -3f),
+                    Hit(60, velocity = Float.NaN, length = Float.NaN, probability = Float.NaN, nudge = Float.NaN),
+                    Hit(61, length = -0.3f),
+                ),
+            ),
+        )
+        assertEquals(
+            Step(
+                listOf(
+                    Hit(0, 1f, 16f, 0f, 0.5f),
+                    Hit(127, 0.01f, 1f / 16, 1f, -0.5f),
+                    Hit(60, SeqLimits.DEFAULT_VELOCITY, SeqLimits.PATTERN_GATE, 1f, 0f),
+                    Hit(61, length = SeqLimits.PATTERN_GATE),
+                ),
+            ),
+            store.step(1, 0, 0),
+        )
+    }
+
+    @Test
+    fun aStepKeepsAtMostEightHitsAndOneHitPerNote() {
+        store.setStep(0, 0, 0, Step((0 until 10).map { Hit(48 + it) }))
+        assertEquals((48 until 56).toList(), store.step(0, 0, 0).notes)
+        store.setStep(0, 0, 1, Step(listOf(Hit(48, 1f), Hit(48, 0.2f), Hit(50))))
+        assertEquals(Step(listOf(Hit(48, 1f), Hit(50))), store.step(0, 0, 1))
     }
 
     @Test
     fun anUnchangedEditSendsNothing() {
-        store.setStep(1, 0, 0, Step(true, listOf(60)))
-        store.setStep(1, 0, 0, Step(true, listOf(60)))
+        store.setStep(1, 0, 0, hits(60))
+        store.setStep(1, 0, 0, hits(60))
         store.updateSettings(1, 0) { it }
         assertEquals(1, sink.calls.size)
     }
 
     @Test
     fun outOfRangeIndexesAreIgnored() {
-        store.setStep(8, 0, 0, Step(true))
-        store.setStep(0, 16, 0, Step(true))
-        store.setStep(0, 0, 64, Step(true))
-        store.setStep(-1, 0, 0, Step(true))
+        store.setStep(8, 0, 0, hits(60))
+        store.setStep(0, 16, 0, hits(60))
+        store.setStep(0, 0, 64, hits(60))
+        store.setStep(-1, 0, 0, hits(60))
+        store.toggleHit(0, 0, 64, 48, 1f)
         store.setSettings(0, -1, PatternSettings(length = 8))
         assertTrue(store.setMotionValue(0, 0, 3, 64, 0.5f).not())
         assertTrue(sink.calls.isEmpty())
@@ -119,6 +227,28 @@ class PatternStoreTest {
         assertFalse(store.step(0, 1, 0).on)
         assertFalse(store.step(1, 0, 0).on)
         assertTrue(store.step(0, 0, 0).on)
+    }
+
+    // --- one pattern's copy (undo) ---
+
+    @Test
+    fun restorePatternPutsBackOnePatternAndResendsIt() {
+        store.setSettings(1, 2, PatternSettings(length = 12, gate = 0.3f))
+        store.toggleStep(1, 2, 0, listOf(60), 1f)
+        store.setMotionValue(1, 2, 8, 0, 900f)
+        store.toggleStep(1, 3, 0, listOf(62), 1f)
+        val saved = store.patternSnapshot(1, 2)
+        store.toggleStep(1, 2, 0, listOf(60), 1f)
+        store.toggleStep(1, 2, 5, listOf(67), 1f)
+        store.clearMotionLane(1, 2, 8)
+        sink.calls.clear()
+        store.restorePattern(saved)
+        assertEquals(saved, store.patternSnapshot(1, 2))
+        assertEquals(
+            listOf("clear 1 2", "settings 1 2 12 1 0.0 0.3", "step 1 2 0 [60 1.0 -1.0 1.0 0.0]", "motion 1 2 8 0 900.0"),
+            sink.calls,
+        )
+        assertTrue("other patterns untouched", store.step(1, 3, 0).on)
     }
 
     // --- settings ---
@@ -234,41 +364,39 @@ class PatternStoreTest {
     // --- recorded writes (RecordedEvent rules) ---
 
     @Test
-    fun aRecordedNoteTurnsTheStepOnAddsTheNoteAndSetsVelocity() {
+    fun aRecordedNoteAddsAHitWithThePlayedVelocityAndThePatternGate() {
         store.applyRecorded(note(1, 0, 6, 60, 0.7f))
-        assertEquals(Step(on = true, notes = listOf(60), velocity = 0.7f), store.step(1, 0, 6))
+        assertEquals(Step(listOf(Hit(60, 0.7f, SeqLimits.PATTERN_GATE, 1f, 0f))), store.step(1, 0, 6))
         store.applyRecorded(note(1, 0, 6, 64, 0.9f))
-        assertEquals(Step(on = true, notes = listOf(60, 64), velocity = 0.9f), store.step(1, 0, 6))
+        assertEquals(Step(listOf(Hit(60, 0.7f), Hit(64, 0.9f))), store.step(1, 0, 6))
         assertTrue("recording never calls the engine back", sink.calls.isEmpty())
     }
 
     @Test
-    fun aRecordedNoteAlreadyThereOnlyChangesVelocity() {
-        store.applyRecorded(note(1, 0, 6, 60, 0.7f))
-        store.applyRecorded(note(1, 0, 6, 64, 0.7f))
+    fun aRecordedNoteAlreadyThereChangesNothing() {
+        store.setStep(1, 0, 6, Step(listOf(Hit(60, 0.7f, 2f, 0.5f, 0.1f))))
+        val rev = store.revision
         store.applyRecorded(note(1, 0, 6, 60, 0.4f))
-        assertEquals(listOf(60, 64), store.step(1, 0, 6).notes)
-        assertEquals(0.4f, store.step(1, 0, 6).velocity, 0f)
+        assertEquals(Step(listOf(Hit(60, 0.7f, 2f, 0.5f, 0.1f))), store.step(1, 0, 6))
+        assertEquals(rev, store.revision)
     }
 
     @Test
-    fun aFifthRecordedNoteReplacesTheLastOne() {
-        for (n in listOf(60, 62, 64, 65)) store.applyRecorded(note(1, 0, 0, n, 0.5f))
-        assertEquals(listOf(60, 62, 64, 65), store.step(1, 0, 0).notes)
-        store.applyRecorded(note(1, 0, 0, 67, 0.6f))
-        assertEquals(listOf(60, 62, 64, 67), store.step(1, 0, 0).notes)
-        store.applyRecorded(note(1, 0, 0, 69, 0.6f))
-        assertEquals(listOf(60, 62, 64, 69), store.step(1, 0, 0).notes)
-        // A note already among the four does not replace anything.
+    fun aNinthRecordedNoteReplacesTheLastHit() {
+        for (n in 60 until 68) store.applyRecorded(note(1, 0, 0, n, 0.5f))
+        assertEquals((60 until 68).toList(), store.step(1, 0, 0).notes)
+        store.applyRecorded(note(1, 0, 0, 70, 0.6f))
+        assertEquals((60 until 67).toList() + 70, store.step(1, 0, 0).notes)
+        assertEquals(Hit(70, 0.6f), store.step(1, 0, 0).hits.last())
         store.applyRecorded(note(1, 0, 0, 62, 0.6f))
-        assertEquals(listOf(60, 62, 64, 69), store.step(1, 0, 0).notes)
+        assertEquals((60 until 67).toList() + 70, store.step(1, 0, 0).notes)
     }
 
     @Test
-    fun aRecordedNoteOnAnOffStepKeepsItsOtherFields() {
-        store.setStep(1, 0, 2, Step(on = false, notes = listOf(50), gate = 0.3f, probability = 0.4f))
+    fun aRecordedNoteKeepsTheOtherHits() {
+        store.setStep(1, 0, 2, Step(listOf(Hit(50, 0.3f, 0.5f, 0.4f, -0.1f))))
         store.applyRecorded(note(1, 0, 2, 52, 1f))
-        assertEquals(Step(on = true, notes = listOf(50, 52), velocity = 1f, gate = 0.3f, probability = 0.4f), store.step(1, 0, 2))
+        assertEquals(Step(listOf(Hit(50, 0.3f, 0.5f, 0.4f, -0.1f), Hit(52, 1f))), store.step(1, 0, 2))
     }
 
     @Test
@@ -318,8 +446,10 @@ class PatternStoreTest {
         store.setTempo(100.0)
         store.toggleStep(1, 0, 0, listOf(60), 1f)
         store.setStep(1, 0, 0, store.step(1, 0, 0)) // no change
-        assertEquals(5, calls)
-        assertEquals(5L, store.revision)
+        store.toggleHit(1, 0, 9, 60, 1f)
+        store.clearLane(1, 0, 61) // nothing to clear
+        assertEquals(6, calls)
+        assertEquals(6L, store.revision)
     }
 
     @Test
@@ -329,5 +459,18 @@ class PatternStoreTest {
         store.clearMotionLane(1, 0, 3)
         assertEquals(1, lanes.size)
         assertSame(lanes[0], lanes.first())
+    }
+
+    // --- what a pad shows ---
+
+    @Test
+    fun aPadShowsTheLaneBrightOtherSoundsAsADotAndEmptyDark() {
+        val step = Step(listOf(Hit(48), Hit(54)))
+        assertEquals(PadMark.Lane, PadMark.of(step, lane = 48))
+        assertEquals(PadMark.Other, PadMark.of(step, lane = 50))
+        assertEquals(PadMark.Empty, PadMark.of(Step(), lane = 48))
+        // A synth slot has no lane: any hit lights the pad.
+        assertEquals(PadMark.Lane, PadMark.of(step, lane = null))
+        assertEquals(PadMark.Empty, PadMark.of(Step(), lane = null))
     }
 }

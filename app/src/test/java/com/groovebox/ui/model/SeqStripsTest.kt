@@ -12,9 +12,84 @@ class SeqStripsTest {
     @Test
     fun layers() {
         assertEquals(SeqLayer.Pattern, SeqStrips.layer(shifted = false, stepSelected = false))
-        assertEquals(SeqLayer.Pattern, SeqStrips.layer(shifted = false, stepSelected = true))
+        assertEquals("a selection takes the main layer", SeqLayer.Step, SeqStrips.layer(shifted = false, stepSelected = true))
         assertEquals(SeqLayer.Transport, SeqStrips.layer(shifted = true, stepSelected = false))
-        assertEquals(SeqLayer.Step, SeqStrips.layer(shifted = true, stepSelected = true))
+        assertEquals(SeqLayer.StepShift, SeqStrips.layer(shifted = true, stepSelected = true))
+    }
+
+    @Test
+    fun stepStripsAreVelocityLengthChanceNudge() {
+        assertEquals(listOf("Velocity", "Length", "Chance", "Nudge"), SeqStrips.step.map { it.label })
+        assertEquals(0.01, SeqStrips.HitVelocity.min, 1e-6)
+        assertEquals(1.0, SeqStrips.HitVelocity.max, 0.0)
+        assertEquals(-0.5, SeqStrips.HitNudge.min, 0.0)
+        assertEquals(0.5, SeqStrips.HitNudge.max, 0.0)
+        assertEquals(0.0, SeqStrips.HitNudge.default, 0.0)
+        assertEquals(1.0, SeqStrips.HitChance.default, 0.0)
+    }
+
+    @Test
+    fun theLengthStripRunsFromThePatternGateTo16Steps() {
+        val lengths = SeqStrips.LENGTHS
+        assertEquals(SeqLimits.PATTERN_GATE, lengths.first(), 0f)
+        assertEquals(1f / 16, lengths[1], 0f)
+        assertEquals(16f, lengths.last(), 0f)
+        assertTrue("rising", lengths.zipWithNext().all { (a, b) -> b > a })
+        assertTrue(1f in lengths && 0.5f in lengths && 2.5f in lengths)
+        // Leftmost (and the default) is the pattern gate; every strip position is a length.
+        assertEquals(0.0, SeqStrips.HitLength.default, 0.0)
+        assertEquals((lengths.size - 1).toDouble(), ParamMapping.fromNormalized(SeqStrips.HitLength, 1.0), 0.0)
+        for ((i, l) in lengths.withIndex()) {
+            assertEquals(i, SeqStrips.lengthIndex(l))
+            assertEquals(l, SeqStrips.lengthAt(i.toDouble()), 0f)
+        }
+    }
+
+    @Test
+    fun aLengthBetweenTheStripsValuesShowsTheNearest() {
+        assertEquals(SeqStrips.lengthIndex(0.25f), SeqStrips.lengthIndex(0.3f)) // a v2 gate of 30%
+        assertEquals(SeqStrips.lengthIndex(1f / 16), SeqStrips.lengthIndex(0.05f))
+        assertEquals(0, SeqStrips.lengthIndex(-1f))
+        assertEquals(SeqStrips.LENGTHS.lastIndex, SeqStrips.lengthIndex(40f))
+    }
+
+    @Test
+    fun lengthText() {
+        assertEquals("gate", SeqStrips.formatLength(-1f))
+        assertEquals("1/16", SeqStrips.formatLength(1f / 16))
+        assertEquals("3/16", SeqStrips.formatLength(3f / 16))
+        assertEquals("1/8", SeqStrips.formatLength(0.125f))
+        assertEquals("1/4", SeqStrips.formatLength(0.25f))
+        assertEquals("1/2", SeqStrips.formatLength(0.5f))
+        assertEquals("3/4", SeqStrips.formatLength(0.75f))
+        assertEquals("1", SeqStrips.formatLength(1f))
+        assertEquals("1½", SeqStrips.formatLength(1.5f))
+        assertEquals("2½", SeqStrips.formatLength(2.5f))
+        assertEquals("16", SeqStrips.formatLength(16f))
+        // Lengths from a v2 gate show as they are.
+        assertEquals("0.3", SeqStrips.formatLength(0.3f))
+        assertEquals("0.45", SeqStrips.formatLength(0.45f))
+        assertEquals("gate", SeqStrips.format(SeqStrips.HitLength, 0.0))
+        assertEquals("16", SeqStrips.format(SeqStrips.HitLength, SeqStrips.LENGTHS.lastIndex.toDouble()))
+    }
+
+    @Test
+    fun nudgeText() {
+        assertEquals("0", SeqStrips.formatNudge(0f))
+        assertEquals("0", SeqStrips.formatNudge(0.003f))
+        assertEquals("+25%", SeqStrips.formatNudge(0.25f))
+        assertEquals("\u221212%", SeqStrips.formatNudge(-0.12f))
+        assertEquals("\u221250%", SeqStrips.formatNudge(-0.5f))
+        assertEquals("+50%", SeqStrips.format(SeqStrips.HitNudge, 0.5))
+    }
+
+    @Test
+    fun velocityAndChanceText() {
+        assertEquals("80%", SeqStrips.format(SeqStrips.HitVelocity, 0.8))
+        assertEquals("1%", SeqStrips.format(SeqStrips.HitVelocity, 0.01))
+        assertEquals("100%", SeqStrips.format(SeqStrips.HitVelocity, 1.0))
+        assertEquals("100%", SeqStrips.format(SeqStrips.HitChance, 1.0))
+        assertEquals("0%", SeqStrips.format(SeqStrips.HitChance, 0.0))
     }
 
     @Test
@@ -37,8 +112,8 @@ class SeqStripsTest {
     fun specsWorkWithTheStripMapping() {
         val all = listOf(
             SeqStrips.Shuffle, SeqStrips.Length, SeqStrips.Gate, SeqStrips.Rate, SeqStrips.Tempo, SeqStrips.Pattern,
-            SeqStrips.Note, SeqStrips.DrumNote, SeqStrips.Velocity, SeqStrips.Probability, SeqStrips.Key,
-            SeqStrips.ScaleStrip,
+            SeqStrips.Note, SeqStrips.Key, SeqStrips.ScaleStrip,
+            SeqStrips.HitVelocity, SeqStrips.HitLength, SeqStrips.HitChance, SeqStrips.HitNudge,
         )
         assertEquals(all.size, all.map { it.key }.toSet().size)
         for (s in all) {
@@ -63,10 +138,6 @@ class SeqStripsTest {
         assertEquals("1", SeqStrips.format(SeqStrips.Pattern, 0.0))
         assertEquals("16", SeqStrips.format(SeqStrips.Pattern, 15.0))
         assertEquals("E3", SeqStrips.format(SeqStrips.Note, 52.0))
-        assertEquals("Kick", SeqStrips.format(SeqStrips.DrumNote, 48.0) { if (it == 48) "Kick" else "?" })
-        assertEquals("96", SeqStrips.format(SeqStrips.Velocity, 96 / 127.0))
-        assertEquals("127", SeqStrips.format(SeqStrips.Velocity, 1.0))
-        assertEquals("70%", SeqStrips.format(SeqStrips.Probability, 0.7))
         assertEquals("C", SeqStrips.format(SeqStrips.Key, 0.0))
         assertEquals("C♯", SeqStrips.format(SeqStrips.Key, 1.0))
         assertEquals("A", SeqStrips.format(SeqStrips.Key, 9.0))
@@ -131,6 +202,8 @@ class SeqStripsTest {
         assertEquals(const("DRUM_KEY_COUNT"), DrumLayout.KEY_COUNT)
         assertEquals(const("SLOT_COUNT"), SeqLimits.SLOTS)
         assertEquals(const("MAX_STEPS"), SeqLimits.STEPS)
+        assertEquals(const("MAX_HITS_PER_STEP"), SeqLimits.HITS)
+        assertEquals(const("HIT_FIELDS"), SeqLimits.HIT_FIELDS)
     }
 }
 

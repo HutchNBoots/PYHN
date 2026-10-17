@@ -65,8 +65,8 @@ TEST(AudioGraph, SequencerNotesAreSampleAccurate) {
         const int note = 57;
         seq.setTempo(133.7f);
         seq.setPatternSettings(3, 0, 8, 1, 0.3f, 0.25f);
-        seq.setStep(3, 0, 3, true, &note, 1, 1.0f, -1.0f, 1.0f);
-        seq.setStep(3, 0, 6, true, &note, 1, 1.0f, -1.0f, 1.0f);
+        seq.setStep(3, 0, 3, {Hit{note, 1.0f}});
+        seq.setStep(3, 0, 6, {Hit{note, 1.0f}});
         seq.play();
         const auto x = renderGraph(*g, 40000, block);
         // Steps 3 (odd: shuffled by 0.3 * 2/3 step) and 6, from the 1/3000-step formula.
@@ -94,7 +94,7 @@ TEST(AudioGraph, SlotsHaveTheirInstrumentsAndAllRenderEveryFrame) {
         seq.setPatternSettings(s, 0, 16, s % 4, 0.5f, 0.5f);
         for (int i = 0; i < 16; ++i) {
             const int note = s == 0 ? 48 + i % 16 : 48 + i;
-            seq.setStep(s, 0, i, true, &note, 1, 0.8f, -1.0f, 1.0f);
+            seq.setStep(s, 0, i, {Hit{note, 0.8f}});
         }
     }
     seq.play();
@@ -212,7 +212,7 @@ TEST(AudioGraph, ControlAndAudioThreadsRunConcurrently) {
         const int slot = i % 8;
         const int note = slot == 0 ? 48 + i % 16 : 48 + i % 24;
         while (!g->noteOn(slot, note, 0.8f, i + 1)) std::this_thread::yield();
-        while (!seq.setStep(slot, 0, i % 16, true, &note, 1, 0.8f, -1.0f, 0.7f)) std::this_thread::yield();
+        while (!seq.setStep(slot, 0, i % 16, {Hit{note, 0.8f, Hit::kPatternGate, 0.7f}})) std::this_thread::yield();
         if (slot != 0) {
             g->synth(slot).setParam(ParamId::FltCutoff, 300.0f + static_cast<float>(i));
             seq.recordMotion(slot, static_cast<int>(ParamId::FltCutoff), 300.0f + static_cast<float>(i));
@@ -246,7 +246,7 @@ TEST(AudioGraph, PrepareKeepsEverythingTheUiSet) {
     g->drums().setParam(4, DrumParamId::Pitch, 5.0f);
     g->sequencer().setTempo(150.5f);
     const int note = 50;
-    g->sequencer().setStep(6, 9, 10, true, &note, 1, 0.3f, 0.7f, 0.4f);
+    g->sequencer().setStep(6, 9, 10, {Hit{note, 0.3f, 0.7f, 0.4f, -0.2f}});
     g->applyPendingCommands();  // no stream yet: applied from the control thread
     g->prepare(48000.0f);
     g->prepare(44100.0f);
@@ -256,6 +256,7 @@ TEST(AudioGraph, PrepareKeepsEverythingTheUiSet) {
     EXPECT_NEAR(g->sequencer().transport().tempoBpm, 150.5f, 1e-4f);
     EXPECT_FLOAT_EQ(g->synth(2).tempo(), 150.5f);
     const Step& s = g->sequencer().pattern(6, 9).steps[10];
-    EXPECT_TRUE(s.on);
-    EXPECT_FLOAT_EQ(s.probability, 0.4f);
+    ASSERT_TRUE(s.on());
+    EXPECT_FLOAT_EQ(s.hits[0].probability, 0.4f);
+    EXPECT_FLOAT_EQ(s.hits[0].nudge, -0.2f);
 }

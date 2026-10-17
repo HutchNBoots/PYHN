@@ -32,6 +32,8 @@ public:
     void clear() { size_ = 0; }
 
     int top() const { return size_ == 0 ? kNone : notes_[size_ - 1]; }
+    // Held notes oldest first: at(size() - 1) == top(). i < size().
+    int at(std::size_t i) const { return notes_[i]; }
     bool empty() const { return size_ == 0; }
     std::size_t size() const { return size_; }
 

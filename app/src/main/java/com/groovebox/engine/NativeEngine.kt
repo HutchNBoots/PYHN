@@ -115,11 +115,19 @@ data class TapeState(
     val trackHasAudio: BooleanArray,
     /** A saved tape is still loading in the background (F7.6). */
     val loading: Boolean,
+    /**
+     * The tape's tempo (its first take's), in BPM to 0.1; 0 when empty. At another tempo the
+     * tape plays varispeed (build-20).
+     */
+    val tempoBpm: Float = 0f,
+    /** The sequencer tempo is the tape's (always true when empty): recording needs it. */
+    val tempoMatches: Boolean = true,
 ) {
     internal companion object {
         // Layout shared with engine/android/JniBridge.cpp:
-        // [lengthFrames, lengthBars, barFrames, headFrame, recordingTrack, armedTrack, canUndo, canRedo, hasAudio x4, loading]
-        const val SIZE = 9 + NativeEngine.TAPE_TRACK_COUNT
+        // [lengthFrames, lengthBars, barFrames, headFrame, recordingTrack, armedTrack, canUndo, canRedo, hasAudio x4, loading,
+        //  tempoBpm, tempoMatches]
+        const val SIZE = 11 + NativeEngine.TAPE_TRACK_COUNT
 
         fun from(v: DoubleArray) = TapeState(
             lengthFrames = v[0].toLong(),
@@ -132,6 +140,8 @@ data class TapeState(
             canRedo = v[7] != 0.0,
             trackHasAudio = BooleanArray(NativeEngine.TAPE_TRACK_COUNT) { v[8 + it] != 0.0 },
             loading = v[8 + NativeEngine.TAPE_TRACK_COUNT] != 0.0,
+            tempoBpm = v[9 + NativeEngine.TAPE_TRACK_COUNT].toFloat(),
+            tempoMatches = v[10 + NativeEngine.TAPE_TRACK_COUNT] != 0.0,
         )
     }
 }
@@ -153,7 +163,10 @@ object NativeEngine {
     const val DRUM_SLOT = 0
     const val PATTERN_COUNT = 16
     const val MAX_STEPS = 64
-    const val MAX_NOTES_PER_STEP = 4
+    /** Hits (sounds) per step; a step is on when it has one. The UI caps a synth chord at 4. */
+    const val MAX_HITS_PER_STEP = 8
+    /** Floats per hit in [setStep]'s array: note, velocity, length, probability, nudge. */
+    const val HIT_FIELDS = 5
     const val MAX_MOTION_LANES = 8
 
     /** Pattern step rates, in the order of the rate argument. */
@@ -248,12 +261,14 @@ object NativeEngine {
     fun setPatternSettings(slot: Int, pattern: Int, length: Int, rate: Int, shuffle: Float, gate: Float) =
         nativeSetPatternSettings(slot, pattern, length, rate, shuffle, gate)
 
-    /** notes: 0..4 MIDI notes (extra ones are ignored); velocity 0..1; gate 0.05..1, or negative
-     *  for the pattern's gate; probability 0..1 (F3.4). */
-    fun setStep(
-        slot: Int, pattern: Int, step: Int, on: Boolean, notes: IntArray,
-        velocity: Float, gate: Float, probability: Float,
-    ) = nativeSetStep(slot, pattern, step, on, notes, velocity, gate, probability)
+    /** Replaces the step's hits. hits holds hitCount * [HIT_FIELDS] floats, hit by hit:
+     *  note (MIDI 0..127, as a float), velocity 0.01..1, length (-1 = the pattern's gate, else
+     *  1/16..16 steps), probability 0..1 (F3.4), nudge -0.5..0.5 of a step (early..late).
+     *  hitCount 0..[MAX_HITS_PER_STEP] (more are ignored); 0 clears the step. The engine clamps
+     *  every field. False (nothing sent) if hits holds fewer than hitCount * HIT_FIELDS floats
+     *  or the command queue stayed full. */
+    fun setStep(slot: Int, pattern: Int, step: Int, hits: FloatArray, hitCount: Int): Boolean =
+        nativeSetStep(slot, pattern, step, hits, hitCount)
 
     /** One motion value at one step; NaN clears it. A pattern holds at most 8 lanes (targets):
      *  a value for a 9th target is ignored. */
@@ -466,10 +481,7 @@ object NativeEngine {
     private external fun nativeGetTransport(out: DoubleArray)
     private external fun nativeSelectPattern(slot: Int, pattern: Int)
     private external fun nativeSetPatternSettings(slot: Int, pattern: Int, length: Int, rate: Int, shuffle: Float, gate: Float)
-    private external fun nativeSetStep(
-        slot: Int, pattern: Int, step: Int, on: Boolean, notes: IntArray,
-        velocity: Float, gate: Float, probability: Float,
-    )
+    private external fun nativeSetStep(slot: Int, pattern: Int, step: Int, hits: FloatArray, hitCount: Int): Boolean
     private external fun nativeSetMotionValue(slot: Int, pattern: Int, target: Int, step: Int, value: Float)
     private external fun nativeClearMotionLane(slot: Int, pattern: Int, target: Int)
     private external fun nativeClearPattern(slot: Int, pattern: Int)

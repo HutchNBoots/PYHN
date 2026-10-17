@@ -89,11 +89,11 @@ object DemoContent {
         store.setTempo(TEMPO, force = true)
         store.setSettings(0, 0, PatternSettings(length = 16))
         for ((step, v) in BEAT) {
-            store.setStep(0, 0, step, Step(on = true, notes = v.first, velocity = v.second, probability = v.third))
+            store.setStep(0, 0, step, Step.of(v.first, v.second, v.third))
         }
         store.setSettings(1, 0, PatternSettings(length = 16, gate = BASS_GATE))
         for ((step, v) in BASS) {
-            store.setStep(1, 0, step, Step(on = true, notes = listOf(v.first), velocity = v.second))
+            store.setStep(1, 0, step, Step.of(listOf(v.first), v.second))
         }
     }
 }

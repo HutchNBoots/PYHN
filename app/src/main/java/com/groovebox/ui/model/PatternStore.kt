@@ -9,7 +9,13 @@ object SeqLimits {
     const val SLOTS = NativeEngine.SLOT_COUNT
     const val PATTERNS = NativeEngine.PATTERN_COUNT
     const val STEPS = NativeEngine.MAX_STEPS
-    const val NOTES = NativeEngine.MAX_NOTES_PER_STEP
+
+    /** Hits (sounds or notes) a step holds, and the floats per hit in [PatternSink.setStep]. */
+    const val HITS = NativeEngine.MAX_HITS_PER_STEP
+    const val HIT_FIELDS = NativeEngine.HIT_FIELDS
+
+    /** A synth chord entered from the keys or a pad: at most this many notes (recording can add up to [HITS]). */
+    const val CHORD = 4
     const val LANES = NativeEngine.MAX_MOTION_LANES
     const val RATES = 4 // NativeEngine.STEP_RATES.size (a val, so not readable without loading the library)
     const val DEFAULT_RATE = 1 // 1/16
@@ -18,16 +24,58 @@ object SeqLimits {
     const val MAX_TEMPO = 240.0
     const val DEFAULT_TEMPO = 120.0
     const val DEFAULT_VELOCITY = 0.8f
+    const val MIN_VELOCITY = 0.01f
+
+    /** A hit's length that means "the pattern's gate". */
+    const val PATTERN_GATE = -1f
+    const val MIN_LENGTH = 1f / 16
+    const val MAX_LENGTH = 16f
+    const val MAX_NUDGE = 0.5f
 }
 
-/** One step. [gate] < 0 means the pattern's gate. Immutable: an edit replaces the step. */
-data class Step(
-    val on: Boolean = false,
-    val notes: List<Int> = emptyList(),
+/**
+ * One sound (drum slot) or note (synth slot) of a step, with its own values (build-20, the
+ * engine's Hit). [length] is in steps, or [SeqLimits.PATTERN_GATE]; [nudge] is a fraction of a
+ * step, negative = early.
+ */
+data class Hit(
+    val note: Int,
     val velocity: Float = SeqLimits.DEFAULT_VELOCITY,
-    val gate: Float = -1f,
+    val length: Float = SeqLimits.PATTERN_GATE,
     val probability: Float = 1f,
+    val nudge: Float = 0f,
 )
+
+/** One step: up to [SeqLimits.HITS] hits, one per note. On when it has a hit. Immutable: an edit replaces it. */
+data class Step(val hits: List<Hit> = emptyList()) {
+    val on: Boolean
+        get() = hits.isNotEmpty()
+
+    val notes: List<Int>
+        get() = hits.map { it.note }
+
+    fun hit(note: Int): Hit? = hits.firstOrNull { it.note == note }
+
+    companion object {
+        /** A step playing [notes], all with the same values. */
+        fun of(notes: List<Int>, velocity: Float = SeqLimits.DEFAULT_VELOCITY, probability: Float = 1f) =
+            Step(notes.map { Hit(it, velocity, probability = probability) })
+    }
+}
+
+/** What a step pad shows for the selected lane (build-20): that sound, only other sounds, or nothing. */
+enum class PadMark {
+    Lane, Other, Empty;
+
+    companion object {
+        /** [lane] is the drum lane's note, or null on a synth slot (any hit counts). */
+        fun of(step: Step, lane: Int?): PadMark = when {
+            !step.on -> Empty
+            lane == null || step.hit(lane) != null -> Lane
+            else -> Other
+        }
+    }
+}
 
 /** A pattern's settings, always within range (see [clamped]). */
 data class PatternSettings(
@@ -82,7 +130,8 @@ data class PatternSnapshot(
 /** Where the store sends every edit: the engine in the app (NativeEngine), a recorder in tests. */
 interface PatternSink {
     fun setPatternSettings(slot: Int, pattern: Int, length: Int, rate: Int, shuffle: Float, gate: Float)
-    fun setStep(slot: Int, pattern: Int, step: Int, on: Boolean, notes: IntArray, velocity: Float, gate: Float, probability: Float)
+    /** [hits] holds [hitCount] × [SeqLimits.HIT_FIELDS] floats: note, velocity, length, probability, nudge. */
+    fun setStep(slot: Int, pattern: Int, step: Int, hits: FloatArray, hitCount: Int)
     fun setMotionValue(slot: Int, pattern: Int, target: Int, step: Int, value: Float)
     fun clearMotionLane(slot: Int, pattern: Int, target: Int)
     fun clearPattern(slot: Int, pattern: Int)
@@ -154,14 +203,14 @@ class PatternStore(private val sink: PatternSink) {
     fun updateSettings(slot: Int, pattern: Int, edit: (PatternSettings) -> PatternSettings) =
         setSettings(slot, pattern, edit(settings(slot, pattern)))
 
-    /** Replaces a step (clamped: at most 4 notes, each 0..127, velocity and probability 0..1). */
+    /** Replaces a step (clamped, see [clampStep]). */
     fun setStep(slot: Int, pattern: Int, step: Int, value: Step) {
         val p = data(slot, pattern) ?: return
         if (step !in 0 until SeqLimits.STEPS) return
         val s = clampStep(value)
         if (s == p.steps[step]) return
         p.steps[step] = s
-        sink.setStep(slot, pattern, step, s.on, s.notes.toIntArray(), s.velocity, s.gate, s.probability)
+        send(slot, pattern, step, s)
         changed()
     }
 
@@ -169,16 +218,61 @@ class PatternStore(private val sink: PatternSink) {
         setStep(slot, pattern, step, edit(step(slot, pattern, step)))
 
     /**
-     * A pad tap (F3.5): an on step turns off (keeping its notes); an off step turns on with
-     * [notes] and [velocity].
+     * A pad tap on a synth slot (F3.5): a step that plays turns off (empty); an empty one plays
+     * [notes] at [velocity].
      */
     fun toggleStep(slot: Int, pattern: Int, step: Int, notes: List<Int>, velocity: Float) = updateStep(slot, pattern, step) {
-        if (it.on) it.copy(on = false) else it.copy(on = true, notes = notes, velocity = velocity)
+        if (it.on) Step() else Step.of(notes, velocity)
     }
 
-    /** Keys played while the step is selected: it turns on with these notes. */
+    /**
+     * A pad tap on the drum slot (build-20 lanes): adds or removes the sound [note] on the step,
+     * leaving the other sounds. Returns false, changing nothing, when the step is full.
+     */
+    fun toggleHit(slot: Int, pattern: Int, step: Int, note: Int, velocity: Float): Boolean {
+        val old = step(slot, pattern, step)
+        val new = if (old.hit(note) != null) {
+            Step(old.hits.filter { it.note != note })
+        } else {
+            if (old.hits.size >= SeqLimits.HITS) return false
+            Step(old.hits + Hit(note, velocity))
+        }
+        setStep(slot, pattern, step, new)
+        return true
+    }
+
+    /**
+     * Keys played while the step is selected: the step plays [notes] at [velocity]; the length,
+     * chance and nudge the chord shares stay as they were (its first hit's).
+     */
     fun setStepNotes(slot: Int, pattern: Int, step: Int, notes: List<Int>, velocity: Float) =
-        updateStep(slot, pattern, step) { it.copy(on = true, notes = notes, velocity = velocity) }
+        updateStep(slot, pattern, step) { old ->
+            val shared = old.hits.firstOrNull() ?: Hit(0)
+            Step(notes.map { shared.copy(note = it, velocity = velocity) })
+        }
+
+    /**
+     * A step strip moved (build-20): on the drum slot ([lane] = the sound's note) only that
+     * sound's hit, created with the defaults when the step lacks it (and has room); on a synth
+     * slot ([lane] null) every hit, or, on an empty step, the hits [entry] gives.
+     */
+    fun editHits(slot: Int, pattern: Int, step: Int, lane: Int?, entry: () -> List<Hit>, edit: (Hit) -> Hit) =
+        updateStep(slot, pattern, step) { old ->
+            when {
+                lane != null && old.hit(lane) != null -> Step(old.hits.map { if (it.note == lane) edit(it) else it })
+                lane != null -> if (old.hits.size >= SeqLimits.HITS) old else Step(old.hits + edit(Hit(lane)))
+                old.on -> Step(old.hits.map(edit))
+                else -> Step(entry().map(edit))
+            }
+        }
+
+    /** Shift + Clear on the drum slot: the sound [note] leaves every step of the pattern. */
+    fun clearLane(slot: Int, pattern: Int, note: Int) {
+        for (i in 0 until SeqLimits.STEPS) {
+            val old = step(slot, pattern, i)
+            if (old.hit(note) != null) setStep(slot, pattern, i, Step(old.hits.filter { it.note != note }))
+        }
+    }
 
     /**
      * One motion value at one step; NaN clears it. A new target needs a free lane (at most 8,
@@ -215,6 +309,37 @@ class PatternStore(private val sink: PatternSink) {
         changed()
     }
 
+    /** A copy of one pattern (for undo), empty or not. */
+    fun patternSnapshot(slot: Int, pattern: Int): PatternSnapshot {
+        val p = data(slot, pattern) ?: return PatternSnapshot(slot, pattern, DEFAULT_SETTINGS, emptyMap(), emptyList())
+        return snapshotOf(slot, pattern, p)
+    }
+
+    /**
+     * Puts one pattern back as [snap] holds it (undo, redo): the engine's copy is cleared and
+     * sent the whole pattern again, so it ends up equal to the mirror.
+     */
+    fun restorePattern(snap: PatternSnapshot) {
+        val p = data(snap.slot, snap.pattern) ?: return
+        p.settings = DEFAULT_SETTINGS
+        p.steps.fill(EMPTY_STEP)
+        p.lanes.clear()
+        sink.clearPattern(snap.slot, snap.pattern)
+        load(p, snap)
+        changed()
+    }
+
+    private fun snapshotOf(slot: Int, pattern: Int, p: PatternData): PatternSnapshot {
+        val steps = HashMap<Int, Step>()
+        for (i in 0 until SeqLimits.STEPS) if (p.steps[i] != EMPTY_STEP) steps[i] = p.steps[i]
+        val lanes = p.lanes.mapNotNull { lane ->
+            val points = (0 until SeqLimits.STEPS).filter { lane.hasValueAt(it) }
+                .map { LanePoint(it, lane.valueAt(it), lane.stamps[it]) }
+            if (points.isEmpty()) null else LaneSnapshot(lane.target, points)
+        }
+        return PatternSnapshot(slot, pattern, p.settings, steps, lanes)
+    }
+
     /**
      * Every pattern that differs from an empty one, for saving (F7.4). Lanes without any
      * value are left out: the engine cannot be given an empty lane, so a restored session
@@ -224,16 +349,9 @@ class PatternStore(private val sink: PatternSink) {
         val out = ArrayList<PatternSnapshot>()
         for (slot in 0 until SeqLimits.SLOTS) {
             for (pattern in 0 until SeqLimits.PATTERNS) {
-                val p = patterns[slot][pattern]
-                val steps = HashMap<Int, Step>()
-                for (i in 0 until SeqLimits.STEPS) if (p.steps[i] != EMPTY_STEP) steps[i] = p.steps[i]
-                val lanes = p.lanes.mapNotNull { lane ->
-                    val points = (0 until SeqLimits.STEPS).filter { lane.hasValueAt(it) }
-                        .map { LanePoint(it, lane.valueAt(it), lane.stamps[it]) }
-                    if (points.isEmpty()) null else LaneSnapshot(lane.target, points)
-                }
-                if (p.settings == DEFAULT_SETTINGS && steps.isEmpty() && lanes.isEmpty()) continue
-                out += PatternSnapshot(slot, pattern, p.settings, steps, lanes)
+                val snap = snapshotOf(slot, pattern, patterns[slot][pattern])
+                if (snap.settings == DEFAULT_SETTINGS && snap.steps.isEmpty() && snap.lanes.isEmpty()) continue
+                out += snap
             }
         }
         return out
@@ -262,33 +380,51 @@ class PatternStore(private val sink: PatternSink) {
         for (snap in saved) {
             val p = data(snap.slot, snap.pattern) ?: continue
             if (!seen.add(snap.slot * SeqLimits.PATTERNS + snap.pattern)) continue
-            val s = snap.settings.clamped()
-            if (s != DEFAULT_SETTINGS) {
-                p.settings = s
-                sink.setPatternSettings(snap.slot, snap.pattern, s.length, s.rate, s.shuffle, s.gate)
-            }
-            for ((i, step) in snap.steps.toSortedMap()) {
-                if (i !in 0 until SeqLimits.STEPS) continue
-                val st = clampStep(step)
-                if (st == EMPTY_STEP) continue
-                p.steps[i] = st
-                sink.setStep(snap.slot, snap.pattern, i, st.on, st.notes.toIntArray(), st.velocity, st.gate, st.probability)
-            }
-            for (laneSnap in snap.lanes) {
-                if (p.lanes.size >= SeqLimits.LANES) break
-                if (p.lanes.any { it.target == laneSnap.target }) continue
-                val points = laneSnap.points.filter { it.step in 0 until SeqLimits.STEPS && !it.value.isNaN() && !it.value.isInfinite() }
-                if (points.isEmpty()) continue
-                val lane = MotionLane(laneSnap.target).also { p.lanes += it }
-                for (pt in points) {
-                    val stamp = pt.stamp.coerceAtLeast(1L)
-                    lane.set(pt.step, pt.value, stamp)
-                    if (stamp > stampCounter) stampCounter = stamp
-                    sink.setMotionValue(snap.slot, snap.pattern, laneSnap.target, pt.step, pt.value)
-                }
-            }
+            load(p, snap)
         }
         changed()
+    }
+
+    /** Fills an empty pattern from [snap] (clamped), sending the engine what differs from empty. */
+    private fun load(p: PatternData, snap: PatternSnapshot) {
+        val s = snap.settings.clamped()
+        if (s != DEFAULT_SETTINGS) {
+            p.settings = s
+            sink.setPatternSettings(snap.slot, snap.pattern, s.length, s.rate, s.shuffle, s.gate)
+        }
+        for ((i, step) in snap.steps.toSortedMap()) {
+            if (i !in 0 until SeqLimits.STEPS) continue
+            val st = clampStep(step)
+            if (st == EMPTY_STEP) continue
+            p.steps[i] = st
+            send(snap.slot, snap.pattern, i, st)
+        }
+        for (laneSnap in snap.lanes) {
+            if (p.lanes.size >= SeqLimits.LANES) break
+            if (p.lanes.any { it.target == laneSnap.target }) continue
+            val points = laneSnap.points.filter { it.step in 0 until SeqLimits.STEPS && !it.value.isNaN() && !it.value.isInfinite() }
+            if (points.isEmpty()) continue
+            val lane = MotionLane(laneSnap.target).also { p.lanes += it }
+            for (pt in points) {
+                val stamp = pt.stamp.coerceAtLeast(1L)
+                lane.set(pt.step, pt.value, stamp)
+                if (stamp > stampCounter) stampCounter = stamp
+                sink.setMotionValue(snap.slot, snap.pattern, laneSnap.target, pt.step, pt.value)
+            }
+        }
+    }
+
+    private fun send(slot: Int, pattern: Int, step: Int, s: Step) {
+        val buf = FloatArray(s.hits.size * SeqLimits.HIT_FIELDS)
+        s.hits.forEachIndexed { h, hit ->
+            val o = h * SeqLimits.HIT_FIELDS
+            buf[o] = hit.note.toFloat()
+            buf[o + 1] = hit.velocity
+            buf[o + 2] = hit.length
+            buf[o + 3] = hit.probability
+            buf[o + 4] = hit.nudge
+        }
+        sink.setStep(slot, pattern, step, buf, s.hits.size)
     }
 
     /** Applies a write the engine made while recording. Mirror only: the engine already has it. */
@@ -297,15 +433,15 @@ class PatternStore(private val sink: PatternSink) {
         val i = event.step
         if (i !in 0 until SeqLimits.STEPS) return
         when (event.kind) {
+            // Build-20 rule: a hit (note, played velocity, pattern gate, 1, 0) unless the note is
+            // there; a full step has its last hit replaced.
             RecordedEvent.Kind.Note -> {
                 val old = p.steps[i]
                 val note = event.noteOrTarget
-                val notes = when {
-                    note in old.notes -> old.notes
-                    old.notes.size >= SeqLimits.NOTES -> old.notes.take(SeqLimits.NOTES - 1) + note
-                    else -> old.notes + note
-                }
-                p.steps[i] = old.copy(on = true, notes = notes, velocity = event.value)
+                if (old.hit(note) != null) return
+                val hit = clampHit(Hit(note, event.value))
+                val hits = if (old.hits.size >= SeqLimits.HITS) old.hits.take(SeqLimits.HITS - 1) + hit else old.hits + hit
+                p.steps[i] = Step(hits)
             }
             RecordedEvent.Kind.Motion -> {
                 val lane = p.lanes.firstOrNull { it.target == event.noteOrTarget } ?: run {
@@ -335,13 +471,31 @@ class PatternStore(private val sink: PatternSink) {
             return (v * 10).roundToInt() / 10.0
         }
 
-        fun clampStep(s: Step) = Step(
-            on = s.on,
-            notes = s.notes.take(SeqLimits.NOTES).map { it.coerceIn(0, 127) },
-            velocity = s.velocity.finiteOr(SeqLimits.DEFAULT_VELOCITY).coerceIn(0f, 1f),
-            gate = if (s.gate.isNaN() || s.gate < 0f) -1f else s.gate.coerceIn(SeqLimits.MIN_GATE, 1f),
-            probability = s.probability.finiteOr(1f).coerceIn(0f, 1f),
+        /** At most [SeqLimits.HITS] hits, one per note (the first wins), each clamped by [clampHit]. */
+        fun clampStep(s: Step): Step {
+            val seen = HashSet<Int>()
+            val hits = ArrayList<Hit>(minOf(s.hits.size, SeqLimits.HITS))
+            for (h in s.hits) {
+                if (hits.size >= SeqLimits.HITS) break
+                val c = clampHit(h)
+                if (seen.add(c.note)) hits += c
+            }
+            return if (hits == s.hits) s else Step(hits)
+        }
+
+        /** Note 0..127, velocity 0.01..1, length the pattern gate or 1/16..16, chance 0..1, nudge ±0.5; NaN → default. */
+        fun clampHit(h: Hit) = Hit(
+            note = h.note.coerceIn(0, 127),
+            velocity = h.velocity.finiteOr(SeqLimits.DEFAULT_VELOCITY).coerceIn(SeqLimits.MIN_VELOCITY, 1f),
+            length = clampLength(h.length),
+            probability = h.probability.finiteOr(1f).coerceIn(0f, 1f),
+            nudge = h.nudge.finiteOr(0f).coerceIn(-SeqLimits.MAX_NUDGE, SeqLimits.MAX_NUDGE),
         )
+
+        fun clampLength(length: Float): Float = when {
+            length.isNaN() || length < 0f -> SeqLimits.PATTERN_GATE
+            else -> length.coerceIn(SeqLimits.MIN_LENGTH, SeqLimits.MAX_LENGTH)
+        }
     }
 }
 

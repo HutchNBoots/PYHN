@@ -27,7 +27,19 @@ int16_t toTape(float x) {
 
 float fromTape(int16_t s) { return static_cast<float>(s) * kFromTape; }
 
-int64_t floorDiv2(int64_t v) { return v >= 0 ? v / 2 : -((-v + 1) / 2); }
+
+int64_t floorDiv(int64_t a, int64_t b) {  // b > 0
+    const int64_t q = a / b;
+    return (a % b != 0 && a < 0) ? q - 1 : q;
+}
+
+// Varispeed read banks (Tape::bankOf): taps, centre tap, cutoff (of the tape rate).
+struct BankDesign {
+    int taps;
+    int centre;
+    double fc;
+};
+constexpr BankDesign kBankDesign[4] = {{16, 7, 0.5}, {32, 15, 0.30}, {32, 15, 0.21}, {64, 31, 0.105}};
 
 int64_t ceilDiv(int64_t a, int64_t b) { return a >= 0 ? (a + b - 1) / b : -((-a) / b); }
 
@@ -42,7 +54,7 @@ double blackman(double t, double half) {
 // Blackman window over +-count/2, normalised to unity gain at DC.
 void designTaps(float* taps, int count, int centre, double frac, double fc) {
     double sum = 0.0;
-    double v[kLpTaps];
+    double v[64];
     for (int k = 0; k < count; ++k) {
         const double t = static_cast<double>(k - centre) - frac;
         v[k] = 2.0 * fc * sinc(2.0 * fc * t) * blackman(t, static_cast<double>(count) / 2.0);
@@ -66,17 +78,24 @@ float Tape::tapeToFloat(int16_t s) { return fromTape(s); }
 
 void Tape::loopFade(int64_t head2, int32_t step2, int64_t loopS, int64_t loopE, int64_t fade, float& cm, float& cp,
                     int64_t& partner2) {
+    loopFadeAt(head2, step2, 2, loopS, loopE, fade, cm, cp, partner2);
+}
+
+void Tape::loopFadeAt(int64_t pos, int64_t step, int64_t unit, int64_t loopS, int64_t loopE, int64_t fade, float& cm,
+                      float& cp, int64_t& partnerPos) {
     // Equal power, against the audio before the start (forward) or after the end (reverse).
+    // Numerator and denominator are exact integers in a double (< 2^53), so the quotient,
+    // correctly rounded, is the same for every unit (the live 1x path matches the export's).
     cm = 1.0f;
     cp = 0.0f;
     const int64_t loopLen = loopE - loopS;
     double u;
-    if (step2 > 0) {
-        u = static_cast<double>(head2 + 2 - 2 * (loopE - fade)) / static_cast<double>(2 * fade);
-        partner2 = head2 - 2 * loopLen;
+    if (step > 0) {
+        u = static_cast<double>(pos + unit - unit * (loopE - fade)) / static_cast<double>(unit * fade);
+        partnerPos = pos - unit * loopLen;
     } else {
-        u = static_cast<double>(2 * (loopS + fade) - head2) / static_cast<double>(2 * fade);
-        partner2 = head2 + 2 * loopLen;
+        u = static_cast<double>(unit * (loopS + fade) - pos) / static_cast<double>(unit * fade);
+        partnerPos = pos + unit * loopLen;
     }
     if (u > 0.0) {
         u = std::min(u, 1.0);
@@ -97,6 +116,14 @@ Tape::Tape(Limits limits) : limits_(limits) {
     designTaps(interpHalf_.data(), kTaps, kTapCentre, 0.5, 0.5);
     designTaps(lowpass_.data(), kLpTaps, kLpCentre, 0.0, kLpCutoff);
     designTaps(lowpass_.data() + kLpTaps, kLpTaps, kLpCentre, 0.5, kLpCutoff);
+    for (int b = 0; b < kBanks; ++b) {
+        const BankDesign& d = kBankDesign[b];
+        banks_[static_cast<std::size_t>(b)].reset(new float[static_cast<std::size_t>((kPhases + 1) * d.taps)]);
+        for (int j = 0; j <= kPhases; ++j) {
+            designTaps(banks_[static_cast<std::size_t>(b)].get() + j * d.taps, d.taps, d.centre,
+                       static_cast<double>(j) / kPhases, d.fc);
+        }
+    }
 }
 
 Tape::~Tape() = default;
@@ -173,7 +200,7 @@ void Tape::prepare(float sampleRate) {
     retroOk_ = false;
     latched_ = params_;
     computeLoop();
-    main_.head2 = 2 * loopS_;
+    main_.pos = unit_ * loopS_;
     recomputeAllBins();
     publish();
 }
@@ -212,6 +239,8 @@ TapeState Tape::state() const {
     s.canRedo = outCanRedo_.load(std::memory_order_relaxed);
     for (std::size_t t = 0; t < kTracks; ++t) s.hasAudio[t] = outHasAudio_[t].load(std::memory_order_relaxed);
     s.loading = loadActive(loadPhase_.load(std::memory_order_acquire));
+    s.tempoBpm = static_cast<float>(outTempoTenths_.load(std::memory_order_relaxed)) * 0.1f;
+    s.tempoMatches = outTempoMatches_.load(std::memory_order_relaxed);
     return s;
 }
 
@@ -229,6 +258,7 @@ void Tape::overview(int track, uint8_t* out) const {
 void Tape::beginChunk(int64_t chunkStart, const Transport& transport, const Params& params) {
     frame_ = chunkStart;
     transport_ = transport;
+    setUnits(std::max<int64_t>(1, transport.barFrames));
     params_ = params;
     params_.speed = std::clamp(params_.speed, 0, 2);
     params_.loopStartBars = std::max(0, params_.loopStartBars);
@@ -246,18 +276,19 @@ void Tape::beginChunk(int64_t chunkStart, const Transport& transport, const Para
         main_.active = false;
         if (take_ == TakeState::Recording) endTake();
         computeLoop();
-        main_.head2 = 2 * loopS_;
+        main_.pos = unit_ * loopS_;
         retroOk_ = false;
     }
     if (started) {
         playFrame_ = transport.playFrame;
         computeLoop();
         main_.active = true;
-        main_.head2 = 2 * loopS_;
-        main_.step2 = effectiveStep2();
+        main_.pos = unit_ * loopS_;
+        main_.speed2 = effectiveSpeed2();
+        main_.step = main_.speed2 * rateUnits();
         main_.gain = 0.0f;
         main_.gainStep = 1.0f / static_cast<float>(startFade_);
-        retroOk_ = main_.step2 == 2;
+        retroOk_ = main_.step == unit_;
     }
     wasPlaying_ = transport.playing;
     lastPlayCount_ = transport.playCount;
@@ -267,24 +298,28 @@ void Tape::beginChunk(int64_t chunkStart, const Transport& transport, const Para
     const int64_t oldS = loopS_, oldE = loopE_;
     computeLoop();
     if (length_ > 0 && (oldS != loopS_ || oldE != loopE_)) {
-        const int64_t head = floorDiv2(main_.head2);
+        const int64_t head = headFrame(main_.pos);
         if (head < loopS_ || head >= loopE_) {
             if (main_.active && headRunning()) {
-                jumpTo(2 * loopS_, kVoiceFadeSeconds);
+                jumpTo(unit_ * loopS_, kVoiceFadeSeconds);
             } else {
-                main_.head2 = 2 * loopS_;
+                main_.pos = unit_ * loopS_;
             }
         }
     }
-    const int32_t step = effectiveStep2();
-    if (main_.active && step != main_.step2) {
-        applyStep(step);
+    const int32_t speed2 = effectiveSpeed2();
+    const int64_t step = speed2 * rateUnits();
+    if (main_.active && speed2 != main_.speed2) {
+        applyStep(speed2, step, main_.pos);  // Speed or reverse: crossfade, as before
+    } else if (main_.active && step != main_.step) {
+        retime(step);  // the tempo moved
     } else {
-        main_.step2 = step;
+        main_.speed2 = speed2;
+        main_.step = step;
     }
-    // F5.5: recording only at 1x forward; a waiting arm or commit is dropped otherwise.
-    const bool forward1x = params_.speed == 1 && !params_.reverse;
-    if ((take_ == TakeState::Armed || take_ == TakeState::CommitPending) && !forward1x) cancelPending();
+    // F5.5: recording only at 1x forward, and (build-20) at the tape's tempo; a waiting arm
+    // or commit is dropped otherwise.
+    if ((take_ == TakeState::Armed || take_ == TakeState::CommitPending) && !recordAllowed()) cancelPending();
 
     // F7.6: a loaded tape lands once no edit is running.
     if (!landing() && op_.type == OpType::None &&
@@ -329,7 +364,7 @@ bool Tape::tryExecute(const Command& c, bool offline) {
         case T::Commit: {
             if (landing()) return false;  // wait for the loaded tape
             if (take_ == TakeState::Recording) return true;  // one take at a time
-            if (params_.speed != 1 || params_.reverse) return true;  // F5.5
+            if (!recordAllowed()) return true;  // F5.5, and the tape's tempo (build-20)
             take_ = c.type == T::Arm ? TakeState::Armed : TakeState::CommitPending;
             takeTrack_ = c.track;
             takeCommit_ = c.type == T::Commit;
@@ -390,7 +425,7 @@ void Tape::startTake(int32_t pos, int64_t retro) {
         bar_ = std::max<int64_t>(1, transport_.barFrames);
         const int64_t maxBars = std::clamp<int64_t>(maxFrames_ / bar_, 1, kMaxBars);
         firstLimit_ = maxBars * bar_;
-        main_.head2 = 2 * retro;
+        main_.pos = unit_ * retro;
     }
     if (takeCommit_) {
         commitFrames_ = pass.frames > 0 ? pass.frames : static_cast<int64_t>(pass.bars) * bar_;
@@ -406,7 +441,7 @@ void Tape::startTake(int32_t pos, int64_t retro) {
     persistChanged();
     retroOk_ = false;
 
-    const int64_t head = floorDiv2(main_.head2);
+    const int64_t head = headFrame(main_.pos);
     const int64_t start = head - retro;
     writeLeadIn(takeTrack_, start, pos - static_cast<int32_t>(retro));
     written_ = 0;
@@ -421,7 +456,7 @@ void Tape::startTake(int32_t pos, int64_t retro) {
 
 void Tape::endTake() {
     if (take_ != TakeState::Recording) return;
-    const int64_t head = floorDiv2(main_.head2);
+    const int64_t head = headFrame(main_.pos);
     take_ = TakeState::None;
     takeEnded_ = true;
     stopPending_ = false;
@@ -435,13 +470,12 @@ void Tape::endTake() {
         const int64_t bars = std::clamp<int64_t>(ceilDiv(std::max<int64_t>(head - kLengthTolerance, 1), bar_), 1, maxBars);
         length_ = bars * bar_;
         computeLoop();
+        main_.pos = unit_ * loopS_;
         if (main_.active) {
-            main_.step2 = effectiveStep2();
-            main_.head2 = 2 * loopS_;
+            main_.speed2 = effectiveSpeed2();
+            main_.step = main_.speed2 * rateUnits();
             main_.gain = 0.0f;
             main_.gainStep = 1.0f / static_cast<float>(startFade_);
-        } else {
-            main_.head2 = 2 * loopS_;
         }
     }
     computeLoop();
@@ -728,14 +762,14 @@ void Tape::finishOp() {
     op_ = Op{};
     persistChanged();
     computeLoop();
-    const int64_t head = floorDiv2(main_.head2);
+    const int64_t head = headFrame(main_.pos);
     if (length_ == 0) {
-        main_.head2 = 0;
+        main_.pos = 0;
     } else if (oldLength == 0 || head < loopS_ || head >= loopE_) {
         if (main_.active && headRunning()) {
-            jumpTo(2 * loopS_, oldLength == 0 ? kStartFadeSeconds : kVoiceFadeSeconds);
+            jumpTo(unit_ * loopS_, oldLength == 0 ? kStartFadeSeconds : kVoiceFadeSeconds);
         } else {
-            main_.head2 = 2 * loopS_;
+            main_.pos = unit_ * loopS_;
         }
     }
     recomputeAllBins();
@@ -756,26 +790,76 @@ void Tape::computeLoop() {
                                           : std::min(length_, loopS_ + static_cast<int64_t>(latched_.loopLengthBars) * bar_);
 }
 
-int32_t Tape::effectiveStep2() const {
+int32_t Tape::effectiveSpeed2() const {
     if (take_ == TakeState::Recording) return 2;
     static constexpr int32_t kSteps[3] = {1, 2, 4};
     const int32_t s = kSteps[std::clamp(params_.speed, 0, 2)];
     return params_.reverse ? -s : s;
 }
 
-void Tape::applyStep(int32_t step2) {
+int64_t Tape::rateUnits() const {
+    // A take records at 1x (latched); an empty tape has no tempo of its own.
+    return (take_ == TakeState::Recording || bar_ <= 0) ? seqBar_ : bar_;
+}
+
+int64_t Tape::headFrame(int64_t pos) const { return floorDiv(pos, unit_); }
+
+void Tape::setUnits(int64_t seqBar) {
+    if (seqBar == seqBar_) return;
+    // Rescale every head to the new unit (exact for half-frame positions, otherwise to
+    // within half a unit); the voices keep their rate until beginChunk retimes the main one.
+    const int64_t oldU = unit_, newU = 2 * seqBar;
+    const auto pos = [oldU, newU](int64_t v) {
+        const int64_t q = floorDiv(v, oldU);
+        const int64_t r = v - q * oldU;  // 0 <= r < oldU: r * newU fits easily
+        return q * newU + (r * newU + oldU / 2) / oldU;
+    };
+    const auto step = [oldU, newU](int64_t v) {
+        return static_cast<int64_t>(std::llround(static_cast<double>(v) * static_cast<double>(newU) / static_cast<double>(oldU)));
+    };
+    main_.pos = pos(main_.pos);
+    main_.step = step(main_.step);
+    old_.pos = pos(old_.pos);
+    old_.step = step(old_.step);
+    seqBar_ = seqBar;
+    unit_ = newU;
+}
+
+void Tape::applyStep(int32_t speed2, int64_t step, int64_t pos) {
     old_ = main_;
     old_.gainStep = -old_.gain / static_cast<float>(voiceFade_);
-    main_.step2 = step2;
+    main_.speed2 = speed2;
+    main_.step = step;
+    if (step == static_cast<int64_t>(speed2) * seqBar_) {
+        // Rate exactly 1: back onto the grid the tape's tempo uses (whole frames, half frames
+        // at 0.5x), so the stored frames read exactly and a take can start.
+        const int64_t g = grid(speed2);
+        pos = floorDiv(pos + g / 2, g) * g;
+    }
+    main_.pos = pos;
     main_.gain = 0.0f;
     main_.gainStep = 1.0f / static_cast<float>(voiceFade_);
     retroOk_ = false;
 }
 
-void Tape::jumpTo(int64_t head2, double fadeSeconds) {
+void Tape::retime(int64_t step) {
+    // A tempo change: the head keeps going at the new rate from where it is (continuous, no
+    // click), unless the read filter changes or the rate is back to exactly 1 off the grid;
+    // then it crossfades like a Speed change.
+    const bool one = step == static_cast<int64_t>(main_.speed2) * seqBar_;
+    const int64_t g = grid(main_.speed2);
+    const bool offGrid = main_.pos - floorDiv(main_.pos, g) * g != 0;
+    if ((one && offGrid) || bankOf(std::abs(step)) != bankOf(std::abs(main_.step))) {
+        applyStep(main_.speed2, step, main_.pos);
+    } else {
+        main_.step = step;
+    }
+}
+
+void Tape::jumpTo(int64_t pos, double fadeSeconds) {
     old_ = main_;
     old_.gainStep = -old_.gain / static_cast<float>(voiceFade_);
-    main_.head2 = head2;
+    main_.pos = pos;
     main_.gain = 0.0f;
     const double fade = std::max(1.0, fadeSeconds * static_cast<double>(sampleRate_));
     main_.gainStep = static_cast<float>(1.0 / fade);
@@ -820,13 +904,13 @@ void Tape::process(const float* const* sourcesL, const float* const* sourcesR, i
 int64_t Tape::eventDistance(int32_t pos, int32_t n) const {
     int64_t d = n - pos;
     const int64_t now = frame_ + pos;
-    const int64_t head = floorDiv2(main_.head2);
+    const int64_t head = headFrame(main_.pos);
     if (headRunning() && length_ > 0) {
-        const int64_t step = main_.step2;
+        const int64_t step = main_.step;
         if (step > 0) {
-            d = std::min(d, ceilDiv(2 * loopE_ - main_.head2, step));
+            d = std::min(d, ceilDiv(unit_ * loopE_ - main_.pos, step));
         } else {
-            d = std::min(d, (main_.head2 - 2 * loopS_) / (-step) + 1);
+            d = std::min(d, (main_.pos - unit_ * loopS_) / (-step) + 1);
         }
     }
     if (take_ == TakeState::Recording) {
@@ -839,7 +923,7 @@ int64_t Tape::eventDistance(int32_t pos, int32_t n) const {
     } else if (take_ == TakeState::Armed && transport_.playing) {
         if (length_ == 0) {
             if (transport_.nextBarFrame > now) d = std::min(d, transport_.nextBarFrame - now);
-        } else if (headRunning() && main_.step2 == 2) {
+        } else if (headRunning() && main_.step == unit_) {
             const int64_t f = framesToBarLine(head);
             if (f > 0) d = std::min(d, f);
         }
@@ -852,31 +936,31 @@ int64_t Tape::eventDistance(int32_t pos, int32_t n) const {
 bool Tape::handleEvents(int32_t pos) {
     const int64_t now = frame_ + pos;
     if (take_ == TakeState::Recording) {
-        const int64_t head = floorDiv2(main_.head2);
+        const int64_t head = headFrame(main_.pos);
         bool end = takeCommit_ && written_ >= commitFrames_;
         end = end || (takeFirst_ && head >= firstLimit_);
         end = end || (stopPending_ && written_ > 0 && onBarLine(head));
         if (end) endTake();
     }
     if (headRunning() && length_ > 0) {
-        const int64_t len2 = 2 * (loopE_ - loopS_);
-        if (main_.step2 > 0 && main_.head2 >= 2 * loopE_) {
+        const int64_t len = unit_ * (loopE_ - loopS_);
+        if (main_.step > 0 && main_.pos >= unit_ * loopE_) {
             const bool rec = take_ == TakeState::Recording;
             if (rec) startTail(takeTrack_, loopE_);
-            main_.head2 -= len2;
+            main_.pos -= len;
             if (rec) writeLeadIn(takeTrack_, loopS_, pos);
             retroOk_ = false;
-        } else if (main_.step2 < 0 && main_.head2 < 2 * loopS_) {
-            main_.head2 += len2;
+        } else if (main_.step < 0 && main_.pos < unit_ * loopS_) {
+            main_.pos += len;
             retroOk_ = false;
         }
     }
     if ((take_ == TakeState::Armed || take_ == TakeState::CommitPending) && transport_.playing && !busy() &&
         main_.active) {
-        const int64_t head = floorDiv2(main_.head2);
+        const int64_t head = headFrame(main_.pos);
         bool go = false;
         if (take_ == TakeState::Armed) {
-            go = length_ == 0 ? now == transport_.nextBarFrame : (main_.step2 == 2 && onBarLine(head) && head < loopE_);
+            go = length_ == 0 ? now == transport_.nextBarFrame : (main_.step == unit_ && onBarLine(head) && head < loopE_);
         } else {
             go = nextPass_.valid && now >= nextPass_.startFrame;
         }
@@ -885,8 +969,8 @@ bool Tape::handleEvents(int32_t pos) {
             (take_ == TakeState::Armed || playPass_.valid)) {
             // Applied just after Play (the UI sends both at once): start at the Play frame.
             const int64_t elapsed = now - playFrame_;
-            const bool atPlay = length_ == 0 ? main_.head2 == 0 : main_.head2 == 2 * (loopS_ + elapsed);
-            if (atPlay && main_.step2 == 2) {
+            const bool atPlay = length_ == 0 ? main_.pos == 0 : main_.pos == unit_ * (loopS_ + elapsed);
+            if (atPlay && main_.step == unit_) {
                 go = true;
                 retro = elapsed;
             }
@@ -896,11 +980,54 @@ bool Tape::handleEvents(int32_t pos) {
     return true;
 }
 
-void Tape::readFrame(const int16_t* base, int64_t head2, int32_t absStep2, float& l, float& r) const {
-    const int64_t p = floorDiv2(head2);
-    const bool half = (head2 - 2 * p) != 0;
-    if (absStep2 != 4 && !half) {
-        const int64_t s = offset_ + p;
+int Tape::bankOf(int64_t absStep) const {
+    // Rate = absStep / unit_ tape frames per frame.
+    if (4 * absStep <= 5 * unit_) return 0;  // <= 1.25x
+    if (5 * absStep <= 8 * unit_) return 1;  // <= 1.6x
+    if (2 * absStep <= 5 * unit_) return 2;  // <= 2.5x
+    return 3;
+}
+
+Tape::Reader Tape::reader(int64_t pos, int64_t absStep, float* coefs) const {
+    const int64_t p = floorDiv(pos, unit_);
+    const int64_t rem = pos - p * unit_;
+    const int bank = bankOf(absStep);
+    const bool half = 2 * rem == unit_;
+    Reader rd;
+    // The exact paths of the tape's own tempo (whole and half frames), as before varispeed.
+    if (bank == 0 && rem == 0) {
+        rd.p = p;
+        return rd;
+    }
+    if (bank == 0 && half) {
+        rd.p = p - kTapCentre;
+        rd.taps = interpHalf_.data();
+        rd.count = kTaps;
+        return rd;
+    }
+    if (bank == 2 && (rem == 0 || half)) {
+        rd.p = p - kLpCentre;
+        rd.taps = lowpass_.data() + (half ? kLpTaps : 0);
+        rd.count = kLpTaps;
+        return rd;
+    }
+    // Varispeed: the bank's two nearest phases, interpolated.
+    const BankDesign& d = kBankDesign[bank];
+    const double phase = static_cast<double>(rem) * kPhases / static_cast<double>(unit_);
+    const int j = std::min(static_cast<int>(phase), kPhases - 1);
+    const auto w = static_cast<float>(phase - j);
+    const float* t0 = banks_[static_cast<std::size_t>(bank)].get() + j * d.taps;
+    const float* t1 = t0 + d.taps;
+    for (int k = 0; k < d.taps; ++k) coefs[k] = t0[k] + w * (t1[k] - t0[k]);
+    rd.p = p - d.centre;
+    rd.taps = coefs;
+    rd.count = d.taps;
+    return rd;
+}
+
+void Tape::readAt(const int16_t* base, const Reader& rd, int64_t shift, float& l, float& r) const {
+    if (!rd.taps) {
+        const int64_t s = offset_ + rd.p + shift;
         if (s < 0 || s >= trackFrames_) {
             l = r = 0.0f;
             return;
@@ -909,10 +1036,9 @@ void Tape::readFrame(const int16_t* base, int64_t head2, int32_t absStep2, float
         r = fromTape(base[2 * s + 1]);
         return;
     }
-    const bool lp = absStep2 == 4;
-    const float* taps = lp ? lowpass_.data() + (half ? kLpTaps : 0) : interpHalf_.data();
-    const int count = lp ? kLpTaps : kTaps;
-    const int64_t s0 = offset_ + p - (lp ? kLpCentre : kTapCentre);
+    const float* taps = rd.taps;
+    const int count = rd.count;
+    const int64_t s0 = offset_ + rd.p + shift;
     float al = 0.0f, ar = 0.0f;
     if (s0 >= 0 && s0 + count <= trackFrames_) {
         const int16_t* x = base + 2 * s0;
@@ -937,15 +1063,22 @@ void Tape::renderPlayback(int32_t pos, int32_t run) {
     const bool mainRead = running && length_ > 0;
     const bool oldRead = old_.active && length_ > 0;
     const int64_t fade = std::max<int64_t>(1, std::min(xfade_, (loopE_ - loopS_) / 2));
-    const int32_t mainAbs = std::abs(main_.step2);
-    const int32_t oldAbs = std::abs(old_.step2);
+    const int64_t mainAbs = std::abs(main_.step);
+    const int64_t oldAbs = std::abs(old_.step);
+    const int64_t loopLen = loopE_ - loopS_;
     const int32_t o = pieceOffset_ + pos;
     for (int32_t i = 0; i < run; ++i) {
         // Loop crossfade weight (equal power) against the audio before the start (forward)
-        // or after the end (reverse).
+        // or after the end (reverse): the partner is a loop length away, same phase.
         float cm = 1.0f, cp = 0.0f;
         int64_t partner = 0;
-        if (mainRead) loopFade(main_.head2, main_.step2, loopS_, loopE_, fade, cm, cp, partner);
+        Reader rm, ro;
+        if (mainRead) {
+            loopFadeAt(main_.pos, main_.step, unit_, loopS_, loopE_, fade, cm, cp, partner);
+            rm = reader(main_.pos, mainAbs, mainCoefs_.data());
+        }
+        if (oldRead) ro = reader(old_.pos, oldAbs, oldCoefs_.data());
+        const int64_t partnerShift = main_.step > 0 ? -loopLen : loopLen;
         const float gm = main_.gain;
         const float go = old_.gain;
         for (int t = 0; t < kTracks; ++t) {
@@ -954,10 +1087,10 @@ void Tape::renderPlayback(int32_t pos, int32_t run) {
                 const int16_t* base = trackBase(t);
                 float a, b;
                 if (mainRead) {
-                    readFrame(base, main_.head2, mainAbs, a, b);
+                    readAt(base, rm, 0, a, b);
                     if (cp > 0.0f) {
                         float pa, pb;
-                        readFrame(base, partner, mainAbs, pa, pb);
+                        readAt(base, rm, partnerShift, pa, pb);
                         a = blendLoop(a, pa, cm, cp);
                         b = blendLoop(b, pb, cm, cp);
                     }
@@ -965,7 +1098,7 @@ void Tape::renderPlayback(int32_t pos, int32_t run) {
                     r += gm * b;
                 }
                 if (oldRead) {
-                    readFrame(base, old_.head2, oldAbs, a, b);
+                    readAt(base, ro, 0, a, b);
                     l += go * a;
                     r += go * b;
                 }
@@ -974,11 +1107,11 @@ void Tape::renderPlayback(int32_t pos, int32_t run) {
             outR_[t][o + i] = r;
         }
         if (running) {
-            main_.head2 += main_.step2;
+            main_.pos += main_.step;
             main_.gain = std::min(1.0f, main_.gain + main_.gainStep);
         }
         if (old_.active) {
-            old_.head2 += old_.step2;
+            old_.pos += old_.step;
             old_.gain += old_.gainStep;
             if (old_.gain <= 0.0f) old_.active = false;
         }
@@ -999,7 +1132,7 @@ void Tape::processPiece(int32_t n) {
         handleEvents(pos);
         const auto run = static_cast<int32_t>(std::min<int64_t>(eventDistance(pos, n), n - pos));
         const bool rec = take_ == TakeState::Recording;
-        const int64_t recHead = floorDiv2(main_.head2);
+        const int64_t recHead = headFrame(main_.pos);
         renderPlayback(pos, run);
         if (rec) {
             const auto src = static_cast<std::size_t>(takeSource_);
@@ -1033,6 +1166,11 @@ void Tape::processPiece(int32_t n) {
 }
 
 // --- offline ---
+
+void Tape::setSequencerBarOffline(int64_t barFrames) {
+    setUnits(std::max<int64_t>(1, barFrames));
+    publish();
+}
 
 void Tape::applyPendingOffline() {
     // Tails get silence (nothing renders now); an edit in flight completes.
@@ -1095,7 +1233,7 @@ int64_t Tape::overviewLength() const {
     if (length_ > 0) return length_;
     if (take_ != TakeState::Recording || !takeFirst_ || bar_ <= 0) return 0;
     // First take in progress: scaled to the bars recorded so far (or the commit's length).
-    const int64_t sofar = takeCommit_ ? commitFrames_ : floorDiv2(main_.head2);
+    const int64_t sofar = takeCommit_ ? commitFrames_ : headFrame(main_.pos);
     return std::max<int64_t>(1, ceilDiv(std::max<int64_t>(sofar, 1), bar_)) * bar_;
 }
 
@@ -1168,7 +1306,7 @@ void Tape::publish() {
     outLength_.store(length_, std::memory_order_relaxed);
     outLengthBars_.store(bar_ > 0 ? static_cast<int32_t>(length_ / bar_) : 0, std::memory_order_relaxed);
     outBar_.store(bar_, std::memory_order_relaxed);
-    int64_t head = floorDiv2(main_.head2);
+    int64_t head = headFrame(main_.pos);
     if (length_ > 0 && head >= loopE_) head -= loopE_ - loopS_;  // wraps at the next frame
     if (length_ > 0 && head < loopS_) head += loopE_ - loopS_;
     outHead_.store(std::max<int64_t>(0, head), std::memory_order_relaxed);
@@ -1178,6 +1316,14 @@ void Tape::publish() {
     outCanUndo_.store(undoCount_ > 0, std::memory_order_relaxed);
     outCanRedo_.store(entryCount_ > undoCount_, std::memory_order_relaxed);
     for (std::size_t t = 0; t < kTracks; ++t) outHasAudio_[t].store(hasAudio_[t], std::memory_order_relaxed);
+    // The tape's tempo in 0.1 BPM: a bar is 4 beats of barFrames (the sequencer's 0.1 BPM
+    // grid rounds to distinct bar lengths, so this is exactly the first take's tempo).
+    const int64_t tenths =
+        bar_ > 0 ? std::clamp<int64_t>(std::llround(2400.0 * static_cast<double>(sampleRate_) / static_cast<double>(bar_)), 0,
+                                       std::numeric_limits<int32_t>::max())
+                 : 0;
+    outTempoTenths_.store(static_cast<int32_t>(tenths), std::memory_order_relaxed);
+    outTempoMatches_.store(tempoMatches(), std::memory_order_relaxed);
 }
 
 // --- M4: persistence (audio thread unless noted) ---
@@ -1258,7 +1404,7 @@ int64_t Tape::metaLength() const {
     if (length_ > 0) return length_;
     if (take_ != TakeState::Recording || !takeFirst_ || bar_ <= 0) return 0;
     // A first take in progress: the whole bars recorded so far, so a crash keeps them.
-    const int64_t head = floorDiv2(main_.head2);
+    const int64_t head = headFrame(main_.pos);
     const int64_t maxBars = std::max<int64_t>(1, firstLimit_ / bar_);
     return std::clamp<int64_t>(ceilDiv(std::max<int64_t>(head, 1), bar_), 1, maxBars) * bar_;
 }
@@ -1417,7 +1563,7 @@ void Tape::startLanding() {
     hasAudio_.fill(false);
     old_.active = false;
     computeLoop();
-    main_.head2 = 0;
+    main_.pos = 0;
     if (persistActive_ && persistTouched_) {
         // The files saw this session's changes: rewrite them from the loaded tape.
         landMark_ = true;
@@ -1489,9 +1635,10 @@ void Tape::finishLanding() {
     }
     clearHistory();
     computeLoop();
-    main_.head2 = 2 * loopS_;
+    main_.pos = unit_ * loopS_;
     if (main_.active) {
-        main_.step2 = effectiveStep2();
+        main_.speed2 = effectiveSpeed2();
+        main_.step = main_.speed2 * rateUnits();
         main_.gain = 0.0f;
         main_.gainStep = 1.0f / static_cast<float>(startFade_);
     }

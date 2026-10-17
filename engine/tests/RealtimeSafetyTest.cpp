@@ -83,9 +83,16 @@ TEST(RealtimeSafety, FullGraphWithSequencerTrafficNeverAllocates) {
         for (int p = 0; p < 2; ++p) {
             seq.setPatternSettings(s, p, 12 + 4 * p, (s + p) % 4, 0.3f * static_cast<float>(p), 0.6f);
             for (int i = 0; i < 16; ++i) {
-                const int notes[] = {s == 0 ? 48 + i : 40 + i, 52 + i, 55 + i, 59 + i};
-                seq.setStep(s, p, i, i % 3 != 2, notes, s == 0 ? 1 : 1 + i % 4, 0.8f, i % 2 ? -1.0f : 0.9f,
-                            i % 4 == 0 ? 0.5f : 1.0f);
+                // Up to 8 hits: early and late nudges, lengths from 1/16 to 16 steps (long notes
+                // across the pattern end, retriggers of held notes), chance.
+                std::array<Hit, kMaxHitsPerStep> hits{};
+                for (int j = 0; j < kMaxHitsPerStep; ++j) {
+                    const int note = s == 0 ? 48 + (i + 3 * j) % 16 : 40 + i + 4 * j;
+                    const float length = j % 4 == 0 ? Hit::kPatternGate : 0.0625f * static_cast<float>(1 << ((i + j) % 9));
+                    hits[static_cast<std::size_t>(j)] = Hit{note, 0.8f, length, (i + j) % 4 == 0 ? 0.5f : 1.0f,
+                                                            static_cast<float>((i + 2 * j) % 11 - 5) * 0.1f};
+                }
+                seq.setStep(s, p, i, hits.data(), i % 3 == 2 ? 0 : 1 + (i + s) % kMaxHitsPerStep);
             }
             seq.setMotionValue(s, p, s == 0 ? DrumMachine::motionTarget(1, DrumParamId::Tone)
                                             : static_cast<int>(ParamId::FltCutoff), 4, 900.0f);
@@ -107,8 +114,10 @@ TEST(RealtimeSafety, FullGraphWithSequencerTrafficNeverAllocates) {
         if (i % 150 == 0) seq.setTempo(60.0f + static_cast<float>(i % 170));
         if (i % 7 == 0) {
             const int note = 60 + i % 5;
-            seq.setStep(slot, i % 2, i % 16, true, &note, 1, 0.7f, -1.0f, 0.9f);
+            seq.setStep(slot, i % 2, i % 16,
+                        {Hit{note, 0.7f, Hit::kPatternGate, 0.9f, -0.5f}, Hit{note + 7, 0.7f, 16.0f, 1.0f, 0.5f}});
         }
+        if (i % 29 == 0) seq.setStep(slot, i % 2, (i + 5) % 16, {});
         if (i % 13 == 0) seq.setMotionValue(slot, 0, slot == 0 ? 9 : 1, i % 16, 0.3f);
         if (i % 211 == 0) seq.clearMotionLane(slot, 1, 1);
         if (i % 307 == 0) seq.clearPattern(slot, 1);
@@ -158,7 +167,7 @@ TEST(RealtimeSafety, FullM3GraphWithTapeAndMixerTrafficNeverAllocates) {
         seq.setPatternSettings(s, 0, 4 + 4 * (s % 3), 1, 0.2f, 0.6f);
         for (int i = 0; i < 16; ++i) {
             const int note = s == 0 ? 48 + i : 48 + i + s;
-            seq.setStep(s, 0, i, true, &note, 1, 0.8f, -1.0f, 1.0f);
+            seq.setStep(s, 0, i, {Hit{note, 0.8f, Hit::kPatternGate, 1.0f, i % 2 ? -0.2f : 0.1f}});
         }
         ch.set(s, ChannelParamId::DelaySend, 0.3f);
         ch.set(s, ChannelParamId::ReverbSend, 0.3f);
@@ -251,7 +260,7 @@ TEST(RealtimeSafety, TapePersistenceLoadAndExportNeverAllocateOnTheAudioThread) 
     for (int s = 0; s < kSlotCount; ++s) {
         for (int i = 0; i < 16; ++i) {
             const int note = s == 0 ? 48 + i : 48 + i + s;
-            seq.setStep(s, 0, i, true, &note, 1, 0.8f, -1.0f, 1.0f);
+            seq.setStep(s, 0, i, {Hit{note, 0.8f, Hit::kPatternGate, 1.0f, i % 2 ? -0.2f : 0.1f}});
         }
     }
     std::vector<float> out(4096 * 2);
@@ -343,4 +352,53 @@ TEST(RealtimeSafety, LevelMeteringUnderLoudTrafficNeverAllocates) {
     }
     EXPECT_EQ(scope.count(), 0u);
     EXPECT_GT(clipped, 0) << "the traffic really clipped the master";
+}
+
+// Build-20 hits at their limits on the sequencer alone: 8 hits per step on every slot, all
+// 128 notes held (16-step lengths, so every pending-off list is full), the most waiting hits
+// (heavy shuffle, +-50% nudges, look-ahead), the fastest steps, tempo changes, loops,
+// switches, live recording onto 8-hit steps and Stop with hits waiting. Nothing allocates.
+TEST(RealtimeSafety, SequencerHitsAtTheirLimitsNeverAllocate) {
+    auto seq = std::make_unique<Sequencer>();
+    seq->prepare(48000.0f);
+    for (int s = 0; s < kSlotCount; ++s) {
+        for (int p = 0; p < 2; ++p) {
+            seq->setPatternSettings(s, p, 16, 2 * p, 1.0f - 0.25f * static_cast<float>(p), 0.5f);
+            for (int i = 0; i < 16; ++i) {
+                std::array<Hit, kMaxHitsPerStep> hits{};
+                for (int j = 0; j < kMaxHitsPerStep; ++j) {
+                    hits[static_cast<std::size_t>(j)] =
+                        Hit{i * 8 + j, 0.8f, 16.0f, j % 3 == 0 ? 0.5f : 1.0f, j % 2 ? -0.5f : 0.5f};
+                }
+                seq->setStep(s, p, i, hits.data(), kMaxHitsPerStep);
+            }
+        }
+    }
+    seq->setRecordArmed(true);
+    seq->applyCommands(0, 1 << 30);
+
+    groove::test::AllocationScope scope;
+    int64_t frame = 0;
+    for (int i = 0; i < 6000; ++i) {
+        const int slot = i % kSlotCount;
+        if (i % 1500 == 0) seq->play();
+        if (i % 1500 == 1400) seq->stop();
+        if (i % 200 == 0) seq->setTempo(i % 400 == 0 ? 240.0f : 97.3f);
+        if (i % 90 == 0) seq->selectPattern(slot, (i / 90) % 2);
+        if (i % 70 == 0) seq->setStepLoop(slot, 15, 1);
+        if (i % 70 == 35) seq->setStepLoop(slot, -1, -1);
+        if (i % 11 == 0) seq->setStep(slot, i % 2, (i * 3) % 16, {Hit{i % 128, 0.5f, 16.0f, 1.0f, -0.5f}});
+        seq->applyCommands(frame);
+        if (i % 3 == 0) seq->recordLiveNote(slot, slot == 0 ? 48 + i % 16 : i % 128, 0.9f, frame);
+        const int32_t n = (i % 9 == 0) ? 4096 : 1 + (i * 37) % 300;
+        for (int32_t pos = 0; pos < n;) {
+            const int32_t step = seq->advance(frame, n - pos);
+            frame += step;
+            pos += step;
+        }
+        RecordedEvent ev;
+        while (seq->popRecorded(ev)) {
+        }
+    }
+    EXPECT_EQ(scope.count(), 0u);
 }

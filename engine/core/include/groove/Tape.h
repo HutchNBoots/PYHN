@@ -26,6 +26,11 @@ struct TapeState {
     bool canRedo = false;
     std::array<bool, kTracks> hasAudio{};
     bool loading = false;  // a saved tape is loading (F7.6)
+    // Build-20, the tape follows the tempo: the tape's tempo (its first take's, 4 beats per
+    // barFrames) in BPM rounded to 0.1, 0 when empty; and whether the sequencer's tempo is it
+    // (always true for an empty tape). Recording needs it, like Speed 1x and reverse off.
+    float tempoBpm = 0.0f;
+    bool tempoMatches = true;
 };
 
 // --- M4 persistence, load and export links (docs/plans/2026-10-16-m4-keep-it.md) ---
@@ -107,9 +112,20 @@ enum class TapeSnapshotPhase : int32_t { Idle, Requested, Copying, Ready, Failed
 //
 // Time: the tape has its own frame clock. The head starts at the loop start on Play and
 // returns there on Stop. Tape bar lines are loop start + k * barFrames, where barFrames is a
-// bar (4 beats) at the tempo of the first take, kept afterwards (a later tempo change doesn't
-// stretch the tape). The first take on an empty tape starts on a sequencer bar line instead
-// (or at Play) and stops on a whole number of its own bars.
+// bar (4 beats) at the tempo of the first take, kept afterwards: the tape's tempo. The first
+// take on an empty tape starts on a sequencer bar line instead (or at Play) and stops on a
+// whole number of its own bars.
+//
+// Tape follows tempo (build-20): at another sequencer tempo the tape plays varispeed (pitch
+// moves, tape-style) at rate = tape barFrames / sequencer barFrames (= tempo / tape tempo,
+// both bars rounded to frames as the sequencer rounds them), times Speed and reverse. So a
+// tape bar lasts one sequencer bar and the loop region, in tape bars, stays on the sequencer's
+// bar lines. The head position is exact: it counts units of 1 / (2 * sequencer barFrames)
+// frames and moves Speed-half-frames x tape barFrames units per frame; a tempo change
+// rescales it (to within half a unit). A tempo change only changes the rate in place
+// (continuous, no click), except when it changes the read filter or brings the rate back to
+// exactly 1, where the head crossfades (kVoiceFadeSeconds) onto the whole-frame grid (half
+// frames at 0.5x), so playback at the tape's tempo reads exactly the stored frames again.
 //
 // Writes: every record run (old * dub + input) is preceded by a crossfade-length lead-in
 // that ramps the new input in, taken from an input history, and followed by a tail that
@@ -120,11 +136,15 @@ enum class TapeSnapshotPhase : int32_t { Idle, Requested, Copying, Ready, Failed
 // kLoopFadeSeconds against the audio just after the loop end (reverse), so a loop's
 // downbeat keeps its attack.
 //
-// Speed 0.5x/1x/2x and reverse: the head moves in exact half frames; half-frame positions
-// read through a 16-tap windowed-sinc interpolator and 2x reads through a 32-tap low-pass
-// at 0.21 of the tape rate (anti-alias for the 2:1 decimation). Play/Stop, speed and loop jumps crossfade the head (kVoiceFadeSeconds).
-// Recording runs only at 1x forward: speed, reverse and the loop region are latched while a
-// take runs and take effect when it ends.
+// Speed 0.5x/1x/2x and reverse: at the tape's tempo the head moves in exact half frames;
+// half-frame positions read through a 16-tap windowed-sinc interpolator and 2x reads through
+// a 32-tap low-pass at 0.21 of the tape rate (anti-alias for the 2:1 decimation). Varispeed
+// positions read through polyphase versions of the same windowed sinc (kPhases phases,
+// coefficients interpolated linearly between them), with a cutoff for the rate: 0.5 up to
+// 1.25x, 0.30 up to 1.6x, 0.21 up to 2.5x, 0.105 above (more than ~5x aliases). Play/Stop,
+// speed and loop jumps crossfade the head (kVoiceFadeSeconds).
+// Recording runs only at 1x forward at the tape's tempo: speed, reverse, the tempo's rate and
+// the loop region are latched while a take runs and take effect when it ends.
 //
 // Undo/redo (the last kMaxUndo actions: a take or commit, or a clear): before a frame is
 // first changed, it is copied into the pool (copy-on-write per action), and undo or redo
@@ -179,6 +199,7 @@ public:
     static constexpr int64_t kOpFramesPerFrame = 1250;
     static constexpr int64_t kPersistFramesPerPiece = 32768;  // ~128 KB copied per piece at most
     static constexpr int kPersistRanges = 8;                  // pending ranges per track
+    static constexpr int kPhases = 256;                       // varispeed interpolator phases
 
     struct Limits {
         double maxSeconds = 120.0;          // per track
@@ -200,7 +221,7 @@ public:
         uint32_t playCount = 0;
         int64_t playFrame = 0;
         int64_t nextBarFrame = -1;  // first sequencer bar line >= chunk start (playing)
-        int64_t barFrames = 96000;  // a bar at the current tempo, rounded
+        int64_t barFrames = 96000;  // a bar at the current tempo, rounded (sets the varispeed rate)
     };
 
     // A commit's timing, from the sequencer: `next` starts at the next pattern boundary,
@@ -208,7 +229,7 @@ public:
     struct CommitPass {
         bool valid = false;
         int64_t startFrame = 0;
-        int64_t frames = 0;  // exact pass length (slot), or 0 with bars set (all slots)
+        int64_t frames = 0;  // exact take length (slot: its pattern in whole bars), or 0 with bars set (all slots)
         int32_t bars = 0;
     };
 
@@ -247,6 +268,9 @@ public:
     // Applies every queued command and completes any running undo/redo/clear and tail, a
     // load landing and an export snapshot, and sends what fits to the persistence ring.
     void applyPendingOffline();
+    // The sequencer's bar (Transport::barFrames) while no chunk runs, so the tempo readout
+    // and the record rule follow a tempo set with the stream stopped.
+    void setSequencerBarOffline(int64_t barFrames);
 
     // --- persistence, load and snapshot (M4) ---
     struct Layout {
@@ -287,6 +311,10 @@ public:
     // Loop crossfade weights for the main head at head2 (half frames) moving step2.
     static void loopFade(int64_t head2, int32_t step2, int64_t loopS, int64_t loopE, int64_t fade, float& cm, float& cp,
                          int64_t& partner2);
+    // The same for a head at pos in units of 1 / unit frames (loopFade is unit 2), moving
+    // in the direction of step. Bit-identical to loopFade for pos = head2 * unit / 2.
+    static void loopFadeAt(int64_t pos, int64_t step, int64_t unit, int64_t loopS, int64_t loopE, int64_t fade,
+                           float& cm, float& cp, int64_t& partnerPos);
     static float blendLoop(float a, float partner, float cm, float cp);
 
     // --- tests only (audio thread not running) ---
@@ -345,10 +373,17 @@ private:
     };
     struct Voice {
         bool active = false;
-        int64_t head2 = 0;  // half frames
-        int32_t step2 = 2;  // +-1, +-2, +-4
+        int64_t pos = 0;     // head position in units of 1 / unit_ frames
+        int64_t step = 0;    // units per frame: speed2 * the rate numerator (rateUnits())
+        int32_t speed2 = 2;  // half frames per frame at the tape's tempo: +-1, +-2, +-4
         float gain = 1.0f;
         float gainStep = 0.0f;
+    };
+    // How a head position is read: a direct frame or a filter (taps over count frames from p).
+    struct Reader {
+        int64_t p = 0;              // first frame (direct: the frame)
+        const float* taps = nullptr;  // nullptr: direct
+        int count = 0;
     };
 
     bool push(const Command& c) { return commands_.push(c); }
@@ -365,7 +400,9 @@ private:
     int64_t eventDistance(int32_t pos, int32_t n) const;
     bool handleEvents(int32_t pos);
     void renderPlayback(int32_t pos, int32_t run);
-    void readFrame(const int16_t* base, int64_t head2, int32_t absStep2, float& l, float& r) const;
+    Reader reader(int64_t pos, int64_t absStep, float* coefs) const;
+    void readAt(const int16_t* base, const Reader& rd, int64_t shift, float& l, float& r) const;
+    int bankOf(int64_t absStep) const;
     void writeRange(int track, int64_t start, int64_t frames, const float* inL, const float* inR, float w0,
                     float dw, int32_t dubOffset);
     void writeLeadIn(int track, int64_t before, int32_t pos);
@@ -387,8 +424,16 @@ private:
 
     // loop and voices
     void computeLoop();
-    int32_t effectiveStep2() const;
-    void applyStep(int32_t step2);
+    int32_t effectiveSpeed2() const;
+    int64_t rateUnits() const;  // the rate numerator: tape bar (varispeed) or sequencer bar (1x)
+    bool tempoMatches() const { return bar_ <= 0 || seqBar_ == bar_; }
+    bool recordAllowed() const { return params_.speed == 1 && !params_.reverse && tempoMatches(); }
+    int64_t headFrame(int64_t pos) const;
+    void setUnits(int64_t seqBar);
+    void applyStep(int32_t speed2, int64_t step, int64_t pos);
+    // The head grid at rate 1, in units: whole frames, or half frames at 0.5x.
+    int64_t grid(int32_t speed2) const { return (speed2 == 1 || speed2 == -1) ? seqBar_ : unit_; }
+    void retime(int64_t step);
     void jumpTo(int64_t head2, double fadeSeconds);
     bool onBarLine(int64_t head) const;
     int64_t framesToBarLine(int64_t head) const;
@@ -455,6 +500,11 @@ private:
     std::unique_ptr<float[]> scratch_;  // lead-in input, 2 x xfade_
     std::array<float, 16> interpHalf_{};  // half-frame interpolator (16 taps)
     std::array<float, 32 * 2> lowpass_{};  // 2x anti-alias low-pass, phase 0 then phase 0.5
+    static constexpr int kBanks = 4;
+    static constexpr int kMaxTaps = 64;
+    // Varispeed polyphase banks: (kPhases + 1) rows of bankTaps_[b] taps (row j: phase j / kPhases).
+    std::array<std::unique_ptr<float[]>, kBanks> banks_;
+    std::array<float, kMaxTaps> mainCoefs_{}, oldCoefs_{};
 
     // --- audio-thread state ---
     int64_t frame_ = 0;  // stream frame of the next piece
@@ -466,6 +516,8 @@ private:
     int64_t playFrame_ = 0;
     int64_t length_ = 0;
     int64_t bar_ = 0;
+    int64_t seqBar_ = 96000;  // the sequencer's bar (transport barFrames), >= 1
+    int64_t unit_ = 2 * 96000;  // head units per frame: 2 * seqBar_
     std::array<bool, kTracks> hasAudio_{};
     int64_t loopS_ = 0, loopE_ = 0;
     Voice main_, old_;
@@ -550,6 +602,8 @@ private:
     std::atomic<bool> outCanUndo_{false};
     std::atomic<bool> outCanRedo_{false};
     std::array<std::atomic<bool>, kTracks> outHasAudio_{};
+    std::atomic<int32_t> outTempoTenths_{0};
+    std::atomic<bool> outTempoMatches_{true};
     std::array<std::array<std::atomic<uint8_t>, kOverviewBins>, kTracks> bins_{};
 };
 

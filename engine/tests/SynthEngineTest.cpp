@@ -26,6 +26,12 @@ int activeVoices(const SynthEngine& s) {
     return n;
 }
 
+// a then b, so a click detector also sees the step from a's last sample to b's first.
+std::vector<float> joined(std::vector<float> a, const std::vector<float>& b) {
+    a.insert(a.end(), b.begin(), b.end());
+    return a;
+}
+
 int voiceWithNote(const SynthEngine& s, int note) {
     for (int i = 0; i < SynthEngine::kVoiceCount; ++i) {
         if (s.voiceInfo(i).active && s.voiceInfo(i).note == note) return i;
@@ -342,14 +348,108 @@ TEST_F(SynthEngineTest, UnisonIsLegatoAndGlides) {
     for (int i = 0; i < 4; ++i) EXPECT_NEAR(cents(synth.voiceInfo(i).frequencyHz, noteHz(48)), 0.0, 10.1);
 }
 
-TEST_F(SynthEngineTest, ModeChangeFadesHeldVoicesWithoutClick) {
+// Build-20 fix: a voice-mode change while keys are held keeps the held notes sounding under
+// the new mode (mono and unison keep the last-held one), without a click.
+TEST_F(SynthEngineTest, ModeChangeKeepsHeldNotesWithoutClick) {
     synth.noteOn(60, 1.0f, 0);
     synth.noteOn(64, 1.0f, 0);
     auto x = render(4800);
     const float steady = maxStep(x, 2400);
     synth.setParam(ParamId::OscVoiceMode, 1.0f);
     auto y = render(4800);
-    EXPECT_LE(maxStep(y, 0, 480), 1.1f * steady);
+    EXPECT_LE(maxStep(joined(x, y), x.size(), x.size() + 480), 1.1f * steady);
+    ASSERT_EQ(activeVoices(synth), 1);
+    EXPECT_EQ(synth.voiceInfo(0).note, 64);  // the last-held note
+    EXPECT_TRUE(synth.voiceInfo(0).gateOn);
+    EXPECT_GT(peakAbs(y, 2400), 0.1f);  // still sounding after the fade
+    synth.noteOff(64);  // back to the other held note, as in mono
+    render(kBlock);
+    EXPECT_EQ(synth.voiceInfo(0).note, 60);
+    synth.noteOff(60);
+    render(9600);
+    EXPECT_EQ(activeVoices(synth), 0);
+}
+
+TEST_F(SynthEngineTest, ModeChangeFromMonoToPolySoundsEveryHeldNote) {
+    setMode(SynthEngine::VoiceMode::Mono);
+    synth.noteOn(60, 1.0f, 0);
+    synth.noteOn(64, 1.0f, 0);
+    synth.noteOn(67, 1.0f, 0);
+    render(4800);
+    ASSERT_EQ(activeVoices(synth), 1);
+    synth.setParam(ParamId::OscVoiceMode, 0.0f);
+    render(4800);
+    EXPECT_EQ(activeVoices(synth), 3);
+    for (int n : {60, 64, 67}) {
+        const int v = voiceWithNote(synth, n);
+        ASSERT_GE(v, 0) << n;
+        EXPECT_TRUE(synth.voiceInfo(v).gateOn) << n;
+    }
+    synth.noteOff(64);
+    render(kBlock);
+    EXPECT_FALSE(synth.voiceInfo(voiceWithNote(synth, 64)).gateOn);
+    EXPECT_TRUE(synth.voiceInfo(voiceWithNote(synth, 67)).gateOn);
+    synth.noteOff(60);
+    synth.noteOff(67);
+    render(9600);
+    EXPECT_EQ(activeVoices(synth), 0);
+}
+
+TEST_F(SynthEngineTest, ModeChangeToUnisonStacksTheLastHeldNote) {
+    synth.noteOn(60, 1.0f, 0);
+    synth.noteOn(64, 1.0f, 0);
+    auto x = render(4800);
+    const float steady = maxStep(x, 2400);
+    synth.setParam(ParamId::OscVoiceMode, 2.0f);
+    auto y = render(4800);
+    EXPECT_LE(maxStep(joined(x, y), x.size(), x.size() + 480), 1.1f * steady);  // the pan gains ramp
+    ASSERT_EQ(activeVoices(synth), 4);
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(synth.voiceInfo(i).note, 64) << i;
+        EXPECT_TRUE(synth.voiceInfo(i).gateOn) << i;
+    }
+    // Unison -> poly: both held notes again.
+    synth.setParam(ParamId::OscVoiceMode, 0.0f);
+    render(4800);
+    EXPECT_EQ(activeVoices(synth), 2);
+    EXPECT_GE(voiceWithNote(synth, 60), 0);
+    EXPECT_GE(voiceWithNote(synth, 64), 0);
+}
+
+TEST_F(SynthEngineTest, ModeChangeToPolyKeepsTheFourMostRecentHeldNotes) {
+    setMode(SynthEngine::VoiceMode::Mono);
+    for (int n : {48, 50, 52, 53, 55, 57}) synth.noteOn(n, 1.0f, 0);
+    render(4800);
+    synth.setParam(ParamId::OscVoiceMode, 0.0f);
+    render(4800);
+    EXPECT_EQ(activeVoices(synth), 4);
+    for (int n : {52, 53, 55, 57}) EXPECT_GE(voiceWithNote(synth, n), 0) << n;
+    // Releasing the older held notes later is harmless.
+    synth.noteOff(48);
+    synth.noteOff(50);
+    render(kBlock);
+    EXPECT_EQ(activeVoices(synth), 4);
+}
+
+TEST_F(SynthEngineTest, ModeChangeKeepsSequencerNotesAndTheirNoteOffs) {
+    synth.seqNoteOn(62, 1.0f);
+    render(4800);
+    synth.setParam(ParamId::OscVoiceMode, 1.0f);
+    render(4800);
+    ASSERT_EQ(activeVoices(synth), 1);
+    EXPECT_EQ(synth.voiceInfo(0).note, 62);
+    synth.seqNoteOff(62);  // the sequencer's note-off still releases it
+    render(9600);
+    EXPECT_EQ(activeVoices(synth), 0);
+}
+
+TEST_F(SynthEngineTest, ModeChangeWithNothingHeldLeavesReleasingVoicesSilent) {
+    synth.noteOn(60, 1.0f, 0);
+    render(4800);
+    synth.noteOff(60);
+    render(kBlock);
+    synth.setParam(ParamId::OscVoiceMode, 1.0f);
+    render(4800);
     EXPECT_EQ(activeVoices(synth), 0);
     synth.noteOn(67, 1.0f, 0);
     render(kBlock);

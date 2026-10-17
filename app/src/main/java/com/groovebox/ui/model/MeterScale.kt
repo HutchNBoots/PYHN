@@ -1,6 +1,7 @@
 package com.groovebox.ui.model
 
 import com.groovebox.engine.NativeEngine
+import com.groovebox.engine.ParamSpec
 import kotlin.math.log10
 
 /**
@@ -36,6 +37,14 @@ object MeterScale {
 
     /** A linear peak amplitude as a 0..1 bar height: 0 at or below -60 dBFS, 1 at +6 dBFS and above. */
     fun height(level: Float): Float = dbToHeight(toDb(level))
+
+    /**
+     * Where a column's setting marker sits on its meter (v1 fix 4): a dB setting (fader,
+     * master) at its own dB; any other (the DLY / REV returns, linear gains 0..1) at the dB that
+     * gain is, so a return of 50% sits at -6 dB, where a peak of 0.5 draws.
+     */
+    fun markerHeight(spec: ParamSpec, value: Double): Float =
+        if (spec.unit == "dB") dbToHeight(value) else height(value.toFloat())
 }
 
 /**

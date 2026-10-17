@@ -112,12 +112,12 @@ TEST(EngineBenchmark, FullGraphBusyPattern) {
         seq.setPatternSettings(s, 0, 16, 1, 0.2f, 0.9f);
         for (int i = 0; i < 16; ++i) {
             if (s == 0) {
-                const int hits[] = {i % 4 == 0 ? 48 : 54, i % 8 == 4 ? 50 : 55};
-                seq.setStep(0, 0, i, true, hits, 2, 0.9f, -1.0f, 1.0f);
+                seq.setStep(0, 0, i, {Hit{i % 4 == 0 ? 48 : 54, 0.9f}, Hit{i % 8 == 4 ? 50 : 55, 0.9f}});
             } else if (i % 2 == 0) {
                 const int root = 36 + s * 4 + (i / 4) % 3;
-                const int chord[] = {root, root + 4, root + 7, root + 11};
-                seq.setStep(s, 0, i, true, chord, 4, 0.8f, 1.0f, 1.0f);  // gate 2 steps' worth: always 4 voices
+                // One step long, every other step: always 4 voices.
+                seq.setStep(s, 0, i, {Hit{root, 0.8f, 1.0f}, Hit{root + 4, 0.8f, 1.0f}, Hit{root + 7, 0.8f, 1.0f},
+                                      Hit{root + 11, 0.8f, 1.0f}});
             }
             seq.setMotionValue(s, 0, s == 0 ? DrumMachine::motionTarget(i % 16, DrumParamId::Tone)
                                             : static_cast<int>(ParamId::FltCutoff),
@@ -169,12 +169,11 @@ void setUpBusyGraph(AudioGraph& g) {
         seq.setPatternSettings(s, 0, 16, 1, 0.2f, 0.9f);
         for (int i = 0; i < 16; ++i) {
             if (s == 0) {
-                const int hits[] = {i % 4 == 0 ? 48 : 54, i % 8 == 4 ? 50 : 55};
-                seq.setStep(0, 0, i, true, hits, 2, 0.9f, -1.0f, 1.0f);
+                seq.setStep(0, 0, i, {Hit{i % 4 == 0 ? 48 : 54, 0.9f}, Hit{i % 8 == 4 ? 50 : 55, 0.9f}});
             } else if (i % 2 == 0) {
                 const int root = 36 + s * 4 + (i / 4) % 3;
-                const int chord[] = {root, root + 4, root + 7, root + 11};
-                seq.setStep(s, 0, i, true, chord, 4, 0.8f, 1.0f, 1.0f);
+                seq.setStep(s, 0, i, {Hit{root, 0.8f, 1.0f}, Hit{root + 4, 0.8f, 1.0f}, Hit{root + 7, 0.8f, 1.0f},
+                                      Hit{root + 11, 0.8f, 1.0f}});
             }
         }
         g.channelParams().set(s, ChannelParamId::DelaySend, 0.4f);

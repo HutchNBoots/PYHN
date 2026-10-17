@@ -100,6 +100,28 @@ class TapeLayoutTest {
     }
 
     @Test
+    fun recordNeedsTheTapeTempo() {
+        // Build-20: at another tempo the tape plays varispeed and Record needs its tempo back.
+        assertTrue(TapeView.canRecord(1, false, tempoMatches = true))
+        assertFalse(TapeView.canRecord(1, false, tempoMatches = false))
+        assertFalse(TapeView.canRecord(2, false, tempoMatches = false))
+        // Record and the lane double-tap follow it.
+        val can = TapeView.canRecord(1, false, tempoMatches = false)
+        assertEquals(TapeRecordAction.None, TapeView.recordPress(TapeRecordStatus.Idle, 0, can))
+        assertEquals(TapeRecordAction.None, TapeView.laneDoubleTap(1, TapeRecordStatus.Idle, -1, can))
+        // The footer says what is needed.
+        assertNull(TapeView.recordNeeds(1, false, tempoMatches = true, tapeTempoBpm = 120f))
+        assertEquals("record needs Speed 1× and Rev off", TapeView.recordNeeds(2, false, tempoMatches = true, tapeTempoBpm = 120f))
+        assertEquals("record needs Speed 1× and Rev off", TapeView.recordNeeds(1, true, tempoMatches = true, tapeTempoBpm = 0f))
+        assertEquals("record needs 120.0 BPM, the tape's tempo", TapeView.recordNeeds(1, false, tempoMatches = false, tapeTempoBpm = 120f))
+        assertEquals("record needs 133.7 BPM, the tape's tempo", TapeView.recordNeeds(1, false, tempoMatches = false, tapeTempoBpm = 133.7f))
+        assertEquals(
+            "record needs Speed 1×, Rev off and 96.5 BPM, the tape's tempo",
+            TapeView.recordNeeds(0, true, tempoMatches = false, tapeTempoBpm = 96.5f),
+        )
+    }
+
+    @Test
     fun laneDoubleTapArmsThatLaneOrStopsItsOwnTake() {
         // Idle: arm the lane that was double-tapped (if the tape can record).
         assertEquals(TapeRecordAction.Arm(3), TapeView.laneDoubleTap(3, TapeRecordStatus.Idle, -1, canRecord = true))

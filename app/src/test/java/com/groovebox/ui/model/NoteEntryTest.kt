@@ -80,7 +80,7 @@ class NoteEntryTest {
 
     @Test
     fun padEntryKeepsAStepsOwnNotesUntilKeysArePlayed() {
-        val old = Step(on = false, notes = listOf(45), velocity = 0.6f)
+        val old = Step.of(listOf(45), velocity = 0.6f)
         assertEquals(listOf(45) to 0.6f, memory.entryFor(1, old))
         memory.keyDown(1, 52, 0.9f)
         assertEquals(listOf(52) to 0.9f, memory.entryFor(1, old))
@@ -99,8 +99,8 @@ class NoteEntryTest {
         memory.keyDown(3, 63, 0.75f)
         val (notes, velocity) = memory.entryFor(3, store.step(3, 0, 8))
         store.toggleStep(3, 0, 8, notes, velocity)
-        assertEquals(Step(on = true, notes = listOf(60, 63), velocity = 0.75f), store.step(3, 0, 8))
-        assertEquals(listOf("step 3 0 8 true [60, 63] 0.75 -1.0 1.0"), sink.calls)
+        assertEquals(Step.of(listOf(60, 63), velocity = 0.75f), store.step(3, 0, 8))
+        assertEquals(listOf("step 3 0 8 [60 0.75 -1.0 1.0 0.0] [63 0.75 -1.0 1.0 0.0]"), sink.calls)
     }
 
     @Test
@@ -113,7 +113,7 @@ class NoteEntryTest {
         store.setStepNotes(1, 0, 4, chord, 0.7f)
         chord = memory.keyDown(1, 64, 0.7f)
         store.setStepNotes(1, 0, 4, chord, 0.7f)
-        assertEquals(Step(on = true, notes = listOf(57, 60, 64), velocity = 0.7f), store.step(1, 0, 4))
+        assertEquals(Step.of(listOf(57, 60, 64), velocity = 0.7f), store.step(1, 0, 4))
         for (n in listOf(57, 60, 64)) memory.keyUp(1, n)
         chord = memory.keyDown(1, 62, 0.9f)
         store.setStepNotes(1, 0, 4, chord, 0.9f)

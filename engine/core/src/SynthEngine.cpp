@@ -52,6 +52,9 @@ void SynthEngine::prepare(float sampleRate) {
     mode_ = static_cast<VoiceMode>(static_cast<int32_t>(raw_[index(ParamId::OscVoiceMode)]));
     setMode(mode_);
     for (Voice& v : voices_) v.reset();
+    panLeft_ = panLeftTarget_;
+    panRight_ = panRightTarget_;
+    panRampLeft_ = 0;
     advanceControls();
     framesRendered_.store(0, std::memory_order_relaxed);
 }
@@ -92,20 +95,47 @@ void SynthEngine::readTargets() {
 }
 
 void SynthEngine::setMode(VoiceMode mode) {
+    // Everything sounding fades out (no click); the held notes start again under the new
+    // mode once their voice has faded. held_ and noteSources_ are kept, so the keys' and the
+    // sequencer's later note-offs still release them.
     for (Voice& v : voices_) v.fadeOut();
-    held_.clear();
-    noteSources_.fill(0);
     mode_ = mode;
+    const int ramp = std::max(1, static_cast<int>(std::lround(Voice::kStealFadeSeconds * sampleRate_)));
     for (std::size_t i = 0; i < voices_.size(); ++i) {
         const bool unison = mode == VoiceMode::Unison;
         voices_[i].setDetuneCents(unison ? kUnisonDetune[i] * kUnisonSpreadCents : 0.0f);
         voices_[i].setStartPhase(unison ? kUnisonPhase[i] : 0.0f);
-        // Equal-power pan, normalised to unity in the centre.
+        // Equal-power pan, normalised to unity in the centre; ramped over the fade.
         const float pan = unison ? kUnisonPan[i] : 0.0f;
         const float theta = (pan + 1.0f) * 0.25f * dsp::kPi;
         const float gain = unison ? kUnisonGain : 1.0f;
-        panLeft_[i] = gain * std::sqrt(2.0f) * std::cos(theta);
-        panRight_[i] = gain * std::sqrt(2.0f) * std::sin(theta);
+        panLeftTarget_[i] = gain * std::sqrt(2.0f) * std::cos(theta);
+        panRightTarget_[i] = gain * std::sqrt(2.0f) * std::sin(theta);
+        panStepLeft_[i] = (panLeftTarget_[i] - panLeft_[i]) / static_cast<float>(ramp);
+        panStepRight_[i] = (panRightTarget_[i] - panRight_[i]) / static_cast<float>(ramp);
+    }
+    panRampLeft_ = ramp;
+    restartHeld();
+}
+
+void SynthEngine::restartHeld() {
+    const std::size_t n = held_.size();
+    if (n == 0) return;
+    if (mode_ == VoiceMode::Poly) {
+        // The most recent ones, oldest first, so the newest gets the newest stamp.
+        const std::size_t first = n > voices_.size() ? n - voices_.size() : 0;
+        for (std::size_t i = first; i < n; ++i) {
+            const int note = held_.at(i);
+            notePoly(note, heldVelocities_[static_cast<std::size_t>(note)], 0, 0);
+        }
+        return;
+    }
+    const int note = held_.top();
+    const std::size_t count = mode_ == VoiceMode::Mono ? 1 : voices_.size();
+    for (std::size_t i = 0; i < count; ++i) {
+        Voice& v = voices_[i];
+        v.trigger(note, heldVelocities_[static_cast<std::size_t>(note)], true, control_);  // after its fade
+        v.startStamp = ++stamp_;
     }
 }
 
@@ -184,13 +214,13 @@ void SynthEngine::handle(const NoteEvent& e, int64_t blockStartFrame, uint8_t so
     switch (e.type) {
         case NoteEvent::Type::NoteOn: {
             noteSources_[static_cast<std::size_t>(e.note)] |= source;
+            const bool retrigger = held_.empty();  // legato while any note is held (F1.2)
+            held_.push(e.note);  // in every mode: a mode change restarts what is held
+            heldVelocities_[static_cast<std::size_t>(e.note)] = e.velocity;
             if (mode_ == VoiceMode::Poly) {
                 notePoly(e.note, e.velocity, e.tapTimeNs, blockStartFrame);
                 break;
             }
-            const bool retrigger = held_.empty();  // legato while any note is held (F1.2)
-            held_.push(e.note);
-            heldVelocity_ = e.velocity;
             const std::size_t count = mode_ == VoiceMode::Mono ? 1 : voices_.size();
             bool delayed = false;
             for (std::size_t i = 0; i < count; ++i) {
@@ -234,12 +264,12 @@ void SynthEngine::handle(const NoteEvent& e, int64_t blockStartFrame, uint8_t so
 }
 
 void SynthEngine::releaseNote(int note) {
+    const bool wasTop = held_.top() == note;
+    held_.remove(note);
     if (mode_ == VoiceMode::Poly) {
         noteOffPoly(note);
         return;
     }
-    const bool wasTop = held_.top() == note;
-    held_.remove(note);
     const std::size_t count = mode_ == VoiceMode::Mono ? 1 : voices_.size();
     for (std::size_t i = 0; i < count; ++i) {
         Voice& v = voices_[i];
@@ -251,7 +281,7 @@ void SynthEngine::releaseNote(int note) {
             }
         } else if (wasTop) {
             // Back to the previous held note, legato (last-note priority).
-            v.trigger(held_.top(), heldVelocity_, false, control_);
+            v.trigger(held_.top(), heldVelocities_[static_cast<std::size_t>(held_.top())], false, control_);
         }
     }
 }
@@ -384,16 +414,35 @@ void SynthEngine::renderStereo(float* left, float* right, int32_t numFrames) {
         float* r = right + offset;
         std::fill(l, l + len, 0.0f);
         std::fill(r, r + len, 0.0f);
+        const int ramp = std::min(len, panRampLeft_);  // pan samples still ramping
         for (std::size_t i = 0; i < voices_.size(); ++i) {
             Voice& v = voices_[i];
             if (v.isIdle()) continue;
             v.render(scratch_.data(), len, subLeft, newSubBlock, control_);
-            const float pl = panLeft_[i];
-            const float pr = panRight_[i];
+            float pl = panLeft_[i];
+            float pr = panRight_[i];
+            const float dl = panStepLeft_[i];
+            const float dr = panStepRight_[i];
             for (int j = 0; j < len; ++j) {
+                if (j < ramp) {
+                    pl += dl;
+                    pr += dr;
+                }
                 const float s = scratch_[static_cast<std::size_t>(j)];
                 l[j] += s * pl;
                 r[j] += s * pr;
+            }
+        }
+        if (ramp > 0) {
+            panRampLeft_ -= ramp;
+            for (std::size_t i = 0; i < voices_.size(); ++i) {
+                if (panRampLeft_ == 0) {
+                    panLeft_[i] = panLeftTarget_[i];
+                    panRight_[i] = panRightTarget_[i];
+                } else {
+                    panLeft_[i] += panStepLeft_[i] * static_cast<float>(ramp);
+                    panRight_[i] += panStepRight_[i] * static_cast<float>(ramp);
+                }
             }
         }
         subBlockPos_ = (subBlockPos_ + len) % kSubBlock;

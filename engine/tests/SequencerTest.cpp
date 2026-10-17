@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <limits>
@@ -207,14 +208,14 @@ TEST(SequencerClock, ShuffleDelaysOddStepsByUpToTwoThirdsExactly) {
 
 // --- gate and note-offs ---
 
-TEST(SequencerNotes, NoteOffComesAtGateTimesStepLength) {
+TEST(SequencerNotes, NoteOffComesAtLengthTimesStepLength) {
     SeqHarness h;
     h.seq->setPatternSettings(1, 0, 4, 1, 0.0f, 0.5f);
     const int note = 50;
-    h.seq->setStep(1, 0, 0, true, &note, 1, 1.0f, -1.0f, 1.0f);   // pattern gate 0.5
-    h.seq->setStep(1, 0, 1, true, &note, 1, 1.0f, 0.25f, 1.0f);   // its own gate
-    h.seq->setStep(1, 0, 2, true, &note, 1, 1.0f, 1.0f, 1.0f);    // full step
-    h.seq->setStep(1, 0, 3, true, &note, 1, 1.0f, 0.05f, 1.0f);   // shortest
+    h.seq->setStep(1, 0, 0, {Hit{note, 1.0f, Hit::kPatternGate}});  // pattern gate 0.5
+    h.seq->setStep(1, 0, 1, {Hit{note, 1.0f, 0.25f}});              // its own length
+    h.seq->setStep(1, 0, 2, {Hit{note, 1.0f, 1.0f}});               // one step
+    h.seq->setStep(1, 0, 3, {Hit{note, 1.0f, Hit::kMinLength}});    // shortest: 1/16 step
     h.seq->play();
     h.run(4 * 6000);
     const auto ons = h.slot(1).noteOns();
@@ -224,7 +225,7 @@ TEST(SequencerNotes, NoteOffComesAtGateTimesStepLength) {
     EXPECT_EQ(offs[0].frame, 3000);
     EXPECT_EQ(offs[1].frame, 6000 + 1500);
     EXPECT_EQ(offs[2].frame, 18000);  // exactly when step 3 starts, and before its note-on
-    EXPECT_EQ(offs[3].frame, 18000 + 300);
+    EXPECT_EQ(offs[3].frame, 18000 + 375);
     // At frame 18000 the off of step 2 precedes the on of step 3.
     const auto& calls = h.slot(1).calls;
     std::size_t offAt = 0, onAt = 0;
@@ -242,7 +243,7 @@ TEST(SequencerNotes, RetriggerIsNotCutByThePreviousGate) {
     SeqHarness h;
     h.seq->setPatternSettings(1, 0, 16, 1, 1.0f, 1.0f);
     const int note = 60;
-    for (int i = 0; i < 16; ++i) h.seq->setStep(1, 0, i, true, &note, 1, 1.0f, -1.0f, 1.0f);
+    for (int i = 0; i < 16; ++i) h.seq->setStep(1, 0, i, {Hit{note, 1.0f}});
     h.seq->play();
     h.run(16 * 6000);
     bool held = false;
@@ -431,9 +432,16 @@ TEST(SequencerRecord, LiveNoteGoesToTheNearestStepByExactFrame) {
     EXPECT_EQ(rec[2].noteOrTarget, 67);
     EXPECT_FLOAT_EQ(rec[2].value, 0.5f);
     const Step& s2 = h.seq->pattern(1, 0).steps[2];
-    EXPECT_TRUE(s2.on);
-    EXPECT_EQ(s2.noteCount, 2);
-    EXPECT_FLOAT_EQ(s2.velocity, 0.6f);
+    EXPECT_TRUE(s2.on());
+    ASSERT_EQ(s2.hitCount, 2);
+    // Each recorded note is its own hit: played velocity, pattern gate, chance 1, nudge 0.
+    EXPECT_EQ(s2.hits[0].note, 64);
+    EXPECT_FLOAT_EQ(s2.hits[0].velocity, 0.7f);
+    EXPECT_EQ(s2.hits[1].note, 65);
+    EXPECT_FLOAT_EQ(s2.hits[1].velocity, 0.6f);
+    EXPECT_FLOAT_EQ(s2.hits[1].length, Hit::kPatternGate);
+    EXPECT_FLOAT_EQ(s2.hits[1].probability, 1.0f);
+    EXPECT_FLOAT_EQ(s2.hits[1].nudge, 0.0f);
     EXPECT_TRUE(h.seq->pattern(1, 0).steps[3].hasNote(67));
 
     // Step 3 fires next without the note (it already sounds from the key), and plays it
@@ -474,14 +482,18 @@ TEST(SequencerRecord, OnlyWhileArmedAndPlayingAndWithTheMirrorsRules) {
     h.seq->setRecordArmed(true);
     h.apply();
     EXPECT_TRUE(h.seq->transport().recordArmed);
-    for (int n : {60, 61, 62, 63, 64, 61}) h.seq->recordLiveNote(1, n, 0.9f, h.frame);
+    for (int n : {60, 61, 62, 63, 64, 65, 66, 67, 68}) h.seq->recordLiveNote(1, n, 0.9f, h.frame);
+    h.seq->recordLiveNote(1, 61, 0.3f, h.frame);  // already there
+    h.seq->recordLiveNote(1, 69, 0.0f, h.frame);  // replaces 68; velocity at least 0.01
     const Step& s = h.seq->pattern(1, 0).steps[0];
-    ASSERT_EQ(s.noteCount, 4);
-    EXPECT_EQ(s.notes[0], 60);
-    EXPECT_EQ(s.notes[1], 61);
-    EXPECT_EQ(s.notes[2], 62);
-    EXPECT_EQ(s.notes[3], 64);  // with 4 notes, the last one is replaced
-    EXPECT_EQ(h.recorded().size(), 6u);
+    ASSERT_EQ(s.hitCount, kMaxHitsPerStep);
+    for (int i = 0; i < 7; ++i) EXPECT_EQ(s.hits[static_cast<std::size_t>(i)].note, 60 + i);
+    EXPECT_FLOAT_EQ(s.hits[1].velocity, 0.9f) << "a note already there is left as it is";
+    EXPECT_EQ(s.hits[7].note, 69);  // with 8 hits, the last one is replaced
+    EXPECT_FLOAT_EQ(s.hits[7].velocity, Hit::kMinVelocity);
+    const auto notes = h.recorded();
+    ASSERT_EQ(notes.size(), 11u);
+    EXPECT_FLOAT_EQ(notes.back().value, Hit::kMinVelocity);
 
     // Drum slot: only the kit's 16 keys.
     h.seq->recordLiveNote(kDrumSlot, 47, 1.0f, h.frame);
@@ -633,30 +645,58 @@ TEST(SequencerMotion, DrumTargetsAreKeyTimesParamCountPlusId) {
 
 TEST(SequencerCommands, InvalidIndicesAreIgnoredAndValuesClampedLikeTheMirror) {
     SeqHarness h;
-    const int notes[] = {60, 200, -5, 62, 63, 64};
-    EXPECT_TRUE(h.seq->setStep(-1, 0, 0, true, notes, 1, 1, 1, 1));
-    EXPECT_TRUE(h.seq->setStep(8, 0, 0, true, notes, 1, 1, 1, 1));
-    EXPECT_TRUE(h.seq->setStep(1, 16, 0, true, notes, 1, 1, 1, 1));
-    EXPECT_TRUE(h.seq->setStep(1, 0, 64, true, notes, 1, 1, 1, 1));
-    h.seq->setStep(1, 0, 5, true, notes, 6, kNaN, 7.0f, kNaN);
-    h.seq->setStep(1, 0, 6, true, notes, 1, 3.0f, kNaN, -1.0f);
-    h.seq->setStep(1, 0, 7, true, notes, 1, 0.5f, 0.01f, 0.5f);
+    const Hit one{60};
+    EXPECT_TRUE(h.seq->setStep(-1, 0, 0, &one, 1));
+    EXPECT_TRUE(h.seq->setStep(8, 0, 0, &one, 1));
+    EXPECT_TRUE(h.seq->setStep(1, 16, 0, &one, 1));
+    EXPECT_TRUE(h.seq->setStep(1, 0, 64, &one, 1));
+    std::array<Hit, 10> many{};
+    for (std::size_t i = 0; i < many.size(); ++i) many[i].note = 40 + static_cast<int>(i);
+    many[1] = Hit{200, kNaN, 70.0f, kNaN, kNaN};
+    many[2] = Hit{-5, 3.0f, kNaN, -1.0f, 0.9f};
+    many[3] = Hit{61, 0.0f, 0.01f, 0.5f, -0.9f};
+    many[4] = Hit{62, -1.0f, 0.0f, 2.0f, 0.25f};
+    many[5] = Hit{63, 0.5f, -0.5f, 0.5f, -0.25f};
+    many[6] = Hit{64, 0.5f, std::numeric_limits<float>::infinity(), 0.5f, 0.0f};
+    h.seq->setStep(1, 0, 5, many.data(), 10);  // more than 8: the rest are ignored
+    h.seq->setStep(1, 0, 6, many.data(), -3);
+    h.seq->setStep(1, 0, 7, nullptr, 4);
+    h.seq->setStep(1, 0, 8, {Hit{60}});
+    h.seq->setStep(1, 0, 8, {});  // clears it
     h.seq->selectPattern(1, 99);
     h.seq->setStepLoop(1, 3, 64);
     h.seq->setMotionValue(1, 0, 999, 0, 1.0f);
     h.apply();
     const Step& s5 = h.seq->pattern(1, 0).steps[5];
-    ASSERT_EQ(s5.noteCount, 4);
-    EXPECT_EQ(s5.notes[1], 127);
-    EXPECT_EQ(s5.notes[2], 0);
-    EXPECT_FLOAT_EQ(s5.velocity, Step::kDefaultVelocity);
-    EXPECT_FLOAT_EQ(s5.gate, 1.0f);
-    EXPECT_FLOAT_EQ(s5.probability, 1.0f);
-    const Step& s6 = h.seq->pattern(1, 0).steps[6];
-    EXPECT_FLOAT_EQ(s6.velocity, 1.0f);
-    EXPECT_LT(s6.gate, 0.0f);
-    EXPECT_FLOAT_EQ(s6.probability, 0.0f);
-    EXPECT_FLOAT_EQ(h.seq->pattern(1, 0).steps[7].gate, Step::kMinGate);
+    ASSERT_EQ(s5.hitCount, kMaxHitsPerStep);
+    EXPECT_EQ(s5.hits[7].note, 47);
+    const Hit& a1 = s5.hits[1];
+    EXPECT_EQ(a1.note, 127);
+    EXPECT_FLOAT_EQ(a1.velocity, Hit::kDefaultVelocity);
+    EXPECT_FLOAT_EQ(a1.length, Hit::kMaxLength);
+    EXPECT_FLOAT_EQ(a1.probability, 1.0f);
+    EXPECT_FLOAT_EQ(a1.nudge, 0.0f);
+    const Hit& a2 = s5.hits[2];
+    EXPECT_EQ(a2.note, 0);
+    EXPECT_FLOAT_EQ(a2.velocity, 1.0f);
+    EXPECT_FLOAT_EQ(a2.length, Hit::kPatternGate);
+    EXPECT_FLOAT_EQ(a2.probability, 0.0f);
+    EXPECT_FLOAT_EQ(a2.nudge, 0.5f);
+    const Hit& a3 = s5.hits[3];
+    EXPECT_FLOAT_EQ(a3.velocity, Hit::kMinVelocity);
+    EXPECT_FLOAT_EQ(a3.length, Hit::kMinLength);
+    EXPECT_FLOAT_EQ(a3.nudge, -0.5f);
+    const Hit& a4 = s5.hits[4];
+    EXPECT_FLOAT_EQ(a4.velocity, Hit::kMinVelocity);
+    EXPECT_FLOAT_EQ(a4.length, Hit::kMinLength);  // 0 is a length, not the pattern gate
+    EXPECT_FLOAT_EQ(a4.probability, 1.0f);
+    EXPECT_FLOAT_EQ(a4.nudge, 0.25f);
+    EXPECT_FLOAT_EQ(s5.hits[5].length, Hit::kPatternGate);  // any negative length
+    EXPECT_FLOAT_EQ(s5.hits[5].nudge, -0.25f);
+    EXPECT_FLOAT_EQ(s5.hits[6].length, Hit::kMaxLength);
+    EXPECT_FALSE(h.seq->pattern(1, 0).steps[6].on());
+    EXPECT_FALSE(h.seq->pattern(1, 0).steps[7].on());
+    EXPECT_FALSE(h.seq->pattern(1, 0).steps[8].on());
     EXPECT_EQ(h.seq->transport().currentPattern[1], 0);
     EXPECT_FALSE(h.seq->pattern(1, 0).hasLane(999));
 }
@@ -674,8 +714,8 @@ TEST(SequencerCommands, ClearPatternRestoresDefaults) {
     EXPECT_EQ(p.shuffleMilli, 0);
     EXPECT_FLOAT_EQ(p.gate, 0.5f);
     for (const Step& s : p.steps) {
-        EXPECT_FALSE(s.on);
-        EXPECT_EQ(s.noteCount, 0);
+        EXPECT_FALSE(s.on());
+        EXPECT_EQ(s.hitCount, 0);
     }
     EXPECT_FALSE(p.hasLane(1));
 }
@@ -706,7 +746,7 @@ TEST(SequencerTransport, PrepareStopsButKeepsPatterns) {
     h.run(1000);
     h.seq->prepare(44100.0f);
     EXPECT_FALSE(h.seq->transport().playing);
-    EXPECT_TRUE(h.seq->pattern(1, 0).steps[3].on);
+    EXPECT_TRUE(h.seq->pattern(1, 0).steps[3].on());
     h.frame = 0;
     h.slot(1).clear();
     h.seq->play();
@@ -731,7 +771,8 @@ TEST(SequencerThreading, ControlAndAudioThreadsRunConcurrently) {
     h.seq->play();
     for (int i = 0; i < 3000; ++i) {
         const int note = 60 + i % 12;
-        while (!h.seq->setStep(1 + i % 7, i % 16, i % 64, i % 2 == 0, &note, 1, 0.8f, -1.0f, 0.5f)) {
+        const Hit hits[] = {Hit{note, 0.8f, Hit::kPatternGate, 0.5f, -0.3f}, Hit{note + 3, 0.6f, 2.5f, 1.0f, 0.4f}};
+        while (!h.seq->setStep(1 + i % 7, i % 16, i % 64, hits, i % 2 == 0 ? 2 : 0)) {
             std::this_thread::yield();
         }
         h.seq->setMotionValue(1, 0, i % 8, i % 16, 0.5f);
@@ -793,7 +834,7 @@ TEST(SequencerTransport, TempoAndPatternsSurviveAStreamRestart) {
     EXPECT_EQ(h.seq->pattern(4, 0).length, 7);
     EXPECT_EQ(h.seq->pattern(4, 0).rate, StepRate::SixteenthTriplet);
     EXPECT_EQ(h.seq->pattern(4, 0).shuffleMilli, 200);
-    EXPECT_TRUE(h.seq->pattern(4, 0).steps[6].on);
+    EXPECT_TRUE(h.seq->pattern(4, 0).steps[6].on());
 }
 
 // The first-launch burst (and much more) fits the queue before any audio runs.
@@ -801,7 +842,7 @@ TEST(SequencerCommands, QueueHoldsAFullSessionBurstBeforeTheStreamStarts) {
     SeqHarness h;
     int pushed = 0;
     while (pushed < static_cast<int>(Sequencer::kCommandCapacity) &&
-           h.seq->setStep(1 + pushed % 7, pushed % 16, pushed % 64, true, &pushed, 0, 0.8f, -1.0f, 1.0f)) {
+           h.seq->setStep(1 + pushed % 7, pushed % 16, pushed % 64, {Hit{pushed % 128}, Hit{1}, Hit{2}, Hit{3}, Hit{4}, Hit{5}, Hit{6}, Hit{7}})) {
         ++pushed;
     }
     EXPECT_EQ(pushed, static_cast<int>(Sequencer::kCommandCapacity));

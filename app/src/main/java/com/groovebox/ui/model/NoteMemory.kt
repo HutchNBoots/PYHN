@@ -20,7 +20,7 @@ class NoteMemory(private val defaultNote: (slot: Int) -> Int) {
         if (slot !in held.indices) return emptyList()
         val h = held[slot]
         if (note !in h) h += note
-        val c = h.take(SeqLimits.NOTES)
+        val c = h.take(SeqLimits.CHORD)
         chord[slot] = c
         this.velocity[slot] = velocity
         return c
@@ -41,11 +41,11 @@ class NoteMemory(private val defaultNote: (slot: Int) -> Int) {
     /**
      * The notes and velocity a pad tap turns [old] on with (F3.5): the slot's last-played
      * chord once keys have been played on it; before that, the step's own notes if it has
-     * any (e.g. the demo), else the default note.
+     * any, else the default note.
      */
     fun entryFor(slot: Int, old: Step): Pair<List<Int>, Float> = when {
         hasPlayed(slot) -> lastNotes(slot) to lastVelocity(slot)
-        old.notes.isNotEmpty() -> old.notes to old.velocity
+        old.on -> old.notes to old.hits.first().velocity
         else -> lastNotes(slot) to SeqLimits.DEFAULT_VELOCITY
     }
 

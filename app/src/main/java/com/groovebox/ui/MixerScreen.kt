@@ -40,7 +40,6 @@ import com.groovebox.ui.model.MixFormat
 import com.groovebox.ui.model.MixKeys
 import com.groovebox.ui.model.MixerLayout
 import com.groovebox.ui.model.MixerPad
-import com.groovebox.ui.model.ParamMapping
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.LocalDesign
 import kotlinx.coroutines.isActive
@@ -149,7 +148,8 @@ private fun Levels(state: GrooveState, modifier: Modifier) {
                 channel != null -> mix.channel(channel, spec)
                 else -> mix.mix(spec)
             }
-            val setting = spec?.let { ParamMapping.toNormalized(it, value).toFloat() } ?: 0f
+            // On the meter's dB scale (v1 fix 4): a DLY / REV return of 50% sits at -6 dB.
+            val setting = spec?.let { MeterScale.markerHeight(it, value) } ?: 0f
             val muted = channel != null && mix.muted(channel)
             val text = when {
                 spec == null -> "—"

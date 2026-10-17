@@ -62,6 +62,8 @@ android {
     buildFeatures {
         compose = true
         prefab = true
+        // BuildConfig.VERSION_CODE: the build number in the debug panel (build-20 fix 5).
+        buildConfig = true
     }
 
     compileOptions {

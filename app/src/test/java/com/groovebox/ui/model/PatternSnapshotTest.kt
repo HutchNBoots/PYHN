@@ -10,7 +10,7 @@ class PatternSnapshotTest {
         val s = PatternStore(RecordingSink())
         DemoContent.write(s)
         s.setSettings(3, 5, PatternSettings(length = 48, rate = 3, shuffle = 0.3f, gate = 0.7f))
-        s.setStep(3, 5, 40, Step(true, listOf(60, 64, 67), 0.4f, 0.2f, 0.6f))
+        s.setStep(3, 5, 40, Step(listOf(60, 64, 67).map { Hit(it, 0.4f, 0.25f, 0.6f, -0.125f) }))
         s.setMotionValue(1, 0, 8, 2, 1200f)
         s.setMotionValue(1, 0, 9, 2, 0.5f) // later stamp: the latest lane at step 2
         s.setMotionValue(1, 0, 8, 4, 900f)
@@ -43,7 +43,7 @@ class PatternSnapshotTest {
         // A fresh engine needs no clears; it gets settings, steps and motion values only.
         assertTrue(sink.calls.none { it.startsWith("clear") })
         assertTrue("settings 3 5 48 3 0.3 0.7" in sink.calls)
-        assertTrue("step 3 5 40 true [60, 64, 67] 0.4 0.2 0.6" in sink.calls)
+        assertTrue("step 3 5 40 [60 0.4 0.25 0.6 -0.125] [64 0.4 0.25 0.6 -0.125] [67 0.4 0.25 0.6 -0.125]" in sink.calls)
         assertTrue("motion 1 0 8 2 1200.0" in sink.calls)
         assertTrue("motion 1 0 12 6 0.25" in sink.calls)
         assertEquals(DemoContent.BEAT.size + DemoContent.BASS.size + 1, sink.calls.count { it.startsWith("step") })
@@ -75,10 +75,10 @@ class PatternSnapshotTest {
         val s = PatternStore(sink)
         s.restore(
             listOf(
-                PatternSnapshot(9, 0, PatternSettings(), mapOf(0 to Step(true)), emptyList()), // no such slot
+                PatternSnapshot(9, 0, PatternSettings(), mapOf(0 to Step.of(listOf(60))), emptyList()), // no such slot
                 PatternSnapshot(
                     1, 2, PatternSettings(length = 500, rate = 9, shuffle = Float.NaN, gate = 0f),
-                    mapOf(-1 to Step(true), 64 to Step(true), 3 to Step(true, listOf(200, 1, 2, 3, 4), 5f, 9f, -1f)),
+                    mapOf(-1 to Step.of(listOf(60)), 64 to Step.of(listOf(60)), 3 to Step(listOf(200, 1, 2, 3, 4, 5, 6, 7, 8).map { Hit(it, 5f, 99f, -1f, 2f) })),
                     List(10) { t -> LaneSnapshot(t, listOf(LanePoint(0, t.toFloat(), 1), LanePoint(70, 1f, 2))) } +
                         LaneSnapshot(99, listOf(LanePoint(1, Float.NaN, 3))),
                 ),
@@ -86,7 +86,7 @@ class PatternSnapshotTest {
             ),
         )
         assertEquals(PatternSettings(64, 3, 0f, SeqLimits.MIN_GATE), s.settings(1, 2))
-        assertEquals(Step(true, listOf(127, 1, 2, 3), 1f, 1f, 0f), s.step(1, 2, 3))
+        assertEquals(Step(listOf(127, 1, 2, 3, 4, 5, 6, 7).map { Hit(it, 1f, 16f, 0f, 0.5f) }), s.step(1, 2, 3))
         assertEquals(8, s.lanes(1, 2).size)
         assertEquals(1, s.snapshot().size)
     }

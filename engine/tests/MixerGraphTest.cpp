@@ -49,7 +49,7 @@ std::unique_ptr<AudioGraph> makeGraph() {
 // Every step of a slot's pattern 0 plays `note` (synth slots).
 void fillPattern(AudioGraph& g, int slot, int length, int note) {
     g.sequencer().setPatternSettings(slot, 0, length, 1, 0.0f, 0.9f);
-    for (int i = 0; i < length; ++i) g.sequencer().setStep(slot, 0, i, true, &note, 1, 0.9f, -1.0f, 1.0f);
+    for (int i = 0; i < length; ++i) g.sequencer().setStep(slot, 0, i, {Hit{note, 0.9f}});
 }
 
 }  // namespace
@@ -174,35 +174,75 @@ TEST(MixerGraph, FirstTakeFollowsTheSequencerBars) {
     EXPECT_EQ(s.lengthFrames, s.barFrames);
 }
 
-// F5.6: a commit of one slot records only that slot's channel, for its pattern's length.
-TEST(MixerGraph, CommitOfOneSlotRecordsOnlyThatSlotForItsPattern) {
+// F5.6: a commit of one slot records only that slot's channel. Build-20: a pattern that isn't
+// whole bars long is recorded for ceil(length / bar) whole bars while it keeps looping, so
+// the tape has no silent tail.
+TEST(MixerGraph, CommitOfOneSlotRecordsOnlyThatSlotForWholeBars) {
     auto g = makeGraph();
     g->sequencer().setTempo(120.0f);
-    fillPattern(*g, 1, 12, 60);  // 12 sixteenths = 72000 frames
+    fillPattern(*g, 1, 12, 60);  // 12 sixteenths = 72000 frames, so one bar of 96000
     fillPattern(*g, 4, 16, 72);
     g->channelParams().set(4, ChannelParamId::Volume, 6.0f);  // loud, but not the source
     g->sequencer().play();
     g->tape().commit(3, 1);
     renderChunks(*g, 2 * 96000 / kChunk);
     const TapeState s = g->tape().state();
-    ASSERT_EQ(s.lengthBars, 1);  // 72000 frames rounds up to one bar on an empty tape
+    ASSERT_EQ(s.lengthBars, 1);
     EXPECT_EQ(s.recordingTrack, -1);
-    // Tape audio is slot 1's post-fader output during the pass (compare with a solo render).
+    // Tape audio is slot 1's post-fader output for the whole bar (compare with a solo render),
+    // including the pattern's second pass from 72000 on.
     auto solo = makeGraph();
     solo->sequencer().setTempo(120.0f);
     fillPattern(*solo, 1, 12, 60);
     solo->sequencer().play();
-    const auto ref = renderChunks(*solo, 72000 / kChunk + 4);
+    const auto ref = renderChunks(*solo, 96000 / kChunk + 4);
     // The solo master output is slot 1 alone: same as its post-fader channel (below the limiter's knee).
-    double err = 0.0, ref2 = 0.0;
-    for (int64_t k = 100; k < 72000 - 100; ++k) {
+    double err = 0.0, ref2 = 0.0, tail2 = 0.0;
+    for (int64_t k = 100; k < 96000 - 100; ++k) {
         const double d = g->tape().sample(3, k, 0) - ref[static_cast<std::size_t>(k)];
         err += d * d;
         ref2 += static_cast<double>(ref[static_cast<std::size_t>(k)]) * ref[static_cast<std::size_t>(k)];
+        if (k >= 72000 + 100) tail2 += static_cast<double>(g->tape().sample(3, k, 0)) * g->tape().sample(3, k, 0);
     }
     EXPECT_GT(ref2, 1.0);
+    EXPECT_GT(tail2, 0.1);  // the second pass is on the tape
     EXPECT_LT(err / ref2, 1e-6);
-    for (int64_t k = 72000 + g->tape().crossfadeFrames(); k < 96000; ++k) ASSERT_EQ(g->tape().sample(3, k, 0), 0.0f);
+}
+
+// Build-20: on a tape that already has bars, a slot commit of a 20-step pattern records two
+// whole bars, not 1.25.
+TEST(MixerGraph, CommitOnALongerTapeRecordsWholeBars) {
+    auto g = makeGraph();
+    g->sequencer().setTempo(120.0f);
+    fillPattern(*g, 2, 20, 64);
+    fillPattern(*g, 3, 64, 67);
+    g->sequencer().play();
+    g->tape().commit(0, 3);  // 4 bars
+    renderChunks(*g, 4 * 96000 / kChunk + 8);
+    ASSERT_EQ(g->tape().state().lengthBars, 4);
+    ASSERT_EQ(g->tape().state().recordingTrack, -1);
+
+    g->tape().commit(1, 2);  // 20 sixteenths: two whole bars
+    int recorded = 0;
+    for (int c = 0; c < 6 * 96000 / kChunk; ++c) {
+        renderChunks(*g, 1);
+        if (g->tape().state().recordingTrack == 1) ++recorded;
+    }
+    EXPECT_NEAR(recorded * kChunk, 2 * 96000, 2 * kChunk);
+}
+
+// Build-20: "all slots" commits the longest pattern among the slots, rounded up to whole bars.
+TEST(MixerGraph, CommitOfAllSlotsUsesTheLongestPatternInWholeBars) {
+    auto g = makeGraph();
+    g->sequencer().setTempo(120.0f);
+    fillPattern(*g, 1, 12, 60);
+    fillPattern(*g, 2, 20, 64);  // the longest: 1.25 bars, so 2
+    g->sequencer().play();
+    g->tape().commit(0, -1);
+    renderChunks(*g, 3 * 96000 / kChunk + 8);
+    const TapeState s = g->tape().state();
+    EXPECT_EQ(s.recordingTrack, -1);
+    EXPECT_EQ(s.lengthBars, 2);
 }
 
 // Coordinator rule: play() and tapeCommit() sent together (in either queue order and even a

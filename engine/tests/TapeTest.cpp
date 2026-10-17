@@ -14,6 +14,7 @@
 #include <thread>
 #include <vector>
 
+#include "AllocationCounter.h"
 #include "Analysis.h"
 #include "TapeRig.h"
 
@@ -827,4 +828,269 @@ TEST(Tape, ControlAndAudioThreadsRunConcurrently) {
     done.store(true);
     audio.join();
     SUCCEED();
+}
+
+// --- Build-20: the tape follows the tempo (docs/plans/2026-10-16-build-20-sequencer-lanes.md) ---
+// The tape keeps the bar length (tempo) of its first take. At another tempo it plays
+// varispeed, rate = tempo / tape tempo = tape bar / sequencer bar, times Speed and reverse,
+// so a tape bar still lasts one sequencer bar. Recording needs the tape's tempo back.
+
+namespace {
+
+// Records a 2-bar sine take at bar `bar` on track 0 and returns the rig playing it.
+std::unique_ptr<Rig> sineTape(double hz, int64_t bar, float amp = 0.5f) {
+    auto r = std::make_unique<Rig>(Tape::Limits{}, bar);
+    r->signal = [hz, amp](int, int64_t f, int) {
+        return amp * static_cast<float>(std::sin(2.0 * kPiD * hz * static_cast<double>(f) / 48000.0));
+    };
+    r->play();
+    r->tape->armRecord(0);
+    r->runTo(2 * bar - 100);
+    r->tape->stopRecord();
+    r->runTo(2 * bar + 100);
+    EXPECT_EQ(r->state().lengthBars, 2);
+    return r;
+}
+
+}  // namespace
+
+TEST(Tape, AnotherTempoPlaysTheTapeVarispeed) {
+    auto rig = sineTape(1000.0, 48000);
+    Rig& r = *rig;
+    struct Case {
+        int64_t bar;
+        int speed;
+        bool reverse;
+        double hz;
+    };
+    for (const Case c : {Case{40000, 1, false, 1200.0}, Case{60000, 1, false, 800.0}, Case{40000, 2, false, 2400.0},
+                         Case{40000, 0, false, 600.0}, Case{40000, 1, true, 1200.0}, Case{64000, 0, true, 375.0},
+                         Case{48000, 1, false, 1000.0}}) {
+        r.bar = c.bar;
+        r.params.speed = c.speed;
+        r.params.reverse = c.reverse;
+        r.run(4800);
+        const int64_t from = r.frame;
+        r.run(24000);
+        const auto out = r.playedFrom(0, from);
+        EXPECT_NEAR(zeroCrossingHz(out, 48000.0, 0, 20000), c.hz, c.hz * 0.003) << c.bar << " " << c.speed << c.reverse;
+        EXPECT_NEAR(rms(out), 0.5 / std::sqrt(2.0), 0.02) << c.bar << " " << c.speed << c.reverse;
+        EXPECT_EQ(r.state().barFrames, 48000);  // the tape keeps its own bars
+    }
+}
+
+// A tape bar lasts exactly one sequencer bar at the new tempo: from Play, the head is on tape
+// bar k at sequencer bar k, and the loop region (in tape bars) wraps on a sequencer bar line.
+TEST(Tape, VarispeedTapeBarsStayOnTheSequencerBars) {
+    auto rig = sineTape(500.0, 4800);
+    Rig& r = *rig;
+    r.stop();
+    r.run(960);
+    r.bar = 3600;  // tempo x 4/3
+    r.params.loopStartBars = 1;
+    r.params.loopLengthBars = 1;
+    r.run(960);
+    r.play();
+    const int64_t play = r.frame;
+    for (int k = 1; k <= 7; ++k) {
+        r.runTo(play + k * r.bar, 100);  // exact frames
+        // Loop is tape bar 1 (4800..9600): the head is back at the loop start on every bar line.
+        EXPECT_EQ(r.state().headFrame, 4800) << k;
+        r.runTo(play + k * r.bar + r.bar / 2, 100);
+        EXPECT_NEAR(static_cast<double>(r.state().headFrame), 4800 + 2400, 1.0) << k;
+    }
+    // Whole tape, at 2x speed: one tape bar every half sequencer bar.
+    r.params.loopStartBars = 0;
+    r.params.loopLengthBars = 0;
+    r.params.speed = 2;
+    r.stop();
+    r.run(960);
+    r.play();
+    const int64_t play2 = r.frame;
+    r.runTo(play2 + r.bar / 2, 100);
+    EXPECT_EQ(r.state().headFrame, 4800);
+    r.runTo(play2 + r.bar, 100);
+    EXPECT_EQ(r.state().headFrame, 0);  // two tape bars: wrapped
+}
+
+TEST(Tape, TempoChangesDoNotClick) {
+    auto rig = sineTape(300.0, 4800);
+    Rig& r = *rig;
+    const int64_t from = r.frame;
+    const int64_t bars[] = {4000, 4800, 3000, 6000, 4801, 4800, 3500, 2500, 4800};
+    for (int i = 0; i < 18; ++i) {
+        r.bar = bars[i % 9];
+        r.params.speed = i < 9 ? 1 : 2;
+        r.run(3000);
+    }
+    const auto out = r.playedFrom(0, from);
+    // Fastest: 300 Hz x 4800 / 2500 x 2 = 1152 Hz of amplitude 0.5, steps <= 0.0754 per frame.
+    EXPECT_LT(maxStep(out), 0.09f);
+    EXPECT_GT(rms(out), 0.3);
+}
+
+// Back at the tape's tempo the head is on the 1x grid again: playback is the stored audio,
+// sample for sample, exactly as if the tempo had never changed.
+TEST(Tape, BackAtTheTapeTempoPlaysTheStoredFramesExactly) {
+    auto rig = sineTape(700.0, 4800);
+    Rig& r = *rig;
+    r.bar = 4099;  // an odd rate: the head is between frames
+    r.run(5003);
+    r.bar = 4800;
+    r.run(1000);  // past the head crossfade
+    const int64_t head = r.state().headFrame;
+    const int64_t from = r.frame;
+    r.run(500);
+    ASSERT_LT(head + 500, 2 * 4800 - 480);  // no loop wrap in the window
+    for (int64_t k = 0; k < 500; ++k) {
+        ASSERT_EQ(r.played[0][static_cast<std::size_t>(from + k)], r.tape->sample(0, head + k, 0)) << k;
+    }
+}
+
+TEST(Tape, VarispeedFiltersAliases) {
+    struct Case {
+        double hz;
+        int64_t bar;
+        int speed;
+        double aliasHz;
+    };
+    // 18 kHz at 1.6x would alias to 48 - 28.8 = 19.2 kHz; 9 kHz at 2x x 1.5 to 48 - 27 = 21 kHz.
+    for (const Case c : {Case{18000.0, 60000, 1, 19200.0}, Case{9000.0, 64000, 2, 21000.0}}) {
+        auto rig = sineTape(c.hz, 96000);
+        Rig& r = *rig;
+        r.bar = c.bar;
+        r.params.speed = c.speed;
+        r.run(4800);
+        const int64_t from = r.frame;
+        r.run(40000);
+        const auto out = r.playedFrom(0, from);
+        const double alias = goertzelAmplitude(out, 48000.0, c.aliasHz, 0, 32768);
+        std::printf("%.0f Hz at rate %.2f: alias %.1f dB\n", c.hz, (c.speed == 2 ? 2.0 : 1.0) * 96000.0 / c.bar,
+                    toDb(alias / 0.5));
+        EXPECT_LT(toDb(alias / 0.5), -30.0) << c.hz;
+    }
+}
+
+// Recording needs the tape's tempo, like Speed 1x and reverse off: an arm or commit at
+// another tempo is ignored, a waiting one is dropped, and the readout says why.
+TEST(Tape, RecordNeedsTheTapeTempo) {
+    Rig r(Tape::Limits{}, 96000);
+    EXPECT_EQ(r.state().tempoBpm, 0.0f);  // empty: no tape tempo, any tempo records
+    EXPECT_TRUE(r.state().tempoMatches);
+    r.play();
+    r.tape->armRecord(0);
+    r.runTo(96000 - 100);
+    r.tape->stopRecord();
+    r.runTo(96000 + 100);
+    ASSERT_EQ(r.state().lengthBars, 1);
+    EXPECT_FLOAT_EQ(r.state().tempoBpm, 120.0f);
+    EXPECT_TRUE(r.state().tempoMatches);
+
+    r.bar = 86163;  // 133.7 BPM, rounded as the sequencer rounds it
+    r.run(96);
+    EXPECT_FALSE(r.state().tempoMatches);
+    EXPECT_FLOAT_EQ(r.state().tempoBpm, 120.0f);
+    r.tape->armRecord(1);
+    r.run(96);
+    EXPECT_EQ(r.state().armedTrack, -1);
+    r.passBars = 1;
+    r.tape->commit(1, -1);
+    r.run(96);
+    EXPECT_EQ(r.state().armedTrack, -1);
+    r.run(2 * 96000);
+    EXPECT_EQ(r.state().recordingTrack, -1);
+    EXPECT_FALSE(r.state().hasAudio[1]);
+
+    // Back at 120: armed takes start on the tape's bar lines again.
+    r.bar = 96000;
+    r.run(96);
+    EXPECT_TRUE(r.state().tempoMatches);
+    r.tape->armRecord(1);
+    r.run(96);
+    EXPECT_EQ(r.state().armedTrack, 1);
+    // Armed, then the tempo moves before the bar line: the arm is dropped.
+    r.bar = 90000;
+    r.run(96);
+    EXPECT_EQ(r.state().armedTrack, -1);
+    r.bar = 96000;
+    r.run(96);
+    r.tape->armRecord(1);
+    r.run(96);
+    ASSERT_EQ(r.state().armedTrack, 1);
+    int64_t waited = 0;
+    while (r.state().recordingTrack != 1 && waited < 2 * 96000) {
+        r.run(1);
+        ++waited;
+    }
+    ASSERT_EQ(r.state().recordingTrack, 1);
+    EXPECT_EQ(r.state().headFrame % 96000, 1);  // started on the bar line, one frame ago
+}
+
+// A tape tempo from a 133.7 BPM take reads back as 133.7, and a take keeps running at 1x
+// when the tempo changes during it (latched like Speed); it plays varispeed once it ends.
+TEST(Tape, TapeTempoReadoutAndATempoChangeDuringATake) {
+    Rig r(Tape::Limits{}, 86163);
+    r.play();
+    r.tape->armRecord(0);
+    r.runTo(2 * 86163 - 100);
+    r.tape->stopRecord();
+    r.runTo(2 * 86163 + 100);
+    ASSERT_EQ(r.state().lengthBars, 2);
+    EXPECT_NEAR(r.state().tempoBpm, 133.7f, 1e-4f);
+    r.tape->armRecord(1);
+    r.runTo(4 * 86163 + 200);
+    ASSERT_EQ(r.state().recordingTrack, 1);
+    const int64_t h0 = r.state().headFrame;
+    r.bar = 70000;
+    r.run(4000);
+    EXPECT_EQ(r.state().recordingTrack, 1);
+    EXPECT_EQ(r.state().headFrame, (h0 + 4000) % (2 * 86163));  // still 1x
+    r.tape->stopRecord();
+    // Stop waits for the tape's bar line (at 1x), then the tape goes varispeed.
+    r.run(2 * 86163);
+    EXPECT_EQ(r.state().recordingTrack, -1);
+    EXPECT_FALSE(r.state().tempoMatches);
+    const int64_t h1 = r.state().headFrame;
+    r.run(7000);
+    const int64_t moved = (r.state().headFrame - h1 + 2 * 86163) % (2 * 86163);
+    EXPECT_NEAR(static_cast<double>(moved), 7000.0 * 86163.0 / 70000.0, 1.0);
+}
+
+// Audio thread rule: varispeed playback, tempo changes (rescaling the head), retimes and the
+// crossfades onto the 1x grid never allocate.
+TEST(Tape, VarispeedAndTempoChangesNeverAllocate) {
+    auto rig = sineTape(440.0, 4800);
+    Rig& r = *rig;
+    for (auto& p : r.played) p.reserve(p.size() + 400000);
+    const int64_t bars[] = {4000, 4800, 3000, 6000, 1500, 4801, 9000, 4800};
+    std::size_t allocations = 0;
+    {
+        AllocationScope scope;
+        for (int i = 0; i < 64; ++i) {
+            r.bar = bars[i % 8];
+            r.params.speed = (i / 8) % 3;
+            r.params.reverse = (i / 24) % 2 == 1;
+            if (i % 8 == 1) r.tape->armRecord(1);  // at the tape tempo: records
+            if (i % 8 == 3) r.tape->stopRecord();
+            r.run(5000, 96);
+        }
+        allocations = scope.count();
+    }
+    EXPECT_EQ(allocations, 0u);
+}
+
+// With no stream (the app between stop and start), the tempo still reaches the readout.
+TEST(Tape, TheTempoReachesTheReadoutWithNoStream) {
+    auto rig = sineTape(440.0, 4800);
+    Rig& r = *rig;
+    r.stop();
+    r.run(960);
+    ASSERT_TRUE(r.state().tempoMatches);
+    r.tape->setSequencerBarOffline(4000);
+    EXPECT_FALSE(r.state().tempoMatches);
+    r.tape->armRecord(1);
+    r.tape->applyPendingOffline();
+    EXPECT_EQ(r.state().armedTrack, -1);
+    r.tape->setSequencerBarOffline(4800);
+    EXPECT_TRUE(r.state().tempoMatches);
 }

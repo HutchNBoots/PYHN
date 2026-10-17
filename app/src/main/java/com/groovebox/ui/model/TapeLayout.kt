@@ -1,5 +1,6 @@
 package com.groovebox.ui.model
 
+import java.util.Locale
 import kotlin.math.floor
 
 /**
@@ -82,8 +83,27 @@ object TapeView {
         else -> TapeRecordStatus.Idle
     }
 
-    /** The engine records only at 1x forward (it ignores an arm otherwise). */
-    fun canRecord(speedIndex: Int, reverse: Boolean): Boolean = speedIndex == MixKeys.SPEED_NORMAL && !reverse
+    /**
+     * The engine records only at 1x forward and at the tape's tempo (build-20; it ignores an
+     * arm otherwise). [tempoMatches] is the engine's readout (TapeState.tempoMatches).
+     */
+    fun canRecord(speedIndex: Int, reverse: Boolean, tempoMatches: Boolean = true): Boolean =
+        speedIndex == MixKeys.SPEED_NORMAL && !reverse && tempoMatches
+
+    /** The footer's line when Record can't record ([canRecord] false), else null. */
+    fun recordNeeds(speedIndex: Int, reverse: Boolean, tempoMatches: Boolean, tapeTempoBpm: Float): String? {
+        val speedOk = speedIndex == MixKeys.SPEED_NORMAL && !reverse
+        if (speedOk && tempoMatches) return null
+        val tempo = "${bpm(tapeTempoBpm)} BPM, the tape's tempo"
+        return when {
+            tempoMatches -> "record needs Speed 1× and Rev off"
+            speedOk -> "record needs $tempo"
+            else -> "record needs Speed 1×, Rev off and $tempo"
+        }
+    }
+
+    /** A tempo to 0.1 BPM, "120.0". */
+    fun bpm(value: Float): String = String.format(Locale.ROOT, "%.1f", value)
 
     /** Record on the Tape screen: stops (or cancels an arm) when busy, else arms the selected track. */
     fun recordPress(status: TapeRecordStatus, selectedTrack: Int, canRecord: Boolean): TapeRecordAction = when {

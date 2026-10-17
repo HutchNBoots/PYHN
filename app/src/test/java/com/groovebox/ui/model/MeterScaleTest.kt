@@ -47,6 +47,25 @@ class MeterScaleTest {
         assertEquals(0f, MeterScale.dbToHeight(Double.NaN), 0f)
     }
 
+    /** v1 fix 4: the DLY / REV columns' setting marker uses the meter's dB scale, not the strip's 0..100%. */
+    @Test
+    fun returnMarkersSitOnTheMetersDbScale() {
+        val dly = ParamsDef.mix.spec(MixKeys.DELAY_RETURN)
+        val rev = ParamsDef.mix.spec(MixKeys.REVERB_RETURN)
+        // A return of x (a linear gain) sits where a peak of x does: 0.5 is -6 dB, not halfway.
+        for (g in listOf(0.001, 0.1, 0.25, 0.5, 0.8, 1.0)) {
+            assertEquals("$g", MeterScale.height(g.toFloat()), MeterScale.markerHeight(dly, g), 1e-6f)
+            assertEquals("$g", MeterScale.height(g.toFloat()), MeterScale.markerHeight(rev, g), 1e-6f)
+        }
+        assertEquals(0f, MeterScale.markerHeight(dly, 0.0), 0f)
+        assertEquals(60f / 66f, MeterScale.markerHeight(rev, 1.0), 1e-6f)
+        // dB settings (faders, master) are unchanged: their own value on the same scale.
+        for (db in listOf(-60.0, -12.0, 0.0, 6.0)) {
+            assertEquals(ParamMapping.toNormalized(volume, db).toFloat(), MeterScale.markerHeight(volume, db), 1e-6f)
+            assertEquals(ParamMapping.toNormalized(master, db).toFloat(), MeterScale.markerHeight(master, db), 1e-6f)
+        }
+    }
+
     @Test
     fun heightRisesWithLevel() {
         var last = -1f

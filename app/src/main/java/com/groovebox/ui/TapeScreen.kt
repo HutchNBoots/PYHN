@@ -271,6 +271,7 @@ private fun TapeFooter(state: GrooveState) {
         BasicText(exportLine, style = d.value(13f, colour), maxLines = 1, overflow = TextOverflow.Ellipsis)
         return
     }
+    val recordNeeds = state.tapeRecordNeeds
     val (text, colour) = when (state.tapeStatus) {
         TapeRecordStatus.Recording ->
             "recording ${TapeView.trackName(state.tapeRecordingTrack)} · Record (or double-tap the lane) stops on the next bar" to TapeColors.Record
@@ -279,7 +280,7 @@ private fun TapeFooter(state: GrooveState) {
             (if (state.playing) "$armed armed · starts on the next bar" else "$armed armed · starts on Play") to TapeColors.Record
         }
         TapeRecordStatus.Idle -> when {
-            !state.tapeCanRecord -> "record needs Speed 1× and Rev off" to GrooveColors.Warn
+            recordNeeds != null -> recordNeeds to GrooveColors.Warn
             state.tapeLoading -> "loading the saved tape · play on, it lands in a moment" to GrooveColors.TextDim
             state.tapeBars == 0 -> "$track selected · double-tap a lane or Record to start a take" to GrooveColors.TextDim
             else -> "$track selected · tap a lane to pick it, double-tap to record, hold to clear" to GrooveColors.TextDim

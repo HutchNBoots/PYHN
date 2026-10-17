@@ -2,10 +2,16 @@ package com.groovebox.ui.model
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/** Build-20 pad grammar: tap toggles, long-press selects (latched), Shift + two pads loops. */
 class StepPadsTest {
     private val pads = StepPads()
+
+    private fun sel(vararg steps: Int) = PadAction.Selection(steps.toList())
+
+    // --- taps ---
 
     @Test
     fun aTapTogglesOnRelease() {
@@ -22,37 +28,118 @@ class StepPadsTest {
     }
 
     @Test
-    fun holdingTwoPadsLoopsTheRangeInEitherOrder() {
-        pads.down(0, 12, false)
-        assertEquals(PadAction.Loop(4, 12), pads.down(1, 4, false))
+    fun twoPadsTappedTogetherWithoutShiftBothToggle() {
+        // Two thumbs drumming at once: no loop without Shift.
+        assertNull(pads.down(0, 4, false))
+        assertNull(pads.down(1, 7, false))
+        assertNull(pads.loop)
+        assertEquals(PadAction.Toggle(7), pads.up(1))
+        assertEquals(PadAction.Toggle(4), pads.up(0))
+    }
+
+    // --- long-press selection ---
+
+    @Test
+    fun aLongPressSelectsAndTheReleaseDoesNotToggle() {
+        pads.down(0, 3, false)
+        assertEquals(sel(3), pads.longPress(0))
+        assertNull("latched: letting go keeps it selected, no toggle", pads.up(0))
+        assertEquals(listOf(3), pads.selected)
+    }
+
+    @Test
+    fun aTapAfterASelectionStillToggles() {
+        pads.down(0, 3, false)
+        pads.longPress(0)
+        pads.up(0)
+        pads.down(1, 9, false)
+        assertEquals(PadAction.Toggle(9), pads.up(1))
+        assertEquals("the selection stays", listOf(3), pads.selected)
+    }
+
+    @Test
+    fun padsTouchedWhileASelectingPadIsHeldJoinTheSelectionAtOnce() {
+        pads.down(0, 2, false)
+        pads.longPress(0)
+        assertEquals(sel(2, 5), pads.down(1, 5, false))
+        assertNull("no toggle for the added pad", pads.up(1))
+        assertEquals(sel(2, 5, 11), pads.down(2, 11, false))
+        assertNull(pads.longPress(2))
+        assertNull(pads.up(2))
+        assertNull(pads.up(0))
+        assertEquals(listOf(2, 5, 11), pads.selected)
+    }
+
+    @Test
+    fun aSecondLongPressAddsToTheLatchedSelection() {
+        pads.down(0, 2, false); pads.longPress(0); pads.up(0)
+        pads.down(1, 6, false)
+        assertEquals(sel(2, 6), pads.longPress(1))
+        pads.up(1)
+        assertEquals(listOf(2, 6), pads.selected)
+    }
+
+    @Test
+    fun longPressingASelectedStepDeselectsIt() {
+        pads.down(0, 2, false); pads.longPress(0); pads.up(0)
+        pads.down(1, 6, false); pads.longPress(1); pads.up(1)
+        pads.down(2, 2, false)
+        assertEquals(sel(6), pads.longPress(2))
+        assertNull(pads.up(2))
+        assertEquals(listOf(6), pads.selected)
+    }
+
+    @Test
+    fun aDeselectingHoldDoesNotAddOtherPads() {
+        pads.down(0, 2, false); pads.longPress(0); pads.up(0)
+        pads.down(1, 2, false); pads.longPress(1) // deselects 2
+        assertNull("not selecting: an ordinary pad", pads.down(2, 8, false))
+        assertEquals(PadAction.Toggle(8), pads.up(2))
+        assertTrue(pads.selected.isEmpty())
+    }
+
+    @Test
+    fun aLongPressAfterReleaseOrForAnUnknownPointerDoesNothing() {
+        pads.down(0, 4, false)
+        pads.up(0)
+        assertNull(pads.longPress(0))
+        assertNull(pads.longPress(42))
+        assertTrue(pads.selected.isEmpty())
+    }
+
+    @Test
+    fun clearSelection() {
+        pads.down(0, 3, false); pads.longPress(0); pads.up(0)
+        pads.clearSelection()
+        assertTrue(pads.selected.isEmpty())
+    }
+
+    // --- Shift ---
+
+    @Test
+    fun shiftAndTwoPadsLoopTheRangeInEitherOrder() {
+        assertNull(pads.down(0, 12, shifted = true))
+        assertEquals(PadAction.Loop(4, 12), pads.down(1, 4, true))
         assertEquals(4 to 12, pads.loop)
     }
 
     @Test
-    fun releasingEitherLoopPadClearsTheLoopAndNothingToggles() {
-        pads.down(0, 4, false)
-        pads.down(1, 7, false)
+    fun releasingEitherLoopPadClearsTheLoopAndNothingElseHappens() {
+        pads.down(0, 4, true)
+        pads.down(1, 7, true)
         assertEquals(PadAction.ClearLoop, pads.up(1))
         assertNull(pads.loop)
-        assertNull("the other loop pad does not toggle", pads.up(0))
-        // The next tap is an ordinary tap again.
+        assertNull("the other loop pad does nothing", pads.up(0))
+        assertTrue("a loop never selects", pads.selected.isEmpty())
         pads.down(2, 9, false)
         assertEquals(PadAction.Toggle(9), pads.up(2))
     }
 
     @Test
-    fun releasingTheFirstLoopPadAlsoClears() {
-        pads.down(0, 4, false)
-        pads.down(1, 7, false)
-        assertEquals(PadAction.ClearLoop, pads.up(0))
-        assertNull(pads.up(1))
-    }
-
-    @Test
-    fun aThirdPadDuringALoopDoesNothing() {
-        pads.down(0, 0, false)
-        pads.down(1, 3, false)
-        assertNull(pads.down(2, 9, false))
+    fun aThirdShiftPadDuringALoopDoesNothing() {
+        pads.down(0, 0, true)
+        pads.down(1, 3, true)
+        assertNull(pads.down(2, 9, true))
         assertEquals(0 to 3, pads.loop)
         assertNull(pads.up(2))
         assertEquals(PadAction.ClearLoop, pads.up(1))
@@ -60,57 +147,59 @@ class StepPadsTest {
     }
 
     @Test
-    fun aPadStillHeldAfterTheLoopEndsCannotStartANewLoopUntilAllAreUp() {
-        pads.down(0, 0, false)
-        pads.down(1, 3, false)
-        pads.up(1) // loop cleared, pad 0 still down
-        assertNull(pads.down(2, 8, false))
+    fun aShiftPadStillHeldAfterTheLoopEndsCannotStartANewLoopUntilAllAreUp() {
+        pads.down(0, 0, true)
+        pads.down(1, 3, true)
+        pads.up(1)
+        assertNull(pads.down(2, 8, true))
         assertNull(pads.up(2))
         assertNull(pads.up(0))
-        pads.down(3, 1, false)
-        assertEquals(PadAction.Loop(1, 2), pads.down(4, 2, false))
+        pads.down(3, 1, true)
+        assertEquals(PadAction.Loop(1, 2), pads.down(4, 2, true))
     }
 
     @Test
     fun theSameStepTwiceLoopsOneStep() {
-        pads.down(0, 6, false)
-        assertEquals(PadAction.Loop(6, 6), pads.down(1, 6, false))
+        pads.down(0, 6, true)
+        assertEquals(PadAction.Loop(6, 6), pads.down(1, 6, true))
     }
 
     @Test
-    fun shiftSelectsOnTouchDownAndAgainDeselects() {
-        assertEquals(PadAction.Select(5), pads.down(0, 5, shifted = true))
-        assertEquals(5, pads.selected)
-        assertNull("no toggle on release", pads.up(0))
-        assertEquals(PadAction.Select(9), pads.down(1, 9, true))
-        assertEquals(9, pads.selected)
-        assertEquals(PadAction.Select(null), pads.down(2, 9, true))
-        assertNull(pads.selected)
+    fun shiftTapTogglesTheStepsSelectionOnRelease() {
+        // The old Shift + pad select still works (one pad, no loop).
+        assertNull(pads.down(0, 5, true))
+        assertEquals(sel(5), pads.up(0))
+        pads.down(1, 9, true)
+        assertEquals(sel(5, 9), pads.up(1))
+        pads.down(2, 5, true)
+        assertEquals(sel(9), pads.up(2))
     }
 
     @Test
-    fun shiftPadsNeverLoop() {
-        pads.down(0, 1, true)
-        assertEquals(PadAction.Select(4), pads.down(1, 4, true))
-        assertNull(pads.loop)
+    fun shiftPadsIgnoreTheLongPress() {
+        pads.down(0, 5, true)
+        assertNull(pads.longPress(0))
+        assertEquals(sel(5), pads.up(0))
     }
 
-    @Test
-    fun clearSelection() {
-        pads.down(0, 3, true)
-        pads.clearSelection()
-        assertNull(pads.selected)
-    }
+    // --- cancel ---
 
     @Test
     fun cancelForgetsHeldPadsAndClearsALoop() {
-        pads.down(0, 1, false)
-        pads.down(1, 2, false)
+        pads.down(0, 1, true)
+        pads.down(1, 2, true)
         assertEquals(PadAction.ClearLoop, pads.cancel())
         assertNull(pads.up(0))
         pads.down(2, 5, false)
         assertNull("no loop to clear", pads.cancel())
         assertNull("cancelled pads do not toggle", pads.up(2))
+    }
+
+    @Test
+    fun cancelKeepsTheLatchedSelection() {
+        pads.down(0, 3, false); pads.longPress(0)
+        pads.cancel()
+        assertEquals(listOf(3), pads.selected)
     }
 
     @Test

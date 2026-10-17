@@ -29,6 +29,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import com.groovebox.engine.EngineStats
+import com.groovebox.BuildConfig
 import com.groovebox.engine.NativeEngine
 import com.groovebox.ui.model.DrumLayout
 import com.groovebox.ui.model.KeyboardLayout
@@ -99,6 +100,7 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
         },
         panel = {
             DebugPanel(
+                build = BuildConfig.VERSION_CODE,
                 stats = stats,
                 latency = latencySummary,
                 onBursts = {

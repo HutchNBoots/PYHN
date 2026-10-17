@@ -1,5 +1,6 @@
 package com.groovebox.storage
 
+import com.groovebox.ui.model.Hit
 import com.groovebox.ui.model.KeyScale
 import com.groovebox.ui.model.LanePoint
 import com.groovebox.ui.model.LaneSnapshot
@@ -36,7 +37,9 @@ object TestSessions {
                 slot = 1,
                 pattern = 3,
                 settings = PatternSettings(length = 32, rate = 2, shuffle = 0.25f, gate = 0.4f),
-                steps = mapOf(0 to Step(true, listOf(45, 52), 0.9f, -1f, 1f), 7 to Step(false, listOf(60), 0.5f, 0.3f, 0.5f)),
+                // Steps the older layouts can hold too (one velocity, length and chance per step, no nudge),
+                // so the upgrade tests can compare them; [full] has per-hit values.
+                steps = mapOf(0 to Step.of(listOf(45, 52), 0.9f), 7 to Step(listOf(Hit(60, 0.5f, 0.3f, 0.5f)))),
                 lanes = listOf(LaneSnapshot(8, listOf(LanePoint(0, 1500f, 3), LanePoint(5, 200f, 9)))),
             ),
         ),
@@ -45,14 +48,16 @@ object TestSessions {
         keyScale = KeyScale(9, Scale.Minor),
     )
 
-    /** Every pattern full: every step on with 4 notes, 8 full lanes. The worst case for size. */
+    /** Every pattern full: every step with 8 hits, each its own values, 8 full lanes. The worst case for size. */
     fun full(): Session {
         val patterns = ArrayList<PatternSnapshot>()
         var stamp = 0L
         for (slot in 0 until 8) for (pattern in 0 until 16) {
             patterns += PatternSnapshot(
                 slot, pattern, PatternSettings(64, 1, 0.5f, 0.5f),
-                (0 until 64).associateWith { Step(true, listOf(36, 40, 43, 47), 0.7f, 0.25f, 0.9f) },
+                (0 until 64).associateWith { i ->
+                    Step(List(8) { h -> Hit(36 + h, 0.1f * (h + 1), if (h == 0) -1f else h * 0.5f, 1f - h * 0.1f, (h - 4) * 0.1f + i * 0.001f) })
+                },
                 List(8) { t -> LaneSnapshot(t, List(64) { s -> LanePoint(s, s * 10f, ++stamp) }) },
             )
         }
@@ -195,7 +200,8 @@ class SessionCodecTest {
 
     /**
      * F8.5: a real version 1 file, written by the M4 codec before F8 (bytes captured from it, not
-     * re-encoded here), still loads, with the scale off, and saves again as version 2.
+     * re-encoded here), still loads, with the scale off, and saves again as the current version.
+     * Its step that was off is dropped (build-20: a step is on when it has a hit).
      */
     @Test
     fun aVersionOneFileFromM4LoadsWithTheScaleOff() {
@@ -205,16 +211,48 @@ class SessionCodecTest {
         assertEquals(V1_SESSION, back)
         assertEquals(KeyScale.OFF, back!!.keyScale)
         val again = SessionCodec.encode(back)
-        assertEquals(2, ByteBuffer.wrap(again).getInt(4))
+        assertEquals(SessionCodec.VERSION, ByteBuffer.wrap(again).getInt(4))
+        assertEquals(back, SessionCodec.decode(again))
+    }
+
+    /**
+     * Build-20: a real version 2 file (written by the F8 codec, bytes captured before v3) loads
+     * as hits: one per note with the step's velocity, gate (as the length, -1 = pattern gate)
+     * and probability, nudge 0. Steps that were off, or on without a note, are dropped.
+     */
+    @Test
+    fun aVersionTwoFileMigratesToHits() {
+        val v2 = Base64.getDecoder().decode(V2_FILE)
+        assertEquals(2, ByteBuffer.wrap(v2).getInt(4))
+        val back = SessionCodec.decode(v2)
+        assertEquals(V2_SESSION, back)
+        val again = SessionCodec.encode(back!!)
+        assertEquals(3, ByteBuffer.wrap(again).getInt(4))
         assertEquals(back, SessionCodec.decode(again))
     }
 
     @Test
-    fun versionOneWrittenTodayMatchesTheM4FileAndDropsTheKey() {
-        // The upgrade path's writer for version 1 is still byte-exact with what M4 wrote.
-        val bytes = SessionCodec.encode(V1_SESSION.copy(keyScale = KeyScale(4, Scale.Dorian)), version = 1)
-        assertEquals(V1_FILE, Base64.getEncoder().encodeToString(bytes))
-        assertEquals(KeyScale.OFF, SessionCodec.decode(bytes)!!.keyScale)
+    fun aCorruptVersionTwoFileIsRejected() {
+        val v2 = Base64.getDecoder().decode(V2_FILE)
+        for (n in 0 until v2.size) assertNull("truncated to $n", SessionCodec.decode(v2.copyOf(n)))
+    }
+
+    @Test
+    fun versionThreeKeepsEveryHitsOwnValues() {
+        val steps = mapOf(
+            0 to Step(listOf(Hit(48, 1f, -1f, 1f, 0f), Hit(50, 0.35f, 2.5f, 0.25f, -0.5f), Hit(54, 0.01f, 1f / 16, 0f, 0.5f))),
+            63 to Step((48 until 56).map { Hit(it, 0.5f, 16f, 0.5f, 0.125f) }),
+        )
+        val s = TestSessions.small().copy(patterns = listOf(PatternSnapshot(0, 15, PatternSettings(), steps, emptyList())))
+        assertEquals(s, SessionCodec.decode(SessionCodec.encode(s)))
+    }
+
+    @Test
+    fun aStepWithMoreHitsThanTheEngineHoldsIsRejected() {
+        val s = TestSessions.small().copy(
+            patterns = listOf(PatternSnapshot(0, 0, PatternSettings(), mapOf(0 to Step((40 until 49).map { Hit(it) })), emptyList())),
+        )
+        assertNull(SessionCodec.decode(SessionCodec.encode(s)))
     }
 
     @Test
@@ -251,7 +289,8 @@ class SessionCodecTest {
 
         val full = TestSessions.full()
         val bytes = SessionCodec.encode(full)
-        assertTrue("full session ${bytes.size} bytes", bytes.size < SessionCodec.MAX_FILE_BYTES / 4)
+        // Every step of every pattern with 8 hits (20 bytes each) is about 2.4 MB: still well inside the limit.
+        assertTrue("full session ${bytes.size} bytes", bytes.size < SessionCodec.MAX_FILE_BYTES / 2)
         repeat(5) { SessionCodec.decode(SessionCodec.encode(full)) } // warm up the JIT
         val t0 = System.nanoTime()
         val runs = 10
@@ -285,12 +324,48 @@ class SessionCodecTest {
             patterns = listOf(
                 PatternSnapshot(
                     3, 1, PatternSettings(12, 2, 0.25f, 0.4f),
-                    mapOf(0 to Step(true, listOf(61, 65), 0.9f, -1f, 1f), 5 to Step(false, listOf(70), 0.5f, 0.3f, 0.5f)),
+                    mapOf(0 to Step.of(listOf(61, 65), 0.9f)),
                     listOf(LaneSnapshot(8, listOf(LanePoint(2, 900f, 4)))),
                 ),
             ),
             currentPatterns = listOf(0, 0, 0, 1, 0, 0, 0, 0),
             locks = mapOf("seq" to setOf("seq.gate")),
+        )
+
+        /** SessionCodec.encode(<the session below, with v2 steps>) by the F8 (version 2) codec, captured before v3. */
+        const val V2_FILE =
+            "R0JYUwAAAAIAAAHRQFlgAAAAAAAAA1NlcQAAAAAAAAACAAAAAAAAAAEAAlMxAAAACAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAEADFJ1YmJlciBGbG9vcgADT3NjAAAAAQAIb3NjLndhdmU/4AAAAAAAAAAAAAAAAAACAAAAAQAAAAEACmRydW0ubGV2ZWw/5mZmZmZmZgAAAAAAAAABAAptc3Qudm9sdW1lwAAAAAAAAAAAAAABAAAAAQAGY2gucGFuv9AAAAAAAAAAAAABAANzZXEAAAABAAhzZXEuZ2F0ZQAAAAIAAAAAAAAAAAAAABAAAAABPczMzT8AAAAAAAAEAAAAAAEAAAACAAAAMAAAADY/gAAAv4AAAD+AAAAAAAAEAQAAAAEAAAAyP3MzMz1MzM0/AAAAAAAABgAAAAABAAAANj8ZmZq/gAAAP4AAAAAAAAkBAAAAAD9MzM2/gAAAP4AAAAAAAAAAAAABAAAAAgAAAAwAAAACAAAAAD7mZmYAAAABAAAAAwEAAAADAAAALQAAADQAAAA5PzMzMz6ZmZo/QAAAAAAAAQAAAAgAAAABAAAAA0S7gAAAAAAAAAAABwAAAAkABU1pbm9ySFKLaA=="
+
+        /**
+         * What [V2_FILE] loads as. In version 2 it held: kit step 0 on [48, 54] vel 1.0 gate -1
+         * prob 1; step 4 on [50] vel 0.95 gate 0.05 prob 0.5; step 6 off [54]; step 9 on with
+         * no notes; slot 1 pattern 2 step 3 on [45, 52, 57] vel 0.7 gate 0.3 prob 0.75.
+         */
+        val V2_SESSION = Session(
+            tempo = 101.5,
+            ui = UiSnapshot("Seq", 0, 2, 0, 1, "S1"),
+            synths = listOf(SynthSnapshot(1, "Rubber Floor", "Osc", mapOf("osc.wave" to 0.5), emptySet())),
+            drum = DrumSnapshot(2, listOf(mapOf("drum.level" to 0.7)), emptySet()),
+            mix = mapOf("mst.volume" to -2.0),
+            channels = listOf(mapOf("ch.pan" to -0.25)),
+            patterns = listOf(
+                PatternSnapshot(
+                    0, 0, PatternSettings(16, 1, 0.1f, 0.5f),
+                    mapOf(
+                        0 to Step(listOf(Hit(48, 1f, -1f, 1f, 0f), Hit(54, 1f, -1f, 1f, 0f))),
+                        4 to Step(listOf(Hit(50, 0.95f, 0.05f, 0.5f, 0f))),
+                    ),
+                    emptyList(),
+                ),
+                PatternSnapshot(
+                    1, 2, PatternSettings(12, 2, 0f, 0.45f),
+                    mapOf(3 to Step(listOf(45, 52, 57).map { Hit(it, 0.7f, 0.3f, 0.75f, 0f) })),
+                    listOf(LaneSnapshot(8, listOf(LanePoint(3, 1500f, 7)))),
+                ),
+            ),
+            currentPatterns = listOf(0, 2, 0, 0, 0, 0, 0, 0),
+            locks = mapOf("seq" to setOf("seq.gate")),
+            keyScale = KeyScale(9, Scale.Minor),
         )
     }
 

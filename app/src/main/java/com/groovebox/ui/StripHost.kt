@@ -23,6 +23,15 @@ interface StripHost {
 
     /** Blink phase for [pending] strips. */
     val blinkOn: Boolean get() = true
+
+    /** The value shown is only a default (e.g. a selected step without that hit): the strip dims it. */
+    fun dimmed(spec: ParamSpec): Boolean = false
+
+    /** A finger went down on the strip showing [spec] (the first of a gesture), e.g. to start an undo step. */
+    fun gestureStart(spec: ParamSpec) {}
+
+    /** The last finger of that gesture lifted, or the gesture was dropped. */
+    fun gestureEnd(spec: ParamSpec) {}
 }
 
 /** Strip locks (F4.2) by parameter key, observable by Compose. [onChange] runs after each change (autosave). */

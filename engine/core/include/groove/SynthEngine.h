@@ -49,6 +49,11 @@ struct NoteOnRender {
 // player is holding, and releasing a key never cuts a sequencer note that is still within
 // its gate. seqAllNotesOff (Stop) releases only what the sequencer holds; the UI's
 // allNotesOff is a panic and releases everything.
+//
+// Voice mode changes (poly / mono / unison) fade every voice out (<= 2 ms, click-free) and
+// start the notes still held, by either source, again under the new mode: poly the four
+// most recent, mono and unison the last-held one (with the rest kept for last-note
+// priority). The stereo placement ramps to the new mode's over the same fade.
 class SynthEngine final : public Instrument {
 public:
     static constexpr int kVoiceCount = 4;
@@ -123,6 +128,7 @@ private:
     void notePoly(int note, float velocity, int64_t tapTimeNs, int64_t blockStartFrame);
     void noteOffPoly(int note);
     void setMode(VoiceMode mode);
+    void restartHeld();
     void readTargets();
     void advanceControls();
     float smoothed(ParamId id) const { return smoothed_[index(id)]; }
@@ -144,9 +150,14 @@ private:
     std::array<Voice, kVoiceCount> voices_;
     std::array<float, kVoiceCount> panLeft_{};
     std::array<float, kVoiceCount> panRight_{};
+    std::array<float, kVoiceCount> panLeftTarget_{};
+    std::array<float, kVoiceCount> panRightTarget_{};
+    std::array<float, kVoiceCount> panStepLeft_{};
+    std::array<float, kVoiceCount> panStepRight_{};
+    int panRampLeft_ = 0;  // samples until the pans reach their targets
     std::array<float, kSubBlock> scratch_{};
-    MonoNoteStack held_;
-    float heldVelocity_ = 1.0f;
+    MonoNoteStack held_;  // every held note (any source, any mode), oldest first
+    std::array<float, 128> heldVelocities_{};  // the velocity each held note was played with
     VoiceMode mode_ = VoiceMode::Poly;
     uint64_t stamp_ = 0;
 

@@ -102,6 +102,7 @@ bool AudioGraph::allNotesOff() { return notes_.push({-1, {NoteEvent::Type::AllNo
 
 void AudioGraph::applyPendingCommands() {
     sequencer_->applyCommands(framesRendered(), INT_MAX);
+    tape_->setSequencerBarOffline(sequencer_->roundedBarFrames());  // the tape's record rule follows the tempo
     tape_->applyPendingOffline();
 }
 
@@ -179,15 +180,19 @@ void AudioGraph::linkTape(int64_t chunkStart) {
 
     int slot = 0;
     if (!t.playing || !tape_->commitPassRequest(slot)) return;
-    // F5.6: one slot: exactly its pattern, from its next boundary. All slots: the longest
-    // pattern among them, rounded up to whole bars, from that slot's next boundary. The pass
-    // that started at Play is offered too, for a commit sent together with play().
+    // F5.6: one slot: its pattern from its next boundary, for ceil(length / bar) whole bars
+    // (the pattern keeps looping, so a pattern that isn't whole bars leaves no silent tail;
+    // the frames are exact on the sequencer clock). All slots: the longest pattern among
+    // them, rounded up to whole bars, from that slot's next boundary. The pass that started
+    // at Play is offered too, for a commit sent together with play().
+    const int64_t bar = seq.barUnits();
+    const auto wholeBars = [bar](int64_t units) { return (units + bar - 1) / bar * bar; };
     Tape::CommitPass next, fromPlay;
     if (slot >= 0) {
         const Sequencer::PatternPass p = seq.nextPatternPass(slot);
-        next = {true, p.startFrame, seq.framesBetween(p.startPosition, p.units), 0};
+        next = {true, p.startFrame, seq.framesBetween(p.startPosition, wholeBars(p.units)), 0};
         const Sequencer::PatternPass c = seq.currentPatternPass(slot);
-        if (c.startPosition == 0) fromPlay = {true, seq.playFrame(), seq.framesBetween(0, c.units), 0};
+        if (c.startPosition == 0) fromPlay = {true, seq.playFrame(), seq.framesBetween(0, wholeBars(c.units)), 0};
     } else {
         Sequencer::PatternPass longest;
         int64_t longestFromPlay = 0;
@@ -197,7 +202,6 @@ void AudioGraph::linkTape(int64_t chunkStart) {
             const Sequencer::PatternPass c = seq.currentPatternPass(s);
             if (c.startPosition == 0) longestFromPlay = std::max(longestFromPlay, c.units);
         }
-        const int64_t bar = seq.barUnits();
         next = {true, longest.startFrame, 0, static_cast<int32_t>((longest.units + bar - 1) / bar)};
         if (longestFromPlay > 0) {
             fromPlay = {true, seq.playFrame(), 0, static_cast<int32_t>((longestFromPlay + bar - 1) / bar)};

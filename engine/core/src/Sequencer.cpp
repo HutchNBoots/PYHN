@@ -27,6 +27,11 @@ bool validStep(int step) { return step >= 0 && step < kMaxSteps; }
 
 float finiteOr(float v, float fallback) { return std::isfinite(v) ? v : fallback; }
 
+// round(nudge * units): a nudged hit's offset, a whole number of position units.
+int64_t nudgeUnits(float nudge, int64_t units) {
+    return static_cast<int64_t>(std::llround(static_cast<double>(nudge) * static_cast<double>(units)));
+}
+
 uint32_t seedFor(int slot) { return 0x9E3779B9u ^ (0x85EBCA6Bu * static_cast<uint32_t>(slot + 1)); }
 
 // xorshift32, uniform in [0, 1).
@@ -67,13 +72,28 @@ struct Sequencer::Command {
     float f1 = 0.0f;
     float f2 = 0.0f;
     bool flag = false;
-    std::array<int32_t, kMaxNotesPerStep> notes{};
+    Step hits{};  // SetStep only
 };
+// The SetStep payload (8 hits, 164 bytes) sets the size: about 200 bytes, so the queue's
+// kCommandCapacity = 4096 commands is about 800 KB, allocated once on the control thread.
+// That still holds a dense session load (one command per non-empty step) without waiting.
+static_assert(sizeof(Step) == 4 + kMaxHitsPerStep * 20, "Step is plain data: hitCount + 8 hits");
 
 struct Sequencer::SlotState {
     struct Off {
         int32_t note;
+        uint32_t order;  // when it was scheduled: the oldest goes first when the list is full
         int64_t frame;
+    };
+    // A hit waiting for its nudged time (or, from the look-ahead, for the next step's early time).
+    struct PendingHit {
+        int32_t note;
+        float velocity;
+        int32_t pattern;  // the step it belongs to (live recording takes it over)
+        int32_t step;
+        int64_t position;  // exact
+        int64_t frame;     // frameOf(position), kept in step with tempo changes
+        int64_t lengthUnits;
     };
     struct Override {
         int32_t target;
@@ -105,6 +125,17 @@ struct Sequencer::SlotState {
 
     std::array<Off, kMaxPendingOffs> offs{};
     int32_t offCount = 0;
+    uint32_t offOrder = 0;
+
+    std::array<PendingHit, kMaxPendingHits> pending{};
+    int32_t pendingCount = 0;
+
+    // The step whose early hits the look-ahead handled, and their notes: that step's own
+    // trigger skips them (scheduled, or dropped by chance, once).
+    int32_t lookStep = -1;
+    int32_t lookPattern = -1;
+    int32_t lookCount = 0;
+    std::array<int32_t, kMaxHitsPerStep> lookNotes{};
 
     // Motion overrides currently applied to the instrument by this slot's patterns.
     std::array<Override, kMaxOverrides> overrides{};
@@ -119,7 +150,7 @@ struct Sequencer::SlotState {
     int32_t suppressStep = -1;
     int32_t suppressPattern = -1;
     int32_t suppressCount = 0;
-    std::array<int32_t, kMaxNotesPerStep> suppressNotes{};
+    std::array<int32_t, kMaxHitsPerStep> suppressNotes{};
 
     void resetRuntime() {
         gridPosition = 0;
@@ -131,6 +162,11 @@ struct Sequencer::SlotState {
         lastEventPosition = 0;
         loopNext = loopStart;
         offCount = 0;
+        offOrder = 0;
+        pendingCount = 0;
+        lookStep = -1;
+        lookPattern = -1;
+        lookCount = 0;
         overrideCount = 0;
         touchedCount = 0;
         suppressStep = -1;
@@ -142,6 +178,7 @@ Sequencer::Sequencer()
     : patterns_(std::make_unique<std::array<std::array<Pattern, kPatternCount>, kSlotCount>>()),
       slots_(std::make_unique<std::array<SlotState, kSlotCount>>()),
       commands_(std::make_unique<SpscQueue<Command, kCommandCapacity>>()) {
+    static_assert(sizeof(Command) <= 208, "keep the command queue's memory in check");
     for (int s = 0; s < kSlotCount; ++s) {
         outStep_[static_cast<std::size_t>(s)].store(-1, std::memory_order_relaxed);
         outPattern_[static_cast<std::size_t>(s)].store(0, std::memory_order_relaxed);
@@ -236,24 +273,30 @@ bool Sequencer::setPatternSettings(int slot, int pattern, int length, int rate, 
     c.b = std::clamp(rate, 0, kStepRateCount - 1);
     const float s = std::clamp(finiteOr(shuffle, 0.0f), 0.0f, 1.0f);
     c.step = static_cast<int32_t>(std::lround(s * static_cast<float>(Pattern::kShuffleResolution)));
-    c.f0 = std::clamp(finiteOr(gate, Pattern::kDefaultGate), Step::kMinGate, 1.0f);
+    c.f0 = std::clamp(finiteOr(gate, Pattern::kDefaultGate), Pattern::kMinGate, 1.0f);
     return push(c);
 }
 
-bool Sequencer::setStep(int slot, int pattern, int step, bool on, const int* notes, int noteCount, float velocity,
-                        float gate, float probability) {
+Hit Sequencer::sanitizeHit(const Hit& hit) {
+    Hit h;
+    h.note = std::clamp(hit.note, 0, 127);
+    h.velocity = std::clamp(finiteOr(hit.velocity, Hit::kDefaultVelocity), Hit::kMinVelocity, 1.0f);
+    h.length = (std::isnan(hit.length) || hit.length < 0.0f) ? Hit::kPatternGate
+                                                              : std::clamp(hit.length, Hit::kMinLength, Hit::kMaxLength);
+    h.probability = std::clamp(finiteOr(hit.probability, 1.0f), 0.0f, 1.0f);
+    h.nudge = std::clamp(finiteOr(hit.nudge, 0.0f), -Hit::kMaxNudge, Hit::kMaxNudge);
+    return h;
+}
+
+bool Sequencer::setStep(int slot, int pattern, int step, const Hit* hits, int hitCount) {
     if (!validSlot(slot) || !validPattern(pattern) || !validStep(step)) return true;
     Command c;
     c.type = Command::Type::SetStep;
     c.slot = slot;
     c.pattern = pattern;
     c.step = step;
-    c.flag = on;
-    c.a = notes ? std::clamp(noteCount, 0, kMaxNotesPerStep) : 0;
-    for (int i = 0; i < c.a; ++i) c.notes[static_cast<std::size_t>(i)] = std::clamp(notes[i], 0, 127);
-    c.f0 = std::clamp(finiteOr(velocity, Step::kDefaultVelocity), 0.0f, 1.0f);
-    c.f1 = (std::isnan(gate) || gate < 0.0f) ? Step::kPatternGate : std::clamp(gate, Step::kMinGate, 1.0f);
-    c.f2 = std::clamp(finiteOr(probability, 1.0f), 0.0f, 1.0f);
+    c.hits.hitCount = hits ? std::clamp(hitCount, 0, kMaxHitsPerStep) : 0;
+    for (int i = 0; i < c.hits.hitCount; ++i) c.hits.hits[static_cast<std::size_t>(i)] = sanitizeHit(hits[i]);
     return push(c);
 }
 
@@ -382,13 +425,7 @@ void Sequencer::apply(const Command& c, int64_t frame) {
             break;
         }
         case Command::Type::SetStep: {
-            Step& s = pat(c.slot, c.pattern).steps[static_cast<std::size_t>(c.step)];
-            s.on = c.flag;
-            s.noteCount = c.a;
-            s.notes = c.notes;
-            s.velocity = c.f0;
-            s.gate = c.f1;
-            s.probability = c.f2;
+            pat(c.slot, c.pattern).steps[static_cast<std::size_t>(c.step)] = c.hits;
             break;
         }
         case Command::Type::MotionValue: {
@@ -463,7 +500,13 @@ void Sequencer::doSetTempo(int32_t tenths, int64_t frame) {
     }
     tempoTenths_ = tenths;
     if (playing_) {
-        for (SlotState& s : *slots_) s.nextEventFrame = frameOf(s.nextEventPosition);
+        for (SlotState& s : *slots_) {
+            s.nextEventFrame = frameOf(s.nextEventPosition);
+            for (int32_t i = 0; i < s.pendingCount; ++i) {
+                SlotState::PendingHit& h = s.pending[static_cast<std::size_t>(i)];
+                h.frame = std::max(frameOf(h.position), frame);
+            }
+        }
     }
     const float bpm = static_cast<float>(tenths) * 0.1f;
     for (Instrument* inst : instruments_) {
@@ -512,7 +555,7 @@ void Sequencer::recordLiveNote(int slot, int note, float velocity, int64_t frame
         return;
     }
     SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
-    velocity = std::clamp(finiteOr(velocity, Step::kDefaultVelocity), 0.0f, 1.0f);
+    velocity = std::clamp(finiteOr(velocity, Hit::kDefaultVelocity), Hit::kMinVelocity, 1.0f);
 
     // F3.6: the nearest step by exact position (ties go to the earlier step).
     const int64_t position = positionAt(frame);
@@ -523,10 +566,11 @@ void Sequencer::recordLiveNote(int slot, int note, float velocity, int64_t frame
 
     const RecordedEvent ev{RecordedEvent::Kind::Note, slot, pattern, step, note, velocity};
     if (!recorded_.push(ev)) return;
-    Step& st = pat(slot, pattern).steps[static_cast<std::size_t>(step)];
-    st.on = true;
-    st.addNote(note);
-    st.velocity = velocity;
+    Hit hit;
+    hit.note = note;
+    hit.velocity = velocity;
+    pat(slot, pattern).steps[static_cast<std::size_t>(step)].addHit(hit);
+    dropPendingHits(slot, pattern, step, note);  // the key plays it now, not the waiting hit
 
     if (!useLast) {
         if (s.suppressStep != step || s.suppressPattern != pattern) {
@@ -534,7 +578,7 @@ void Sequencer::recordLiveNote(int slot, int note, float velocity, int64_t frame
             s.suppressPattern = pattern;
             s.suppressCount = 0;
         }
-        if (s.suppressCount < kMaxNotesPerStep) s.suppressNotes[static_cast<std::size_t>(s.suppressCount++)] = note;
+        if (s.suppressCount < kMaxHitsPerStep) s.suppressNotes[static_cast<std::size_t>(s.suppressCount++)] = note;
     }
 }
 
@@ -564,6 +608,7 @@ int32_t Sequencer::advance(int64_t frame, int32_t maxFrames) {
         const SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
         next = std::min(next, s.nextEventFrame);
         for (int32_t i = 0; i < s.offCount; ++i) next = std::min(next, s.offs[static_cast<std::size_t>(i)].frame);
+        for (int32_t i = 0; i < s.pendingCount; ++i) next = std::min(next, s.pending[static_cast<std::size_t>(i)].frame);
     }
     publish();
     return static_cast<int32_t>(std::max<int64_t>(1, next - frame));
@@ -581,13 +626,24 @@ void Sequencer::fireDue(int slot, int64_t frame) {
             ++i;
         }
     }
+    // Waiting hits now due, earliest first (normally none or one).
+    for (;;) {
+        int32_t best = -1;
+        for (int32_t i = 0; i < s.pendingCount; ++i) {
+            const SlotState::PendingHit& h = s.pending[static_cast<std::size_t>(i)];
+            if (h.frame <= frame && (best < 0 || h.position < s.pending[static_cast<std::size_t>(best)].position)) best = i;
+        }
+        if (best < 0) break;
+        const SlotState::PendingHit h = s.pending[static_cast<std::size_t>(best)];
+        s.pending[static_cast<std::size_t>(best)] = s.pending[static_cast<std::size_t>(--s.pendingCount)];
+        sound(slot, h.note, h.velocity, h.position, h.lengthUnits, frame);
+    }
     // Normally at most one step is due; a few more only after an edit made one overdue.
     for (int guard = 0; guard < 4 && s.nextEventFrame <= frame; ++guard) fireStep(slot, frame);
 }
 
 void Sequencer::fireStep(int slot, int64_t frame) {
     SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
-    Instrument* inst = instruments_[static_cast<std::size_t>(slot)];
     if (s.nextVirtual == 0 && s.queued >= 0) {
         switchPattern(slot, s.queued);
         s.queued = -1;
@@ -601,25 +657,24 @@ void Sequencer::fireStep(int slot, int64_t frame) {
     applyMotion(slot, p, step);
 
     const Step& st = p.steps[static_cast<std::size_t>(step)];
-    bool sound = st.on && st.noteCount > 0;
-    if (sound && st.probability < 1.0f) sound = nextUnit(s.rng) < st.probability;  // F3.4
-    if (sound) {
-        const float gate = st.gate < 0.0f ? p.gate : st.gate;
-        const auto gateUnits = static_cast<int64_t>(std::llround(static_cast<double>(gate) * static_cast<double>(units)));
-        const int64_t offFrame = std::max(frameOf(eventPosition + gateUnits), frame + minNoteFrames_);
-        const bool suppress = s.suppressStep == step && s.suppressPattern == s.current;
-        for (int32_t i = 0; i < st.noteCount; ++i) {
-            const int note = st.notes[static_cast<std::size_t>(i)];
-            if (suppress) {
-                bool skip = false;
-                for (int32_t k = 0; k < s.suppressCount; ++k) skip = skip || s.suppressNotes[static_cast<std::size_t>(k)] == note;
-                if (skip) continue;
-            }
-            cancelOff(slot, note);  // a retrigger takes the note over; its own off follows
-            if (inst) inst->seqNoteOn(note, st.velocity);
-            scheduleOff(slot, note, offFrame);
+    const bool suppress = s.suppressStep == step && s.suppressPattern == s.current;
+    const bool looked = s.lookStep == step && s.lookPattern == s.current;
+    for (int32_t i = 0; i < st.hitCount; ++i) {
+        const Hit& hit = st.hits[static_cast<std::size_t>(i)];
+        bool skip = false;
+        if (looked) {
+            for (int32_t k = 0; k < s.lookCount; ++k) skip = skip || s.lookNotes[static_cast<std::size_t>(k)] == hit.note;
         }
+        if (suppress) {
+            for (int32_t k = 0; k < s.suppressCount; ++k) skip = skip || s.suppressNotes[static_cast<std::size_t>(k)] == hit.note;
+        }
+        if (skip || !roll(slot, hit)) continue;
+        // An early hit the look-ahead didn't schedule sounds on its step.
+        const int64_t position = eventPosition + (hit.nudge > 0.0f ? nudgeUnits(hit.nudge, units) : 0);
+        queueHit(slot, hit, p, s.current, step, position, frame, eventPosition);
     }
+    s.lookStep = -1;
+    s.lookCount = 0;
     s.suppressStep = -1;
     s.suppressCount = 0;
 
@@ -635,6 +690,81 @@ void Sequencer::fireStep(int slot, int64_t frame) {
         s.loopNext = step + 1 > end || step < start ? start : step + 1;
     }
     scheduleNext(slot);
+    lookAhead(slot, frame, eventPosition);
+}
+
+// Schedules the early hits of the step that will really play next (loop, length wrap and a
+// switch due at the boundary are already in nextPlayedStep / nextPattern).
+void Sequencer::lookAhead(int slot, int64_t frame, int64_t stepPosition) {
+    SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
+    const int pattern = nextPattern(slot);
+    const int step = nextPlayedStep(slot);
+    const Pattern& p = pat(slot, pattern);
+    const int64_t units = stepUnits(p.rate);
+    const Step& st = p.steps[static_cast<std::size_t>(step)];
+    s.lookStep = step;
+    s.lookPattern = pattern;
+    s.lookCount = 0;
+    for (int32_t i = 0; i < st.hitCount; ++i) {
+        const Hit& hit = st.hits[static_cast<std::size_t>(i)];
+        if (hit.nudge >= 0.0f) continue;
+        s.lookNotes[static_cast<std::size_t>(s.lookCount++)] = hit.note;  // at most kMaxHitsPerStep
+        if (!roll(slot, hit)) continue;
+        queueHit(slot, hit, p, pattern, step, s.nextEventPosition + nudgeUnits(hit.nudge, units), frame, stepPosition);
+    }
+}
+
+bool Sequencer::roll(int slot, const Hit& hit) {
+    if (hit.probability >= 1.0f) return true;
+    return nextUnit((*slots_)[static_cast<std::size_t>(slot)].rng) < hit.probability;  // F3.4
+}
+
+// A hit that passed its chance roll, at its exact position: sounds now if that is due (or
+// already past: an early hit can't sound before the step that scheduled it, at
+// stepPosition), else waits.
+void Sequencer::queueHit(int slot, const Hit& hit, const Pattern& p, int pattern, int step, int64_t position,
+                         int64_t frame, int64_t stepPosition) {
+    SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
+    const float length = hit.length < 0.0f ? p.gate : hit.length;
+    const auto lengthUnits =
+        static_cast<int64_t>(std::llround(static_cast<double>(length) * static_cast<double>(stepUnits(p.rate))));
+    const int64_t due = frameOf(position);
+    if (due <= frame) {
+        sound(slot, hit.note, hit.velocity, std::max(position, stepPosition), lengthUnits, frame);
+        return;
+    }
+    if (s.pendingCount >= kMaxPendingHits) {
+        // Never expected (see kMaxPendingHits): the earliest waiting hit sounds now, early.
+        int32_t first = 0;
+        for (int32_t i = 1; i < s.pendingCount; ++i) {
+            if (s.pending[static_cast<std::size_t>(i)].position < s.pending[static_cast<std::size_t>(first)].position) first = i;
+        }
+        const SlotState::PendingHit h = s.pending[static_cast<std::size_t>(first)];
+        s.pending[static_cast<std::size_t>(first)] = s.pending[static_cast<std::size_t>(--s.pendingCount)];
+        sound(slot, h.note, h.velocity, h.position, h.lengthUnits, frame);
+    }
+    s.pending[static_cast<std::size_t>(s.pendingCount++)] = {hit.note, hit.velocity, pattern, step, position, due, lengthUnits};
+}
+
+// Note-on now (frame), as of exact position; its off follows lengthUnits later at the
+// current tempo, at least kMinNoteSeconds after now. A note still held is released first.
+void Sequencer::sound(int slot, int note, float velocity, int64_t position, int64_t lengthUnits, int64_t frame) {
+    Instrument* inst = instruments_[static_cast<std::size_t>(slot)];
+    if (cancelOff(slot, note) && inst) inst->seqNoteOff(note);
+    if (inst) inst->seqNoteOn(note, velocity);
+    scheduleOff(slot, note, std::max(frameOf(position + lengthUnits), frame + minNoteFrames_));
+}
+
+void Sequencer::dropPendingHits(int slot, int pattern, int step, int note) {
+    SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
+    for (int32_t i = 0; i < s.pendingCount;) {
+        const SlotState::PendingHit& h = s.pending[static_cast<std::size_t>(i)];
+        if (h.pattern == pattern && h.step == step && h.note == note) {
+            s.pending[static_cast<std::size_t>(i)] = s.pending[static_cast<std::size_t>(--s.pendingCount)];
+        } else {
+            ++i;
+        }
+    }
 }
 
 void Sequencer::scheduleNext(int slot) {
@@ -654,6 +784,7 @@ int Sequencer::nextPattern(int slot) const {
 
 int Sequencer::nextPlayedStep(int slot) const {
     const SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
+    if (s.nextVirtual == 0 && s.queued >= 0) return 0;  // the switch clears the loop
     const int length = pat(slot, nextPattern(slot)).length;
     if (!s.loopActive) return std::min(s.nextVirtual, length - 1);
     const int end = std::min(s.loopEnd, length - 1);
@@ -719,11 +850,17 @@ bool Sequencer::touched(int slot, int target) const {
 void Sequencer::scheduleOff(int slot, int note, int64_t frame) {
     SlotState& s = (*slots_)[static_cast<std::size_t>(slot)];
     if (s.offCount >= kMaxPendingOffs) {
-        // Full (only with pathological edits): end the oldest-scheduled note now.
-        if (Instrument* inst = instruments_[static_cast<std::size_t>(slot)]) inst->seqNoteOff(s.offs[0].note);
-        s.offs[0] = s.offs[static_cast<std::size_t>(--s.offCount)];
+        // Can't happen while each note has at most one off (sound() releases a held note
+        // first); kept so the list can never overflow: the oldest note ends now.
+        int32_t oldest = 0;
+        for (int32_t i = 1; i < s.offCount; ++i) {
+            const uint32_t age = s.offOrder - s.offs[static_cast<std::size_t>(i)].order;
+            if (age > s.offOrder - s.offs[static_cast<std::size_t>(oldest)].order) oldest = i;
+        }
+        if (Instrument* inst = instruments_[static_cast<std::size_t>(slot)]) inst->seqNoteOff(s.offs[static_cast<std::size_t>(oldest)].note);
+        s.offs[static_cast<std::size_t>(oldest)] = s.offs[static_cast<std::size_t>(--s.offCount)];
     }
-    s.offs[static_cast<std::size_t>(s.offCount++)] = {note, frame};
+    s.offs[static_cast<std::size_t>(s.offCount++)] = {note, s.offOrder++, frame};
 }
 
 bool Sequencer::cancelOff(int slot, int note) {

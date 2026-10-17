@@ -30,11 +30,13 @@ import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
- * Debug overlay on the display (F0.2, F0.4): tap-to-tone, the stream path, buffer, xruns,
- * callback load and the buffer-size setting. Toggled by tapping the engine name.
+ * Debug overlay on the display (F0.2, F0.4): the build number (versionCode, the CI run: "build
+ * 20"), tap-to-tone, the stream path, buffer, xruns, callback load and the buffer-size
+ * setting. Toggled by tapping the engine name.
  */
 @Composable
 fun DebugPanel(
+    build: Int,
     stats: EngineStats?,
     latency: LatencySummary?,
     onBursts: (Int) -> Unit,
@@ -55,6 +57,7 @@ fun DebugPanel(
             .padding(horizontal = d.dp(10), vertical = d.dp(6)),
         verticalArrangement = Arrangement.spacedBy(d.dp(2)),
     ) {
+        Line("build $build", GrooveColors.Shift)
         val tap = latency?.let {
             "tap-to-tone median %.1f  min %.1f  max %.1f  last %.1f ms  n=%d"
                 .fmt(it.medianMs, it.minMs, it.maxMs, it.lastMs, it.count)

@@ -84,8 +84,13 @@ fun ColourStrip(
     val locked = host.isLocked(spec)
     val text = host.format(spec, value)
     val pending = host.pending(spec)
+    val dimmed = host.dimmed(spec)
     // Only a pending strip reads the blink phase, so only it recomposes as it blinks.
-    val textAlpha = if (pending && !host.blinkOn) 0.25f else 1f
+    val textAlpha = when {
+        pending && !host.blinkOn -> 0.25f
+        dimmed -> 0.4f
+        else -> 1f
+    }
     val currentNormalized by rememberUpdatedState(normalized)
     val currentLocked by rememberUpdatedState(locked)
     val edge = d.px(3f)
@@ -96,6 +101,7 @@ fun ColourStrip(
             .background(GrooveColors.Panel)
             .semantics {
                 contentDescription = "${spec.label} $text${if (pending) ", queued" else ""}" +
+                    "${if (dimmed) ", not set on this step" else ""}" +
                     "${if (locked) ", locked" else ""}, drag up or down"
             }
             // Restarts (dropping any gesture in progress) when the strip shows another parameter
@@ -110,39 +116,51 @@ fun ColourStrip(
                         null -> Unit
                     }
                 }
-                awaitPointerEventScope {
-                    while (true) {
-                        val deadline = gesture.longPressDeadline
-                        val event = if (deadline == null) {
-                            awaitPointerEvent()
-                        } else {
-                            // Pointer event times are SystemClock.uptimeMillis().
-                            val wait = deadline - SystemClock.uptimeMillis()
-                            if (wait > 0) withTimeoutOrNull(wait) { awaitPointerEvent() } else null
-                        }
-                        if (event == null) {
-                            // The long-press deadline passed with the finger still down.
-                            if (deadline != null) handle(gesture.timeout(deadline))
-                            continue
-                        }
-                        for (change in event.changes) {
-                            val id = change.id.value.toInt()
-                            when {
-                                change.changedToDownIgnoreConsumed() -> {
-                                    gesture.locked = currentLocked
-                                    handle(
-                                        gesture.down(
-                                            id, change.uptimeMillis, change.position.y,
-                                            size.height.toFloat(), currentNormalized,
-                                        ),
-                                    )
-                                }
-                                change.changedToUpIgnoreConsumed() -> handle(gesture.up(id, change.uptimeMillis))
-                                change.positionChanged() -> handle(gesture.move(id, change.uptimeMillis, change.position.y))
+                // Fingers down on this strip: the first starts the host's gesture, the last ends it.
+                val down = HashSet<Int>()
+                try {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val deadline = gesture.longPressDeadline
+                            val event = if (deadline == null) {
+                                awaitPointerEvent()
+                            } else {
+                                // Pointer event times are SystemClock.uptimeMillis().
+                                val wait = deadline - SystemClock.uptimeMillis()
+                                if (wait > 0) withTimeoutOrNull(wait) { awaitPointerEvent() } else null
                             }
-                            change.consume()
+                            if (event == null) {
+                                // The long-press deadline passed with the finger still down.
+                                if (deadline != null) handle(gesture.timeout(deadline))
+                                continue
+                            }
+                            for (change in event.changes) {
+                                val id = change.id.value.toInt()
+                                when {
+                                    change.changedToDownIgnoreConsumed() -> {
+                                        if (down.isEmpty()) host.gestureStart(spec)
+                                        down += id
+                                        gesture.locked = currentLocked
+                                        handle(
+                                            gesture.down(
+                                                id, change.uptimeMillis, change.position.y,
+                                                size.height.toFloat(), currentNormalized,
+                                            ),
+                                        )
+                                    }
+                                    change.changedToUpIgnoreConsumed() -> {
+                                        handle(gesture.up(id, change.uptimeMillis))
+                                        if (down.remove(id) && down.isEmpty()) host.gestureEnd(spec)
+                                    }
+                                    change.positionChanged() -> handle(gesture.move(id, change.uptimeMillis, change.position.y))
+                                }
+                                change.consume()
+                            }
                         }
                     }
+                } finally {
+                    // Restarted or left the screen mid-gesture: close it.
+                    if (down.isNotEmpty()) host.gestureEnd(spec)
                 }
             }
             .drawBehind {

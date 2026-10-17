@@ -51,6 +51,15 @@ public:
     }
     std::vector<SeqCall> noteOns() const { return of(SeqCall::Type::NoteOn); }
     std::vector<SeqCall> noteOffs() const { return of(SeqCall::Type::NoteOff); }
+    std::vector<SeqCall> noteOns(int note) const { return ofNote(SeqCall::Type::NoteOn, note); }
+    std::vector<SeqCall> noteOffs(int note) const { return ofNote(SeqCall::Type::NoteOff, note); }
+    std::vector<SeqCall> ofNote(SeqCall::Type type, int note) const {
+        std::vector<SeqCall> out;
+        for (const SeqCall& c : calls) {
+            if (c.type == type && c.note == note) out.push_back(c);
+        }
+        return out;
+    }
     void clear() { calls.clear(); }
 
 private:
@@ -96,11 +105,11 @@ struct SeqHarness {
         return out;
     }
 
-    // Every step of a pattern on, one note each (base + step), default gate.
+    // Every step of a pattern on, one hit each (note base + step), the pattern's gate.
     void fillSteps(int s, int pattern, int base, float probability = 1.0f) {
         for (int i = 0; i < kMaxSteps; ++i) {
             const int note = base + i;
-            seq->setStep(s, pattern, i, true, &note, 1, 0.8f, -1.0f, probability);
+            seq->setStep(s, pattern, i, {Hit{note, 0.8f, Hit::kPatternGate, probability}});
         }
     }
 

@@ -201,13 +201,12 @@ class KeyScaleTest {
     @Test
     fun outOfKeyStepsAreMarked() {
         val a = KeyScale(9, Scale.Minor)
-        assertTrue(a.marksStep(Step(true, listOf(57, 61)), drum = false))
-        assertFalse(a.marksStep(Step(true, listOf(57, 60)), drum = false))
-        assertFalse("off steps are not playing", a.marksStep(Step(false, listOf(61)), drum = false))
-        assertFalse("drum steps are never marked", a.marksStep(Step(true, listOf(49)), drum = true))
-        assertFalse(KeyScale.OFF.marksStep(Step(true, listOf(61)), drum = false))
-        assertFalse(a.marksStep(Step(true, emptyList()), drum = false))
-    }
+        assertTrue(a.marksStep(Step.of(listOf(57, 61)), drum = false))
+        assertFalse(a.marksStep(Step.of(listOf(57, 60)), drum = false))
+        assertFalse("empty steps are not playing", a.marksStep(Step(), drum = false))
+        assertFalse("drum steps are never marked", a.marksStep(Step.of(listOf(49)), drum = true))
+        assertFalse(KeyScale.OFF.marksStep(Step.of(listOf(61)), drum = false))
+            }
 
     @Test
     fun savedValuesFallBack() {

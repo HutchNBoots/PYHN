@@ -21,6 +21,7 @@ import com.groovebox.ui.model.ExportHost
 import com.groovebox.ui.model.ExportStatus
 import com.groovebox.ui.model.ExportTracker
 import com.groovebox.ui.model.DrumLayout
+import com.groovebox.ui.model.Hit
 import com.groovebox.ui.model.KeyScale
 import com.groovebox.ui.model.MixKeys
 import com.groovebox.ui.model.MixLimits
@@ -29,6 +30,7 @@ import com.groovebox.ui.model.MixerPad
 import com.groovebox.ui.model.MotionLane
 import com.groovebox.ui.model.NoteMemory
 import com.groovebox.ui.model.PadAction
+import com.groovebox.ui.model.PatternHistory
 import com.groovebox.ui.model.PatternSettings
 import com.groovebox.ui.model.PatternSink
 import com.groovebox.ui.model.PatternStore
@@ -52,9 +54,9 @@ private object NativePatternSink : PatternSink {
     override fun setPatternSettings(slot: Int, pattern: Int, length: Int, rate: Int, shuffle: Float, gate: Float) =
         NativeEngine.setPatternSettings(slot, pattern, length, rate, shuffle, gate)
 
-    override fun setStep(
-        slot: Int, pattern: Int, step: Int, on: Boolean, notes: IntArray, velocity: Float, gate: Float, probability: Float,
-    ) = NativeEngine.setStep(slot, pattern, step, on, notes, velocity, gate, probability)
+    override fun setStep(slot: Int, pattern: Int, step: Int, hits: FloatArray, hitCount: Int) {
+        NativeEngine.setStep(slot, pattern, step, hits, hitCount)
+    }
 
     override fun setMotionValue(slot: Int, pattern: Int, target: Int, step: Int, value: Float) =
         NativeEngine.setMotionValue(slot, pattern, target, step, value)
@@ -90,6 +92,9 @@ class GrooveState : KeyListener {
         List(SeqLimits.SLOTS - 1) { SynthController(it + 1, shift, stripEdited, edited) { tempoBpm } }
     val drum = DrumController(shift, stripEdited, edited)
     val store = PatternStore(NativePatternSink)
+
+    /** Undo / Redo of the sequencer's edits (build-20), per app run. */
+    val history = PatternHistory(store)
     // Before any key is played a synth pad tap enters C4, or the in-key note nearest it (F8).
     private val noteMemory = NoteMemory { slot ->
         if (slot == NativeEngine.DRUM_SLOT) DrumLayout.LOWEST_NOTE else keyScale.snap(DEFAULT_SYNTH_NOTE)
@@ -147,8 +152,25 @@ class GrooveState : KeyListener {
     /** The pad of step [i] gets the out-of-key mark (F8.6). */
     fun stepOutOfKey(i: Int): Boolean = keyScale.marksStep(step(i), isDrum(selectedSlot))
 
-    /** The step selected with Shift + pad, or null. */
-    var selectedStep by mutableStateOf<Int?>(null)
+    /** The steps selected (long-press a pad, build-20), in the order they were selected. */
+    var selectedSteps by mutableStateOf<List<Int>>(emptyList())
+        private set
+
+    /** The step selected last: the one the strips and the footer show. */
+    val focusStep: Int?
+        get() = selectedSteps.lastOrNull()
+
+    /** The drum lane (build-20): the kit sound the Seq pads show and toggle, the Drum screen's selected key. */
+    val laneKey: Int
+        get() = drum.selectedKey
+
+    val laneNote: Int
+        get() = DrumLayout.noteOf(drum.selectedKey)
+
+    /** The Seq screen's Undo / Redo can do something; follows [history]. */
+    var seqCanUndo by mutableStateOf(false)
+        private set
+    var seqCanRedo by mutableStateOf(false)
         private set
 
     /** The held step loop of the selected slot, or null. */
@@ -205,6 +227,12 @@ class GrooveState : KeyListener {
     var tapeLoading by mutableStateOf(false)
         private set
 
+    /** The tape's tempo (0 when empty) and whether the sequencer is at it (build-20: record needs it). */
+    var tapeTempoBpm by mutableStateOf(0f)
+        private set
+    var tapeTempoMatches by mutableStateOf(true)
+        private set
+
     // --- export (F7.1, F7.2) ---
 
     /** Where exports go and the share sheet; set by the activity. */
@@ -221,6 +249,15 @@ class GrooveState : KeyListener {
     var clearArmed by mutableStateOf(false)
         private set
 
+    /** The armed clear is Shift + Clear's: only the drum lane's sound. */
+    var clearArmedLane by mutableStateOf(false)
+        private set
+
+    // Open undo groups (each a begin() the matching end() closes).
+    private var takeGroup = false
+    private var motionGroup = false
+    private var keyGroup = false
+
     /** Monotonic time of the last display frame, ms (the clock for export and Clear). */
     private var nowMs = 0L
 
@@ -233,8 +270,10 @@ class GrooveState : KeyListener {
             revision = store.revision
             sessionChanged()
         }
-        // Leaving the Shift layer ends step editing.
-        shift.onChange = { on -> if (!on) deselectStep() }
+        history.onChange = {
+            seqCanUndo = history.canUndo
+            seqCanRedo = history.canRedo
+        }
     }
 
     /** Something worth saving changed (autosave, F7.4). */
@@ -356,13 +395,14 @@ class GrooveState : KeyListener {
     fun instrumentName(slot: Int): String = if (isDrum(slot)) "Kit" else synth(slot).presetName
 
     private fun leaveStepEditing() {
-        deselectStep()
+        deselectSteps()
         clearLoop()
     }
 
-    private fun deselectStep() {
+    /** Deselects every step (a tap on the display, a slot or pattern change). */
+    fun deselectSteps() {
         pads.clearSelection()
-        selectedStep = null
+        selectedSteps = emptyList()
     }
 
     // --- keys ---
@@ -372,25 +412,92 @@ class GrooveState : KeyListener {
         heldNoteSlot[note] = slot
         NativeEngine.noteOn(slot, note, velocity, tapTimeNs)
         val chord = noteMemory.keyDown(slot, note, velocity)
+        // The drum keys choose the lane too (build-20).
         if (isDrum(slot)) DrumLayout.keyOf(note)?.let(drum::select)
-        // F3.5: keys played while a step is selected set its notes (held keys = a chord).
-        val step = editingStep
-        if (step != null) store.setStepNotes(slot, editPattern, step, chord, velocity)
+        // F3.5: keys played while synth steps are selected set their notes (held keys = a chord,
+        // one undo step for the chord).
+        val steps = editingSteps
+        if (steps.isNotEmpty()) {
+            if (!keyGroup) {
+                keyGroup = true
+                history.begin()
+            }
+            val pattern = editPattern
+            for (step in steps) history.edit(slot, pattern) { store.setStepNotes(slot, pattern, step, chord, velocity) }
+        }
     }
 
     override fun keyUp(note: Int) {
         val slot = heldNoteSlot.remove(note) ?: selectedSlot
         NativeEngine.noteOff(slot, note)
         noteMemory.keyUp(slot, note)
+        if (keyGroup && heldNoteSlot.isEmpty()) endKeyGroup()
     }
 
-    /** The step keys write into, when editing one on the Sequencer screen. */
-    val editingStep: Int?
-        get() = if (screen == Screen.Seq && shift.shifted) selectedStep else null
+    private fun endKeyGroup() {
+        if (!keyGroup) return
+        keyGroup = false
+        history.end()
+    }
+
+    /** The steps keys write into: synth steps selected on the Sequencer screen. */
+    val editingSteps: List<Int>
+        get() = if (screen == Screen.Seq && !isDrum(selectedSlot)) selectedSteps else emptyList()
+
+    // --- drum lanes (build-20) ---
+
+    /** A sound of the Seq screen's 4 x 4 grid touched: it becomes the lane and plays (like its key). */
+    fun laneDown(key: Int, velocity: Float = SeqLimits.DEFAULT_VELOCITY) {
+        if (key !in 0 until DrumLayout.KEY_COUNT || !isDrum(selectedSlot)) return
+        drum.select(key)
+        keyDown(DrumLayout.noteOf(key), velocity, 0L)
+    }
+
+    fun laneUp(key: Int) {
+        if (key in 0 until DrumLayout.KEY_COUNT) keyUp(DrumLayout.noteOf(key))
+    }
+
+    /** The notes some step of the shown pattern plays (the sound grid marks them). */
+    fun notesInPattern(): Set<Int> {
+        revision
+        val out = HashSet<Int>()
+        for (i in 0 until SeqLimits.STEPS) store.step(selectedSlot, editPattern, i).hits.forEach { out += it.note }
+        return out
+    }
+
+    /**
+     * A step strip moved: [edit] applies to the selected steps' hits (the lane's on the drum
+     * slot, created when missing; every note on a synth slot, the last chord on an empty step).
+     */
+    fun editSelectedHits(edit: (Hit) -> Hit) {
+        val slot = selectedSlot
+        val pattern = editPattern
+        val lane = if (isDrum(slot)) laneNote else null
+        for (step in selectedSteps) {
+            history.edit(slot, pattern) {
+                store.editHits(slot, pattern, step, lane, entry = { entryHits(slot, step) }, edit = edit)
+            }
+        }
+    }
+
+    private fun entryHits(slot: Int, step: Int): List<Hit> {
+        val (notes, velocity) = noteMemory.entryFor(slot, store.step(slot, editPattern, step))
+        return notes.map { Hit(it, velocity) }
+    }
+
+    // --- undo (build-20) ---
+
+    /** The Seq footer's Undo chip: undo, or redo with Shift. */
+    fun seqUndoPress() {
+        if (shift.shifted) history.redo() else history.undo()
+    }
 
     // --- step pads ---
 
     fun padDown(pointerId: Int, pad: Int) = handle(pads.down(pointerId, page * PADS + pad, shift.shifted))
+
+    /** The pad under [pointerId] was held still for the long-press time. */
+    fun padLongPress(pointerId: Int) = handle(pads.longPress(pointerId))
 
     fun padUp(pointerId: Int) = handle(pads.up(pointerId))
 
@@ -403,9 +510,15 @@ class GrooveState : KeyListener {
         when (action) {
             is PadAction.Toggle -> {
                 val (notes, velocity) = noteMemory.entryFor(slot, store.step(slot, pattern, action.step))
-                store.toggleStep(slot, pattern, action.step, notes, velocity)
+                history.edit(slot, pattern) {
+                    if (isDrum(slot)) {
+                        store.toggleHit(slot, pattern, action.step, laneNote, velocity)
+                    } else {
+                        store.toggleStep(slot, pattern, action.step, notes, velocity)
+                    }
+                }
             }
-            is PadAction.Select -> selectedStep = action.step
+            is PadAction.Selection -> selectedSteps = action.steps
             is PadAction.Loop -> {
                 val last = store.settings(slot, pattern).length - 1
                 val start = action.start.coerceIn(0, last)
@@ -444,6 +557,11 @@ class GrooveState : KeyListener {
         if (!recordButton.press(timeMs)) return
         NativeEngine.setMotionRecording(true)
         motionHeld = true
+        // Motion recorded while Record is held is one undo step.
+        if (!motionGroup) {
+            motionGroup = true
+            history.begin()
+        }
     }
 
     fun recordRelease(timeMs: Long) {
@@ -453,13 +571,29 @@ class GrooveState : KeyListener {
         if (armChanged) {
             armed = recordButton.armed
             NativeEngine.setRecordArmed(armed)
+            // A live-record take, Record on to Record off, is one undo step.
+            if (armed && !takeGroup) {
+                takeGroup = true
+                history.begin()
+            } else if (!armed && takeGroup) {
+                takeGroup = false
+                history.end()
+            }
         }
+        endMotionGroup()
     }
 
     fun recordCancel() {
         recordButton.cancel()
         NativeEngine.setMotionRecording(false)
         motionHeld = false
+        endMotionGroup()
+    }
+
+    private fun endMotionGroup() {
+        if (!motionGroup) return
+        motionGroup = false
+        history.end()
     }
 
     fun setTempo(bpm: Double) {
@@ -473,6 +607,7 @@ class GrooveState : KeyListener {
         val slot = selectedSlot
         if (p == patternOf(slot) && queuedOf(slot) < 0) return
         clearLoop()
+        deselectSteps()
         clearConfirm.reset()
         clearArmed = false
         NativeEngine.selectPattern(slot, p)
@@ -480,19 +615,31 @@ class GrooveState : KeyListener {
 
     /**
      * The Seq screen's Clear: the first tap arms it, a second tap within 2 s clears the
-     * selected slot's current pattern (steps, motion and settings; no undo, no dialog).
+     * selected slot's current pattern (steps, motion and settings; no dialog, undoable).
+     * Shift + Clear on the drum slot clears only the lane's sound, the same way.
      */
     fun clearPress() {
         val slot = selectedSlot
         val pattern = editPattern
-        if (!clearConfirm.tap(slot * SeqLimits.PATTERNS + pattern, nowMs)) {
+        val lane = shift.shifted && isDrum(slot)
+        if (!clearConfirm.tap(clearTarget(lane), nowMs)) {
             clearArmed = true
+            clearArmedLane = lane
             return
         }
         clearArmed = false
-        leaveStepEditing()
-        store.clearPattern(slot, pattern)
+        if (lane) {
+            val note = laneNote
+            history.edit(slot, pattern) { store.clearLane(slot, pattern, note) }
+        } else {
+            leaveStepEditing()
+            history.edit(slot, pattern) { store.clearPattern(slot, pattern) }
+        }
     }
+
+    /** What an armed Clear would clear: the pattern, or (Shift, drum slot) its lane's sound. */
+    private fun clearTarget(lane: Boolean): Int =
+        (selectedSlot * SeqLimits.PATTERNS + editPattern) * 256 + if (lane) laneKey + 1 else 0
 
     /** Once per display frame: the engine's transport and recorded writes. */
     fun frame(transport: TransportState, recorded: List<RecordedEvent>, frameTimeNanos: Long) {
@@ -505,13 +652,15 @@ class GrooveState : KeyListener {
             val pattern = transport.currentPattern.getOrElse(s) { 0 }.coerceIn(0, SeqLimits.PATTERNS - 1)
             val queued = transport.queuedPattern.getOrElse(s) { -1 }
             if (pattern != currentPattern[s].intValue || queued != queuedPattern[s].intValue) patternsMoved = true
+            // A queued switch of the shown slot took effect: the selection was another pattern's.
+            if (s == selectedSlot && pattern != currentPattern[s].intValue) deselectSteps()
             currentPattern[s].intValue = pattern
             queuedPattern[s].intValue = queued
         }
         if (patternsMoved) sessionChanged()
-        for (e in recorded) store.applyRecorded(e)
+        for (e in recorded) history.edit(e.slot, e.pattern) { store.applyRecorded(e) }
         blinkOn = (frameTimeNanos / BLINK_NS) % 2 == 0L
-        if (clearArmed && !clearConfirm.isArmed(selectedSlot * SeqLimits.PATTERNS + editPattern, nowMs)) clearArmed = false
+        if (clearArmed && !clearConfirm.isArmed(clearTarget(clearArmedLane), nowMs)) clearArmed = false
     }
 
     // --- tape (F5) ---
@@ -525,9 +674,18 @@ class GrooveState : KeyListener {
     val tapeStatus: TapeRecordStatus
         get() = TapeView.status(tapeArmedTrack, tapeRecordingTrack)
 
-    /** The engine ignores an arm unless the tape runs at 1x forward. */
+    /** The engine ignores an arm unless the tape runs at 1x forward, at the tape's tempo. */
     val tapeCanRecord: Boolean
-        get() = TapeView.canRecord(mix.mix(MixKeys.SPEED).roundToInt(), mix.mix(MixKeys.REVERSE) >= 0.5)
+        get() = TapeView.canRecord(mix.mix(MixKeys.SPEED).roundToInt(), mix.mix(MixKeys.REVERSE) >= 0.5, tapeTempoMatches)
+
+    /** Why Record can't record (the Tape footer), or null. */
+    val tapeRecordNeeds: String?
+        get() = TapeView.recordNeeds(
+            mix.mix(MixKeys.SPEED).roundToInt(),
+            mix.mix(MixKeys.REVERSE) >= 0.5,
+            tapeTempoMatches,
+            tapeTempoBpm,
+        )
 
     /** Record on the Tape screen: arms the selected track, or stops (or cancels an arm). */
     fun tapeRecordPress() {
@@ -589,6 +747,8 @@ class GrooveState : KeyListener {
         canUndo = t.canUndo
         canRedo = t.canRedo
         tapeLoading = t.loading
+        tapeTempoBpm = t.tempoBpm
+        tapeTempoMatches = t.tempoMatches
         for (i in 0 until MixLimits.TRACKS) trackHasAudio[i].value = t.trackHasAudio.getOrElse(i) { false }
         if (exportStatus != ExportStatus.Idle) pollExport()
 
@@ -718,6 +878,7 @@ class GrooveState : KeyListener {
             seq.locks.restore(s.locks[LOCKS_SEQ].orEmpty())
             tape.locks.restore(s.locks[LOCKS_TAPE].orEmpty())
             mixer.locks.restore(s.locks[LOCKS_MIXER].orEmpty())
+            history.clear()
         } finally {
             onSessionChange = hook
         }
@@ -747,6 +908,7 @@ class GrooveState : KeyListener {
         NativeEngine.allNotesOff()
         heldNoteSlot.clear()
         noteMemory.releaseAll()
+        endKeyGroup()
     }
 
     private companion object {
