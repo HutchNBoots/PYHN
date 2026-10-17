@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Synth screen proposed</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1040px; height: 480px; box-sizing: border-box; background: #121214; color: #ECE9E2; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px">
+
+<div style="height: 48px; display: flex; align-items: center; gap: 10px">
+<div style="display: flex; gap: 4px">
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #ECE9E2; color: #121214; font-weight: 700; font-size: 14px">Synth</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Drum</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Seq</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Tape</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Mixer</span>
+</div>
+<div style="display: flex; gap: 4px">
+<sc-for list="{{slots}}" as="s" hint-placeholder-count="8">
+<span style="{{s.style}}">{{s.n}}</span>
+</sc-for>
+</div>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 22px">120.0 <span style="font-size: 12px; color: #A9A69F">BPM</span></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #3DD68C; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="#121214"></rect></svg></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="none" stroke="#FF6B57" stroke-width="2"></circle></svg></span>
+<span style="min-width: 72px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px">Shift</span>
+</div>
+
+<div style="height: 220px; display: flex; gap: 10px">
+<div style="width: 64px; display: flex; flex-direction: column; gap: 4px">
+<sc-for list="{{rail}}" as="r" hint-placeholder-count="5">
+<span style="{{r.style}}">{{r.name}}</span>
+</sc-for>
+</div>
+
+<div style="flex-grow: 1; border-radius: 16px; background: #1C1C20; padding: 12px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; min-width: 0">
+<div style="display: flex; align-items: baseline; gap: 10px; min-width: 0">
+<span style="font-size: 20px; font-weight: 700; white-space: nowrap">Brook</span>
+<span style="font-size: 13px; color: #A9A69F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0">Glass Wire<span style="color: #ECE9E2">*</span> · slot 3 · mono · A minor</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #A9A69F; white-space: nowrap">FILTER · MAIN</span>
+</div>
+<div role="img" aria-label="Filter curve: a low-pass with a resonant bump at the 2.4 kHz cutoff; a dashed ghost shows where the envelope opens it to" style="flex-grow: 1; position: relative; min-height: 0; border-radius: 4px; background: #18181B; overflow: hidden">
+<svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 560 110" preserveAspectRatio="none" style="position: absolute; inset: 0">
+<path d="M140 0 V110 M280 0 V110 M420 0 V110" stroke="#26262B" stroke-width="1"></path>
+<path d="M0 46 L300 44 C350 42 380 30 392 20 C404 12 412 34 430 70 C448 100 470 108 560 110" fill="none" stroke="#ECE9E2" stroke-width="1.5" stroke-dasharray="4 4" opacity="0.4"></path>
+<path d="M0 46 L230 44 C270 42 296 30 308 18 C320 10 330 34 348 72 C366 102 400 108 560 110 L0 110 Z" fill="#FF6B57" opacity="0.14"></path>
+<path d="M0 46 L230 44 C270 42 296 30 308 18 C320 10 330 34 348 72 C366 102 400 108 560 110" fill="none" stroke="#FF6B57" stroke-width="2.5" stroke-linejoin="round"></path>
+<path d="M308 0 V110" stroke="#ECE9E2" stroke-width="1" opacity="0.5"></path>
+</svg>
+<span style="position: absolute; left: calc(55% + 6px); top: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #ECE9E2">2.4k</span>
+<span style="position: absolute; left: 8px; bottom: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #6E6C67">100</span>
+<span style="position: absolute; right: 8px; bottom: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 9px; color: #6E6C67">16k</span>
+</div>
+<div style="display: flex; align-items: center; gap: 6px; min-width: 0">
+<span style="height: 30px; padding: 0 12px; border-radius: 8px; display: flex; align-items: center; font-size: 13px; font-weight: 700; background: #2B2B31; color: #ECE9E2">Undo</span>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #A9A69F; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0">LP 24 · line = now · dashed = env peak · * edited</span>
+</div>
+</div>
+
+<div style="width: 332px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<div style="{{s.box}}">
+<span style="{{s.fillStyle}}"></span>
+<span style="{{s.labelStyle}}">{{s.label}}</span>
+<span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #FFFFFF">{{s.value}}</span>
+</div>
+</sc-for>
+</div>
+</div>
+
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 6px; min-height: 0">
+<div role="img" aria-label="Preset strip, open: 16 presets in groups Bass, Lead, Pad, Pluck and FX with labels and dividers; Glass Wire is the current preset; a close button at the right. Keys stay playable below it" style="height: 72px; box-sizing: border-box; border-radius: 16px; background: #1C1C20; padding: 6px 6px 6px 8px; display: flex; gap: 6px; align-items: stretch">
+<sc-for list="{{groups}}" as="g" hint-placeholder-count="6">
+<div style="{{g.box}}">
+<span style="font-size: 10px; line-height: 12px; color: #A9A69F; white-space: nowrap">{{g.name}}</span>
+<div style="flex-grow: 1; display: flex; gap: 4px">
+<sc-for list="{{g.presets}}" as="p" hint-placeholder-count="3">
+<span style="{{p.style}}">{{p.name}}</span>
+</sc-for>
+</div>
+</div>
+</sc-for>
+<span style="width: 40px; flex-shrink: 0; border-radius: 10px; background: #26262B; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #ECE9E2">×</span>
+</div>
+<div role="img" aria-label="Keyboard, two octaves C3 to C5, flatter keys, sharps row above naturals; out-of-key keys dimmed for A minor, a small dot marks each A" style="position: relative; flex-grow: 1">
+<sc-for list="{{keys}}" as="k" hint-placeholder-count="25">
+<span style="{{k.style}}"><span style="{{k.dot}}"></span><span style="{{k.labelStyle}}">{{k.label}}</span></span>
+</sc-for>
+</div>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1040,"height":480}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const mono = 'font-family: IBM Plex Mono, monospace; ';
+    const slots = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
+      n,
+      style: 'width: 38px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; ' + mono + 'font-size: 14px; ' +
+        (n === 3 ? 'background: #FF6B57; color: #121214' : 'background: #1C1C20; color: #A9A69F')
+    }));
+    const rail = ['Osc', 'Filter', 'Env', 'Mod', 'Play'].map((name) => ({
+      name,
+      style: 'flex: 1; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 14px; ' +
+        (name === 'Filter' ? 'background: #ECE9E2; color: #121214; font-weight: 700' : 'background: #1C1C20; color: #ECE9E2')
+    }));
+    const colours = ['#FF6B57', '#FFC23D', '#3DD68C', '#4F8BFF'];
+    const strips = [
+      { label: 'Cutoff', value: '2.4k', pct: 62 },
+      { label: 'Reso', value: '35%', pct: 35 },
+      { label: 'Env', value: '+40%', pct: 70 },
+      { label: 'Key', value: '50%', pct: 50 }
+    ].map((s, i) => ({
+      ...s,
+      box: 'position: relative; overflow: hidden; border-radius: 14px; background: #1C1C20; padding: 10px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px',
+      labelStyle: 'position: relative; font-size: 14px; font-weight: 700; color: ' + colours[i],
+      fillStyle: 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + Math.min(s.pct, 76) + '%; background: ' + colours[i] + '38; border-top: 3px solid ' + colours[i]
+    }));
+    // The 16 presets, shown in their groups. Current = cream fill (coral stays for the slot).
+    const groupList = [
+      ['Start', ['First Light']],
+      ['Bass', ['Rubber Floor', 'Deep Current', 'Gravel Bass']],
+      ['Lead', ['Glass Wire', 'Copper Lead', 'Whistle Pine']],
+      ['Pad', ['Slow Tide', 'Velvet Fog', 'Northern Hall']],
+      ['Pluck', ['Rain Glass', 'Thumb Piano', 'Paper Harp']],
+      ['FX', ['Siren Loop', 'Static Garden', 'Laser Drip']]
+    ];
+    const groups = groupList.map(([name, list], gi) => ({
+      name,
+      box: 'flex: ' + list.length + ' 1 0; min-width: 0; display: flex; flex-direction: column; gap: 4px' + (gi > 0 ? '; border-left: 1px solid #3A3A40; padding-left: 6px; margin-left: -3px' : ''),
+      presets: list.map((p) => ({
+        name: p,
+        style: 'flex: 1 1 0; min-width: 0; border-radius: 8px; padding: 0 2px; display: flex; align-items: center; justify-content: center; text-align: center; overflow: hidden; overflow-wrap: anywhere; font-size: 10.5px; letter-spacing: -0.1px; line-height: 1.1; ' +
+          (p === 'Glass Wire' ? 'background: #ECE9E2; color: #121214; font-weight: 700' : 'background: #2B2B31; color: #ECE9E2')
+      }))
+    }));
+    // Flatter keys (radius 10): 15 naturals C3..C5, sharps row above.
+    const nat = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+    const natPc = [0, 2, 4, 5, 7, 9, 11];
+    const aMinor = new Set([9, 11, 0, 2, 4, 5, 7]);
+    const count = 15;
+    const w = 100 / count;
+    const keys = [];
+    const key = (left, width, top, height, pc, label) => ({
+      label,
+      style: 'position: absolute; left: calc(' + left.toFixed(3) + '% + 2px); width: calc(' + width.toFixed(3) + '% - 4px); top: ' + top + '%; height: ' + height + '%; box-sizing: border-box; border-radius: 10px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 6px; background: ' + (aMinor.has(pc) ? '#2B2B31' : '#18181B'),
+      dot: pc === 9 ? 'position: absolute; top: 6px; left: 50%; margin-left: -3px; width: 6px; height: 6px; border-radius: 3px; background: #ECE9E2' : 'display: none',
+      labelStyle: mono + 'font-size: 10px; line-height: 1; color: #7C7A75'
+    });
+    for (let i = 0; i < count; i++) {
+      const oct = 3 + Math.floor(i / 7);
+      const pc = natPc[i % 7];
+      keys.push(key(i * w, w, 50, 50, pc, i % 7 === 0 ? nat[0] + oct : ''));
+      if (i < count - 1 && [0, 1, 3, 4, 5].includes(i % 7)) keys.push(key((i + 0.55) * w, w * 0.9, 0, 46, (pc + 1) % 12, ''));
+    }
+    return { slots, rail, strips, groups, keys };
+  }
+}
+</script>
+</body>
+</html>

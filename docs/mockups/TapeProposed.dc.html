@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tape screen proposed</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1040px; height: 480px; box-sizing: border-box; background: #121214; color: #ECE9E2; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px">
+
+<div style="height: 48px; display: flex; align-items: center; gap: 10px">
+<div style="display: flex; gap: 4px">
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Synth</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Drum</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Seq</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #ECE9E2; color: #121214; font-weight: 700; font-size: 14px">Tape</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Mixer</span>
+</div>
+<span role="img" aria-label="Slot chip: the keys play slot 2; tap to pick another slot" style="height: 44px; padding: 0 14px; border-radius: 10px; background: #FF6B57; color: #121214; display: flex; align-items: center; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 14px; font-weight: 500; white-space: nowrap">slot 2 <span style="font-size: 11px">▾</span></span>
+<span style="height: 44px; padding: 0 14px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M3 13h10" fill="none" stroke="#4F8BFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>Export WAV</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 22px">120.0 <span style="font-size: 12px; color: #A9A69F">BPM</span></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #3DD68C; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="#121214"></rect></svg></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="none" stroke="#FF6B57" stroke-width="2"></circle></svg></span>
+<span style="min-width: 72px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px">Shift</span>
+</div>
+
+<div style="height: 220px; display: flex; gap: 10px">
+<div style="flex-grow: 1; border-radius: 16px; background: #1C1C20; padding: 12px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; min-width: 0">
+<div style="display: flex; align-items: baseline; gap: 10px; min-width: 0">
+<span style="font-size: 20px; font-weight: 700; white-space: nowrap">Tape</span>
+<span style="font-size: 13px; color: #A9A69F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0">8 bars · loop 1–4 · overdub · varispeed 0.92× (tape 130.0)</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #A9A69F; white-space: nowrap">MAIN · T2</span>
+</div>
+<div role="img" aria-label="Four tape lanes over 8 bars with a loop bracket on bars 1 to 4 and the tape head in bar 2; T2 is selected; T3 is asking to confirm a clear" style="position: relative; flex-grow: 1; display: flex; flex-direction: column; gap: 4px; min-height: 0">
+<div style="height: 14px; display: flex">
+<span style="width: 36px; flex-shrink: 0"></span>
+<div style="position: relative; flex-grow: 1">
+<sc-for list="{{bars}}" as="b" hint-placeholder-count="8">
+<span style="{{b.style}}">{{b.n}}</span>
+</sc-for>
+<span style="position: absolute; left: 0; width: 50%; bottom: 0; height: 5px; box-sizing: border-box; border: 2px solid #ECE9E2; border-bottom: 0; border-radius: 3px 3px 0 0; opacity: 0.8"></span>
+</div>
+</div>
+<sc-for list="{{lanes}}" as="t" hint-placeholder-count="4">
+<div style="flex: 1; display: flex; min-height: 0">
+<span style="{{t.nameStyle}}">{{t.name}}</span>
+<div style="{{t.box}}">
+<svg aria-hidden="true" width="100%" height="100%" viewBox="0 0 800 40" preserveAspectRatio="none" style="position: absolute; inset: 0"><path d="{{t.d}}" fill="{{t.fill}}"></path></svg>
+<span style="{{t.confirmStyle}}">{{t.confirm}}</span>
+</div>
+</div>
+</sc-for>
+<div style="position: absolute; left: 36px; right: 0; top: 0; bottom: 0; pointer-events: none">
+<span style="position: absolute; left: 20%; top: 0; bottom: -2px; width: 2px; margin-left: -1px; background: #3DD68C"></span>
+</div>
+</div>
+<div style="display: flex; align-items: center; gap: 6px; min-width: 0">
+<span style="height: 30px; padding: 0 12px; border-radius: 8px; display: flex; align-items: center; font-size: 13px; font-weight: 700; background: #2B2B31; color: #ECE9E2">Undo</span>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #A9A69F; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0">T2 · double-tap to record · hold to clear</span>
+</div>
+</div>
+
+<div style="width: 332px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<div style="{{s.box}}">
+<span style="{{s.fillStyle}}"></span>
+<span style="{{s.labelStyle}}">{{s.label}}</span>
+<span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #FFFFFF; white-space: nowrap">{{s.value}}</span>
+</div>
+</sc-for>
+</div>
+</div>
+
+<div role="img" aria-label="Keyboard for slot 2, two octaves C3 to C5, flatter keys, sharps row above naturals; out-of-key keys dimmed for A minor" style="position: relative; flex-grow: 1">
+<sc-for list="{{keys}}" as="k" hint-placeholder-count="25">
+<span style="{{k.style}}"><span style="{{k.dot}}"></span><span style="{{k.labelStyle}}">{{k.label}}</span></span>
+</sc-for>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1040,"height":480}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const mono = 'font-family: IBM Plex Mono, monospace; ';
+    const bars = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
+      n,
+      style: 'position: absolute; top: 0; left: calc(' + ((n - 1) * 12.5) + '% + 3px); ' + mono + 'font-size: 9px; line-height: 1; color: ' + (n <= 4 ? '#ECE9E2' : '#6E6C67')
+    }));
+    // A mirrored waveform polygon over a clip [a, b] in bars (0..8) on an 800 x 40 box.
+    const wave = (clips, seed) => clips.map(([a, b]) => {
+      const top = [];
+      const bot = [];
+      for (let x = a * 100; x <= b * 100; x += 8) {
+        const t = x / 100;
+        const beat = 1 - ((t * 4) % 1);
+        const amp = 3 + 14 * (0.35 + 0.65 * beat * beat) * (0.75 + 0.25 * Math.sin(x * 0.07 + seed));
+        top.push(x.toFixed(0) + ' ' + (20 - amp).toFixed(1));
+        bot.unshift(x.toFixed(0) + ' ' + (20 + amp).toFixed(1));
+      }
+      return 'M' + top.join(' L') + ' L' + bot.join(' L') + ' Z';
+    }).join(' ');
+    const laneData = [
+      { name: 'T1', clips: [[0, 8]] },
+      { name: 'T2', clips: [[0, 4]] },
+      { name: 'T3', clips: [[1, 5]] },
+      { name: 'T4', clips: [[4, 7]] }
+    ];
+    const lanes = laneData.map((l, i) => {
+      const sel = l.name === 'T2';
+      const ask = l.name === 'T3';
+      return {
+        name: l.name,
+        d: wave(l.clips, i * 1.7),
+        fill: sel ? '#ECE9E2' : ask ? '#FF6B57' : '#7C7A75',
+        nameStyle: 'width: 36px; flex-shrink: 0; display: flex; align-items: center; ' + mono + 'font-size: 12px; color: ' + (sel ? '#ECE9E2' : ask ? '#FF6B57' : '#7A7872') + (sel ? '; font-weight: 500' : ''),
+        box: 'position: relative; flex-grow: 1; border-radius: 8px; overflow: hidden; background: ' + (sel ? '#2A2A30' : '#18181C') +
+          (sel ? '; box-shadow: inset 0 0 0 1.5px #ECE9E2' : ask ? '; box-shadow: inset 0 0 0 1.5px #FF6B57' : ''),
+        confirm: ask ? 'Clear T3?  Tap to confirm' : '',
+        confirmStyle: ask ? 'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(28,28,32,0.78); ' + mono + 'font-size: 12px; font-weight: 500; white-space: pre; color: #FF6B57' : 'display: none'
+      };
+    });
+    const colours = ['#FF6B57', '#FFC23D', '#3DD68C', '#4F8BFF'];
+    const strips = [
+      { label: 'Speed', value: '1×', pct: 50 },
+      { label: 'Start bar', value: '1', pct: 6 },
+      { label: 'Loop', value: '4 bars', pct: 50 },
+      { label: 'Dub', value: '100%', pct: 100 }
+    ].map((s, i) => ({
+      ...s,
+      box: 'position: relative; overflow: hidden; border-radius: 14px; background: #1C1C20; padding: 10px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px',
+      labelStyle: 'position: relative; font-size: 14px; font-weight: 700; line-height: 1.1; text-align: center; color: ' + colours[i],
+      fillStyle: 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + Math.min(s.pct, 76) + '%; background: ' + colours[i] + '38; border-top: 3px solid ' + colours[i]
+    }));
+    // Flatter keys (radius 10): 15 naturals C3..C5, sharps row above.
+    const nat = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+    const natPc = [0, 2, 4, 5, 7, 9, 11];
+    const aMinor = new Set([9, 11, 0, 2, 4, 5, 7]);
+    const count = 15;
+    const w = 100 / count;
+    const keys = [];
+    const key = (left, width, top, height, pc, label) => ({
+      label,
+      style: 'position: absolute; left: calc(' + left.toFixed(3) + '% + 2px); width: calc(' + width.toFixed(3) + '% - 4px); top: ' + top + '%; height: ' + height + '%; box-sizing: border-box; border-radius: 10px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px; background: ' + (aMinor.has(pc) ? '#2B2B31' : '#18181B'),
+      dot: pc === 9 ? 'position: absolute; top: 8px; left: 50%; margin-left: -3px; width: 6px; height: 6px; border-radius: 3px; background: #ECE9E2' : 'display: none',
+      labelStyle: mono + 'font-size: 10px; line-height: 1; color: #7C7A75'
+    });
+    for (let i = 0; i < count; i++) {
+      const oct = 3 + Math.floor(i / 7);
+      const pc = natPc[i % 7];
+      keys.push(key(i * w, w, 50, 50, pc, i % 7 === 0 ? nat[0] + oct : ''));
+      if (i < count - 1 && [0, 1, 3, 4, 5].includes(i % 7)) keys.push(key((i + 0.55) * w, w * 0.9, 0, 46, (pc + 1) % 12, ''));
+    }
+    return { bars, lanes, strips, keys };
+  }
+}
+</script>
+</body>
+</html>

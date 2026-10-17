@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Seq synth screen proposed</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 1040px; height: 480px; box-sizing: border-box; background: #121214; color: #ECE9E2; font-family: 'Space Grotesk', system-ui, sans-serif; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px">
+
+<div style="height: 48px; display: flex; align-items: center; gap: 10px">
+<div style="display: flex; gap: 4px">
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Synth</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Drum</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #ECE9E2; color: #121214; font-weight: 700; font-size: 14px">Seq</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Tape</span>
+<span style="min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: #1C1C20; font-size: 14px">Mixer</span>
+</div>
+<div style="display: flex; gap: 4px">
+<sc-for list="{{slots}}" as="s" hint-placeholder-count="8">
+<span style="{{s.style}}">{{s.n}}</span>
+</sc-for>
+</div>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 22px">120.0 <span style="font-size: 12px; color: #A9A69F">BPM</span></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #3DD68C; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="#121214"></rect></svg></span>
+<span style="width: 48px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="none" stroke="#FF6B57" stroke-width="2"></circle></svg></span>
+<span style="min-width: 72px; height: 44px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px">Shift</span>
+</div>
+
+<div style="height: 220px; display: flex; gap: 10px">
+<div style="width: 64px; display: flex; flex-direction: column; gap: 4px">
+<sc-for list="{{pages}}" as="p" hint-placeholder-count="4">
+<span style="{{p.style}}">{{p.n}}<span style="{{p.dot}}"></span></span>
+</sc-for>
+<span style="height: 40px; border-radius: 10px; background: #1C1C20; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #A9A69F">Clear</span>
+</div>
+
+<div style="flex-grow: 1; border-radius: 16px; background: #1C1C20; padding: 12px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; min-width: 0">
+<div style="display: flex; align-items: baseline; gap: 10px; min-width: 0">
+<span style="font-size: 20px; font-weight: 700; white-space: nowrap">Pattern 1</span>
+<span style="font-size: 13px; color: #A9A69F; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0">slot 2 · Rubber Floor · 1/16 · 32 steps · A minor</span>
+<div style="flex-grow: 1"></div>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #FFC23D; white-space: nowrap">STEP · step 3</span>
+</div>
+<div style="display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #A9A69F"><span>PITCH ROLL · auto-fit A2–A3 · bar length = note length</span><span>page 1 ▸ 2</span></div>
+<div role="img" aria-label="Pitch roll for page 1: 16 steps across, pitches A2 to A3 up the side. Step 3 is selected (A2, half a step long), step 7 is an E3 held for two steps, step 13 is a three-note chord C3 E3 A3, the playhead is on step 9" style="flex-grow: 1; display: flex; gap: 4px; min-height: 0">
+<div style="position: relative; width: 24px">
+<sc-for list="{{rowLabels}}" as="l" hint-placeholder-count="4">
+<span style="{{l.style}}">{{l.name}}</span>
+</sc-for>
+</div>
+<div style="position: relative; flex-grow: 1; border-radius: 4px; overflow: hidden; background: #18181B">
+<sc-for list="{{rollRows}}" as="r" hint-placeholder-count="13">
+<span style="{{r.style}}"></span>
+</sc-for>
+<sc-for list="{{beatLines}}" as="b" hint-placeholder-count="3">
+<span style="{{b.style}}"></span>
+</sc-for>
+<span style="{{playCol}}"></span>
+<sc-for list="{{bars}}" as="n" hint-placeholder-count="11">
+<span style="{{n.style}}"></span>
+</sc-for>
+<span style="{{selCol}}"></span>
+</div>
+</div>
+<div style="display: flex; align-items: center; gap: 6px; min-width: 0">
+<sc-for list="{{chips}}" as="c" hint-placeholder-count="4">
+<span style="{{c.style}}">{{c.label}}</span>
+</sc-for>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #A9A69F; margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0">step 3 · A2 · 1/2 step · 90%</span>
+</div>
+</div>
+
+<div style="width: 332px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{strips}}" as="s" hint-placeholder-count="4">
+<div style="{{s.box}}">
+<span style="{{s.fillStyle}}"></span>
+<span style="{{s.labelStyle}}">{{s.label}}</span>
+<span style="position: relative; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #FFFFFF">{{s.value}}</span>
+</div>
+</sc-for>
+</div>
+</div>
+
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 6px; min-height: 0">
+<div role="img" aria-label="16 step pads for page 1: each lit pad names its note, a chord pad names its chord, fill height is velocity; step 3 outlined, step 9 is the playhead, step 8 carries the tie from step 7" style="height: 45%; display: flex; gap: 5px">
+<sc-for list="{{pads}}" as="p" hint-placeholder-count="16">
+<div style="{{p.box}}">
+<span style="{{p.fill}}"></span>
+<span style="{{p.tie}}"></span>
+<span style="{{p.numStyle}}">{{p.n}}</span>
+<span style="{{p.noteStyle}}">{{p.note}}</span>
+</div>
+</sc-for>
+</div>
+<div style="flex-grow: 1; display: flex; gap: 8px; min-height: 0">
+<div style="width: 84px; display: flex; flex-direction: column; gap: 4px">
+<span style="height: 22px; border-radius: 8px; background: #1C1C20; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #ECE9E2; white-space: nowrap">pen: A2</span>
+<div role="img" aria-label="Octave shift for the pen keys, now showing C2 to B3" style="flex-grow: 1; display: flex; gap: 4px">
+<span style="flex: 1; border-radius: 10px; background: #26262B; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700">‹</span>
+<span style="flex: 1; border-radius: 10px; background: #26262B; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700">›</span>
+</div>
+</div>
+<div role="img" aria-label="Pen keys, always visible: two octaves C2 to B3, sharps row above naturals, labels follow the octave shift; A2 is the pen note" style="position: relative; flex-grow: 1">
+<sc-for list="{{keys}}" as="k" hint-placeholder-count="24">
+<span style="{{k.style}}"><span style="{{k.stripe}}"></span><span style="{{k.labelStyle}}">{{k.label}}</span></span>
+</sc-for>
+</div>
+</div>
+</div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1040,"height":480}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const mono = 'font-family: IBM Plex Mono, monospace; ';
+    const slots = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => ({
+      n,
+      style: 'width: 38px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; ' + mono + 'font-size: 14px; ' +
+        (n === 2 ? 'background: #FF6B57; color: #121214' : 'background: #1C1C20; color: #A9A69F')
+    }));
+    const pages = [1, 2, 3, 4].map((n) => ({
+      n,
+      style: 'position: relative; flex: 1; border-radius: 10px; display: flex; align-items: center; justify-content: center; ' + mono + 'font-size: 15px; ' +
+        (n === 1 ? 'background: #ECE9E2; color: #121214; font-weight: 500' : 'background: #1C1C20; color: ' + (n === 2 ? '#ECE9E2' : '#6E6C67')),
+      dot: n <= 2 ? 'position: absolute; right: 8px; top: 8px; width: 5px; height: 5px; border-radius: 3px; background: ' + (n === 1 ? '#121214' : '#ECE9E2') : 'display: none'
+    }));
+    // Page 1 of the bass. Pitches are semitones above A2 (0 = A2, 12 = A3).
+    // step index, pitches, velocity, length in steps
+    const notes = [
+      [0, [0], 1.0, 1], [2, [0], 0.9, 0.5], [4, [3], 0.8, 1], [6, [7], 0.85, 2],
+      [8, [0], 1.0, 1], [10, [5], 0.6, 1], [12, [3, 7, 12], 0.9, 1], [14, [10], 0.7, 1], [15, [0], 0.45, 0.5]
+    ];
+    const pcName = ['A', 'A♯', 'B', 'C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A'];
+    const noteName = (p) => pcName[p] + (p >= 3 ? '3' : '2');
+    const inKey = new Set([0, 2, 3, 5, 7, 8, 10, 12]);
+    const rh = 100 / 13;
+    const sw = 100 / 16;
+    const rowLabels = [12, 7, 3, 0].map((p) => ({
+      name: noteName(p),
+      style: 'position: absolute; right: 0; top: ' + ((12 - p + 0.5) * rh).toFixed(2) + '%; transform: translateY(-50%); ' + mono + 'font-size: 9px; line-height: 1; color: ' + (p === 0 || p === 12 ? '#ECE9E2' : '#A9A69F')
+    }));
+    const rollRows = Array.from({ length: 13 }, (_, r) => {
+      const p = 12 - r;
+      return { style: 'position: absolute; left: 0; right: 0; top: ' + (r * rh).toFixed(2) + '%; height: ' + rh.toFixed(2) + '%; box-sizing: border-box; border-bottom: 1px solid #121214; background: ' + (inKey.has(p) ? '#222227' : '#18181B') };
+    });
+    const beatLines = [4, 8, 12].map((s) => ({
+      style: 'position: absolute; top: 0; bottom: 0; left: ' + (s * sw) + '%; width: 1px; background: #3A3A40'
+    }));
+    const playCol = 'position: absolute; top: 0; bottom: 0; left: ' + (8 * sw) + '%; width: ' + sw + '%; background: rgba(61,214,140,0.16); box-shadow: inset 0 3px 0 #3DD68C';
+    const selCol = 'position: absolute; top: 0; bottom: 0; left: calc(' + (2 * sw) + '% + 1px); width: calc(' + sw + '% - 2px); box-sizing: border-box; border: 2px solid #ECE9E2; border-radius: 4px';
+    const bars = [];
+    notes.forEach(([s, ps, v, len]) => {
+      ps.forEach((p) => {
+        bars.push({
+          style: 'position: absolute; left: calc(' + (s * sw) + '% + 3px); width: calc(' + (len * sw) + '% - 6px); top: calc(' + ((12 - p) * rh).toFixed(2) + '% + 1px); height: calc(' + rh.toFixed(2) + '% - 2px); border-radius: 4px; background: rgba(236,233,226,' + (0.4 + 0.6 * v).toFixed(2) + ')'
+        });
+      });
+    });
+    const chip = (label, on) => ({
+      label,
+      style: 'height: 30px; padding: 0 12px; border-radius: 8px; display: flex; align-items: center; font-size: 13px; font-weight: 700; background: #2B2B31; color: ' + (on ? '#ECE9E2' : '#6E6C67')
+    });
+    const chips = [chip('Undo', true), chip('×2', false), chip('Dup', true), chip('Q', true)];
+    const colours = ['#FF6B57', '#FFC23D', '#3DD68C', '#4F8BFF'];
+    const strips = [
+      { label: 'Velocity', value: '90%', pct: 90 },
+      { label: 'Hold', value: '1/2', pct: 22 },
+      { label: 'Chance', value: '100%', pct: 100 },
+      { label: 'Nudge', value: '0', pct: 50 }
+    ].map((s, i) => ({
+      ...s,
+      box: 'position: relative; overflow: hidden; border-radius: 14px; background: #1C1C20; padding: 10px 6px; display: flex; flex-direction: column; align-items: center; gap: 4px',
+      labelStyle: 'position: relative; font-size: 14px; font-weight: 700; color: ' + colours[i],
+      fillStyle: 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + Math.min(s.pct, 76) + '%; background: ' + colours[i] + '38; border-top: 3px solid ' + colours[i]
+    }));
+    const byStep = {};
+    notes.forEach(([s, ps, v]) => { byStep[s] = { ps, v }; });
+    const pads = Array.from({ length: 16 }, (_, i) => {
+      const n = byStep[i];
+      const sel = i === 2;
+      const play = i === 8;
+      const tie = i === 7;
+      let note = '';
+      if (n) note = n.ps.length > 1 ? 'Am' : noteName(n.ps[0]);
+      return {
+        n: i + 1,
+        note,
+        box: 'position: relative; flex: 1; min-width: 0; border-radius: 12px; padding: 6px 7px; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; background: #1C1C20; border: ' +
+          (sel ? '3px solid #ECE9E2' : play ? '2px solid #3DD68C' : i % 4 === 0 ? '1px solid #3A3A40' : '1px solid #26262C'),
+        fill: n ? 'position: absolute; left: 0; right: 0; bottom: 0; height: ' + Math.round(n.v * 100) + '%; background: #ECE9E2' : 'display: none',
+        tie: tie ? 'position: absolute; left: 0; right: 30%; top: 50%; height: 4px; margin-top: -2px; border-radius: 0 2px 2px 0; background: rgba(236,233,226,0.55)' : 'display: none',
+        numStyle: 'position: relative; ' + mono + 'font-size: 10px; line-height: 1; color: #A9A69F; mix-blend-mode: difference',
+        noteStyle: 'position: relative; ' + mono + 'font-size: 13px; font-weight: 500; line-height: 1; white-space: nowrap; color: #ECE9E2; mix-blend-mode: difference'
+      };
+    });
+    // Pen keys: 14 naturals C2..B3, sharps row above, flatter keys (radius 10).
+    const nat = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+    const natPc = [0, 2, 4, 5, 7, 9, 11];
+    const aMinor = new Set([9, 11, 0, 2, 4, 5, 7]);
+    const count = 14;
+    const w = 100 / count;
+    const keys = [];
+    const key = (left, width, top, height, pc, label, pen) => ({
+      label,
+      style: 'position: absolute; left: calc(' + left.toFixed(3) + '% + 2px); width: calc(' + width.toFixed(3) + '% - 4px); top: ' + top + '%; height: ' + height + '%; box-sizing: border-box; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: ' +
+        (pen ? '#34343A; box-shadow: inset 0 0 0 2px #ECE9E2' : aMinor.has(pc) ? '#2B2B31' : '#18181B'),
+      stripe: pen ? 'position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: #ECE9E2' : 'display: none',
+      labelStyle: mono + 'font-size: 10px; line-height: 1; white-space: nowrap; color: ' + (pen ? '#ECE9E2' : '#7C7A75') + (pen ? '; font-weight: 500' : '')
+    });
+    for (let i = 0; i < count; i++) {
+      const oct = 2 + Math.floor(i / 7);
+      const pc = natPc[i % 7];
+      const pen = i % 7 === 5 && oct === 2;
+      const label = i % 7 === 0 || pen ? nat[i % 7] + oct : '';
+      keys.push(key(i * w, w, 50, 50, pc, label, pen));
+      if (i < count - 1 && [0, 1, 3, 4, 5].includes(i % 7)) keys.push(key((i + 0.55) * w, w * 0.9, 0, 46, (pc + 1) % 12, '', false));
+    }
+    return { slots, pages, rowLabels, rollRows, beatLines, playCol, selCol, bars, chips, strips, pads, keys };
+  }
+}
+</script>
+</body>
+</html>
