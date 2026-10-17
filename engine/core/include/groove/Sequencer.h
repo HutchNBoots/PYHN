@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 
 #include "groove/Instrument.h"
@@ -13,8 +14,9 @@ namespace groove {
 
 // Something the audio thread wrote into a pattern while recording (F3.6, F3.7). Same fields
 // and rules as RecordedEvent in NativeEngine.kt:
-//  - Note: the step turns on, the note is added if not already there (with 4 notes, the
-//    last one is replaced) and the step's velocity becomes value.
+//  - Note: a hit {note, velocity = value, pattern gate, chance 1, nudge 0} is added to the
+//    step unless that note is already there (Step::addHit: with 8 hits, the last one is
+//    replaced; an existing hit of that note is left as it is).
 //  - Motion: lane noteOrTarget's value at the step becomes value (a new lane is taken only
 //    when one of the 8 is free; otherwise nothing is written or reported).
 struct RecordedEvent {
@@ -57,6 +59,26 @@ struct TransportState {
 // position, which keeps running under a step loop, so clearing the loop returns exactly to
 // where the pattern would have been (F3.8).
 //
+// Hits (docs/plans/2026-10-16-build-20-sequencer-lanes.md, "Engine timing rules"). A hit
+// sounds at its step's exact (shuffled) position + nudge x one step of its pattern, rounded
+// to a whole unit, so it is as exact as the steps themselves. Late hits (nudge > 0) wait in
+// a fixed per-slot list. Early hits (nudge < 0) are scheduled when the step before fires,
+// for the step that will really play next (loop, length wrap, a switch due at the boundary).
+// Limits of that look-ahead, by design:
+//  - A loop change, pattern switch or edit made after it doesn't recall what it scheduled.
+//    An early hit the look-ahead didn't schedule (the first step after Play, a step reached
+//    through such a change, a hit added after it) sounds at its step's own time instead.
+//  - With shuffle above 75%, an even step's hit nudged earlier than its odd predecessor
+//    sounds together with that predecessor (it can't be scheduled before the step that
+//    looks ahead).
+// A hit of length L steps (or the pattern's gate) ends at its sounding position + L steps
+// at the tempo it sounded at (kept even if the tempo changes), and never sooner than
+// kMinNoteSeconds. A hit of a note this slot's sequencer still holds sends that note's
+// off first, so each note has at most one pending off (kMaxPendingOffs = 128 covers every
+// MIDI note). Chance is rolled per hit, when it is scheduled, from each slot's generator,
+// which is reseeded on Play (F3.4: renders repeat exactly). Stop releases every sounding
+// note and drops every scheduled hit.
+//
 // Threading:
 //  - Control thread (exactly one): the command methods (each queued; false if the queue is
 //    full and nothing was queued), popRecorded(), transport().
@@ -75,8 +97,12 @@ public:
     static constexpr int32_t kMinTempoTenths = 400;
     static constexpr int32_t kMaxTempoTenths = 2400;
     static constexpr int32_t kDefaultTempoTenths = 1200;
-    static constexpr float kMinNoteSeconds = 0.001f;  // shortest gate
-    static constexpr int kMaxPendingOffs = 32;        // per slot
+    static constexpr float kMinNoteSeconds = 0.001f;  // shortest note
+    static constexpr int kMaxPendingOffs = 128;       // per slot: one per MIDI note
+    // Hits waiting for their (nudged) time, per slot. At most about 3 steps' hits are ever
+    // waiting at once (the 0.5-step nudge window spans two steps, plus one look-ahead step);
+    // when it is full, the earliest waiting hit sounds at once rather than being lost.
+    static constexpr int kMaxPendingHits = 4 * kMaxHitsPerStep;
     // Commands applied per render chunk, which bounds the audio thread's work when the UI
     // sends a burst (e.g. loading a session); the rest wait, in order, for the next chunk.
     static constexpr int kMaxCommandsPerChunk = 512;
@@ -98,8 +124,12 @@ public:
     bool setMotionRecording(bool active);
     bool selectPattern(int slot, int pattern);
     bool setPatternSettings(int slot, int pattern, int length, int rate, float shuffle, float gate);
-    bool setStep(int slot, int pattern, int step, bool on, const int* notes, int noteCount, float velocity,
-                 float gate, float probability);
+    // Replaces the step's hits: hitCount 0..8 (more are ignored; 0 or null hits clears the
+    // step). Every field is clamped by sanitizeHit().
+    bool setStep(int slot, int pattern, int step, const Hit* hits, int hitCount);
+    bool setStep(int slot, int pattern, int step, std::initializer_list<Hit> hits) {
+        return setStep(slot, pattern, step, hits.begin(), static_cast<int>(hits.size()));
+    }
     bool setMotionValue(int slot, int pattern, int target, int step, float value);
     bool clearMotionLane(int slot, int pattern, int target);
     bool clearPattern(int slot, int pattern);
@@ -118,6 +148,10 @@ public:
     // Clamps value to the target parameter's range (NaN stays NaN: "no value").
     static float sanitizeTarget(int slot, int target, float value);
     static int32_t tempoTenths(float bpm);  // 40..240 BPM in 0.1 steps
+    // The mirror's clamping (PatternStore.kt): note 0..127; velocity 0.01..1 (NaN: 0.8);
+    // length NaN or negative = kPatternGate, else 1/16..16 steps; probability 0..1 (NaN: 1);
+    // nudge -0.5..0.5 (NaN: 0).
+    static Hit sanitizeHit(const Hit& hit);
 
     // --- audio thread ---
     // Applies queued commands (up to maxCommands, in order) at stream frame `frame`. Call at
@@ -185,6 +219,12 @@ private:
     bool touched(int slot, int target) const;
     void scheduleOff(int slot, int note, int64_t frame);
     bool cancelOff(int slot, int note);
+    bool roll(int slot, const Hit& hit);
+    void queueHit(int slot, const Hit& hit, const Pattern& p, int pattern, int step, int64_t position,
+                  int64_t frame, int64_t stepPosition);
+    void sound(int slot, int note, float velocity, int64_t position, int64_t lengthUnits, int64_t frame);
+    void dropPendingHits(int slot, int pattern, int step, int note);
+    void lookAhead(int slot, int64_t frame, int64_t stepPosition);
     void scheduleNext(int slot);
     int nextPlayedStep(int slot) const;
     int nextPattern(int slot) const;
