@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Rect
 import com.groovebox.engine.NativeEngine
 import com.groovebox.engine.ParamSpec
 import com.groovebox.engine.RecordedEvent
@@ -387,7 +388,20 @@ class GrooveState : KeyListener {
     private inline fun uiEdit(action: () -> Unit) {
         val before = UiKey(screen, selectedSlot, lastSynthSlot, tapeTrack)
         action()
+        if (screen != before.screen) leftScreen(before.screen)
         if (UiKey(screen, selectedSlot, lastSynthSlot, tapeTrack) != before) sessionChanged()
+    }
+
+    /**
+     * Build-22: the Mixer's solo (UI only) ends when the Mixer is left, so a take, a Commit or
+     * an export never hears it; the Tape slot picker closes when Tape is left.
+     */
+    private fun leftScreen(left: Screen) {
+        when (left) {
+            Screen.Mixer -> mix.clearSolo()
+            Screen.Tape -> closeSlotPicker()
+            else -> Unit
+        }
     }
 
     private data class UiKey(val screen: Screen, val slot: Int, val lastSynth: Int, val track: Int)
@@ -570,19 +584,53 @@ class GrooveState : KeyListener {
     /** The Tape slot chip (build-22): a tap steps to the next slot. */
     fun slotChipTap() = selectSlot(SlotChip.next(selectedSlot))
 
+    /** The Tape slot chip's long-press opened the eight slot buttons in its place (build-22). */
+    var slotPickerOpen by mutableStateOf(false)
+        private set
+
+    /** Where the open picker is (root coordinates; set by the top bar): a touch elsewhere closes it. */
+    var slotPickerBounds: Rect = Rect.Zero
+
+    fun openSlotPicker() {
+        if (screen == Screen.Tape) slotPickerOpen = true
+    }
+
+    fun closeSlotPicker() {
+        slotPickerOpen = false
+    }
+
+    /** A slot picked in the picker (on release): select it and close. */
+    fun pickSlot(slot: Int) {
+        selectSlot(slot)
+        closeSlotPicker()
+    }
+
     private val tapTempo = TapTempo()
 
     /** Taps in the current tap-tempo run; above 0 the BPM readout is lit and reads "TAP". */
     var tapCount by mutableIntStateOf(0)
         private set
 
-    /** A tap on the BPM readout (build-22): the third and later taps set the tempo. */
-    fun tapTempo(nowMs: Long) {
-        tapTempo.tap(nowMs, tempoBpm)?.let(::setTempo)
+    /** Bumped on every counted tap, so the readout's idle timer restarts on each (count stops at 6). */
+    var tapSerial by mutableLongStateOf(0L)
+        private set
+
+    /** A touch-down on the BPM readout (build-22): it counts for the timing; nothing applies yet. */
+    fun tapTempoDown(nowMs: Long) {
+        tapTempo.down(nowMs, tempoBpm)
         tapCount = tapTempo.count
+        tapSerial = tapTempo.serial
     }
 
-    /** A long-press on the BPM readout: back to 120. */
+    /** The finger lifted: from the third tap on, the tapped tempo applies. */
+    fun tapTempoUp() {
+        tapTempo.release()?.let(::setTempo)
+    }
+
+    /** The touch slid off or was cancelled: nothing applies. */
+    fun tapTempoCancel() = tapTempo.cancel()
+
+    /** A long-press on the BPM readout: back to 120 (the tapped tempo never applies). */
     fun tapTempoReset() {
         tapTempo.reset()
         tapCount = 0
@@ -1299,6 +1347,7 @@ class GrooveState : KeyListener {
      * transport when stopped; it begins at the slot's next pattern boundary.
      */
     fun commit(allSlots: Boolean) {
+        mix.clearSolo() // build-22: a Commit never records the Mixer's UI-only solo
         if (!playing) NativeEngine.play()
         NativeEngine.tapeCommit(tapeTrack, if (allSlots) -1 else selectedSlot)
     }
@@ -1399,6 +1448,7 @@ class GrooveState : KeyListener {
      */
     fun exportPress() {
         if (!canExport) return
+        mix.clearSolo() // build-22: an export never renders the Mixer's UI-only solo
         val host = exportHost ?: return
         val region = TapeView.loopRegion(
             mix.mix(MixKeys.LOOP_START).roundToInt(),
@@ -1502,6 +1552,8 @@ class GrooveState : KeyListener {
             pageState = ui.page.coerceIn(0, PAGES - 1)
             tapeTrack = ui.tapeTrack.coerceIn(0, MixLimits.TRACKS - 1)
             mixer.restoreSelection(MixerLayout.padNamed(ui.mixerPad) ?: MixerPad.Slot(1))
+            // Build-22: restored onto the Mixer, a slot or tape pad follows the slot and track.
+            if (screen == Screen.Mixer) mixer.restoreSelection(MixerSync.padOnShow(mixer.selected, selectedSlot, tapeTrack))
             seq.locks.restore(s.locks[LOCKS_SEQ].orEmpty())
             tape.locks.restore(s.locks[LOCKS_TAPE].orEmpty())
             mixer.locks.restore(s.locks[LOCKS_MIXER].orEmpty())
