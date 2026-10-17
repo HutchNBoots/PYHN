@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
@@ -31,9 +32,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.max
 import com.groovebox.engine.ParamSpec
 import com.groovebox.ui.model.LayerText
 import com.groovebox.ui.model.SlotSwipe
+import com.groovebox.ui.theme.Design
 import com.groovebox.ui.theme.GrooveColors
 import com.groovebox.ui.theme.GrooveRadius
 import com.groovebox.ui.theme.GrooveSpace
@@ -199,6 +202,10 @@ fun Legend(strips: List<ParamSpec?>, host: StripHost) {
  * A chip at the left of a display's footer (build-22: Tape's Undo, the Mixer's Mute and Solo),
  * where the left thumb reaches it. [active] shows it on: tinted, outlined and lettered in
  * [activeColour]. Touch handling comes in with [modifier]; [enabled] false dims it.
+ *
+ * The chip looks [FOOTER_CHIP_HEIGHT] tall but takes touches over at least [Design.MinTouch]
+ * (ADR 0002): the touch area is laid out past the chip's top and bottom edges, so the footer
+ * row keeps the chip's height.
  */
 @Composable
 fun FooterChip(
@@ -212,19 +219,34 @@ fun FooterChip(
     val d = LocalDesign.current
     val shape = d.shape(GrooveRadius.CHIP)
     val ink = if (active) activeColour else GrooveColors.Text
-    Row(
-        modifier
-            .height(d.dp(FOOTER_CHIP_HEIGHT))
-            .alpha(if (enabled) 1f else GrooveColors.INERT_ALPHA)
-            .clip(shape)
-            .background(if (active) activeColour.copy(alpha = 0.14f) else GrooveColors.ChipFill)
-            .then(if (active) Modifier.border(d.dp(1.5f), activeColour, shape) else Modifier)
-            .padding(horizontal = d.dp(12)),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.PAD)),
+    val shown = d.dp(FOOTER_CHIP_HEIGHT)
+    val touch = max(Design.MinTouch, shown)
+    Box(
+        Modifier
+            .layout { measurable, constraints ->
+                val touchPx = touch.roundToPx()
+                val shownPx = shown.roundToPx()
+                val placeable = measurable.measure(constraints.copy(minHeight = touchPx, maxHeight = touchPx))
+                // Report the chip's height; the touch area hangs over it evenly.
+                layout(placeable.width, shownPx) { placeable.place(0, (shownPx - placeable.height) / 2) }
+            }
+            .then(modifier),
+        contentAlignment = Alignment.Center,
     ) {
-        leading?.invoke(ink)
-        BasicText(text, style = d.label(GrooveText.BODY, ink, FontWeight.Bold), maxLines = 1)
+        Row(
+            Modifier
+                .height(shown)
+                .alpha(if (enabled) 1f else GrooveColors.INERT_ALPHA)
+                .clip(shape)
+                .background(if (active) activeColour.copy(alpha = 0.14f) else GrooveColors.ChipFill)
+                .then(if (active) Modifier.border(d.dp(1.5f), activeColour, shape) else Modifier)
+                .padding(horizontal = d.dp(12)),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.PAD)),
+        ) {
+            leading?.invoke(ink)
+            BasicText(text, style = d.label(GrooveText.BODY, ink, FontWeight.Bold), maxLines = 1)
+        }
     }
 }
 

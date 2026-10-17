@@ -135,7 +135,8 @@ private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugS
         Row(horizontalArrangement = Arrangement.spacedBy(d.dp(GrooveSpace.ZONE))) {
             DisplayTitle("Tape", debug, Modifier.alignByBaseline())
             DisplaySubtitle(subtitle, audioStarted, Modifier.weight(1f).alignByBaseline())
-            LayerLabel(shifted, TapeView.trackName(track), Modifier.alignByBaseline())
+            // MAIN strips are the tape's (speed, loop, dub); SHIFT's are the selected track's.
+            LayerLabel(shifted, if (shifted) TapeView.trackName(track) else "tape", Modifier.alignByBaseline())
         }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             // A saved tape still loading (F7.6): the lanes fill in as it lands, dimmed until then.

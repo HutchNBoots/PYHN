@@ -227,8 +227,9 @@ private fun Levels(state: GrooveState, modifier: Modifier) {
             }
             // On the meter's dB scale (v1 fix 4): a DLY / REV return of 50% sits at -6 dB.
             val setting = spec?.let { MeterScale.markerHeight(it, value) } ?: 0f
-            val muted = channel != null && mix.muted(channel)
             val soloed = channel != null && mix.isSoloed(channel)
+            // Solo wins (build-22 review): a soloed channel plays and shows S even if muted.
+            val muted = channel != null && mix.muted(channel) && !soloed
             val silenced = channel != null && mix.silencedBySolo(channel)
             val text = when {
                 spec == null -> "—"
@@ -350,8 +351,10 @@ private fun MixerPadButton(state: GrooveState, pad: MixerPad, modifier: Modifier
     val mixer = state.mixer
     val isSelected = mixer.selected == pad
     val channel = MixerLayout.channelOf(pad)
-    val muted = channel != null && state.mix.muted(channel)
     val soloed = channel != null && state.mix.isSoloed(channel)
+    val userMuted = channel != null && state.mix.muted(channel)
+    // Solo wins (build-22 review): a soloed channel plays and shows S even if muted.
+    val muted = userMuted && !soloed
     val silenced = channel != null && state.mix.silencedBySolo(channel)
     val sub = when (pad) {
         is MixerPad.Slot -> state.instrumentName(pad.slot)
@@ -371,7 +374,7 @@ private fun MixerPadButton(state: GrooveState, pad: MixerPad, modifier: Modifier
             .semantics {
                 contentDescription = "${MixerLayout.title(pad, state::instrumentName)}${if (muted) ", muted" else ""}" +
                     (if (soloed) ", soloed" else "") + (if (silenced) ", silent while another channel is soloed" else "") +
-                    (if (channel != null) ". Shift and tap to ${if (muted) "unmute" else "mute"}" else "")
+                    (if (channel != null) ". Shift and tap to ${if (userMuted) "unmute" else "mute"}" else "")
                 selected = isSelected
             }
             .pointerInput(pad) {

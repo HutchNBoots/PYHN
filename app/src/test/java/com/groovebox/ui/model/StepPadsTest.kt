@@ -1,6 +1,7 @@
 package com.groovebox.ui.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -184,12 +185,13 @@ class StepPadsTest {
     // --- build-22: drags, copies, swipes ---
 
     @Test
-    fun aDragOntoAnotherPadMovesAndNeverToggles() {
+    fun aPlainDriftOntoAnotherPadCancelsAndNeverMoves() {
+        // Review fix: only a pad held to the long-press drags; a drifting tap does nothing.
         pads.down(0, 3, false)
         assertNull(pads.move(0, 3, drifted = true))
         assertNull("a drifting touch cannot become a long-press", pads.longPress(0))
         assertNull(pads.move(0, 6, true))
-        assertEquals(PadAction.Move(3, 6, copy = false), pads.up(0))
+        assertNull(pads.up(0))
         assertTrue(pads.selected.isEmpty())
     }
 
@@ -236,7 +238,7 @@ class StepPadsTest {
     fun shiftHoldThenDragCopies() {
         pads.down(0, 4, true)
         assertNull(pads.longPress(0))
-        assertNull("carrying: no swipe", pads.move(0, 7, true))
+        assertNull("carrying (moved after the hold): no swipe", pads.move(0, 7, true))
         assertEquals(PadAction.Move(4, 7, copy = true), pads.up(0))
     }
 
@@ -258,6 +260,44 @@ class StepPadsTest {
         assertEquals(PadAction.Swipe(-4), pads.move(0, 1, true))
         assertNull(pads.longPress(0))
         assertEquals(PadAction.SwipeEnd, pads.up(0))
+    }
+
+    @Test
+    fun aShiftPadHeldStillPastTheLongPressStillLoopsWithASecondPad() {
+        // Review fix (build-20 behaviour): the hold alone does not pick the step up.
+        assertNull(pads.down(1, 0, shifted = true))
+        assertNull(pads.longPress(1))
+        assertEquals(PadAction.Loop(0, 7), pads.down(2, 7, shifted = true))
+        assertEquals(PadAction.ClearLoop, pads.up(2))
+        assertNull("no fill or paste from the loop's pads", pads.up(1))
+    }
+
+    @Test
+    fun aSwipeFingerLiftedWhileOtherFingersLoopStillEndsTheSwipe() {
+        pads.down(1, 2, true)
+        assertEquals(PadAction.Swipe(1), pads.move(1, 3, drifted = true))
+        pads.down(2, 8, true)
+        assertEquals(PadAction.Loop(8, 12), pads.down(3, 12, true))
+        assertEquals(PadAction.SwipeEnd, pads.up(1))
+        assertEquals(PadAction.ClearLoop, pads.up(2))
+    }
+
+    @Test
+    fun aCarriedPadDroppedOffThePadsDoesNothing() {
+        pads.down(0, 4, true)
+        pads.longPress(0)
+        pads.move(0, 6, true)
+        pads.move(0, null, true)
+        assertNull(pads.up(0))
+    }
+
+    @Test
+    fun anyHeldFollowsTheFingers() {
+        assertFalse(pads.anyHeld)
+        pads.down(0, 4, false)
+        assertTrue(pads.anyHeld)
+        pads.up(0)
+        assertFalse(pads.anyHeld)
     }
 
     @Test
