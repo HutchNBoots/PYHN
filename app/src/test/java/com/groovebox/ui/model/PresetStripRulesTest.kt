@@ -16,11 +16,6 @@ class PresetStripRulesTest {
     }
 
     @Test
-    fun itsOwnCloseButtonClosesIt() {
-        assertTrue(PresetStripRules.closesOn(PresetTouch.Close))
-    }
-
-    @Test
     fun aTapOutsideTheStripAndKeysClosesIt() {
         // The display, the rail, the strips and the top bar (other slots included).
         assertTrue(PresetStripRules.closesOn(PresetTouch.Elsewhere))
@@ -34,10 +29,10 @@ class PresetStripRulesTest {
     @Test
     fun theZoneOfATouch() {
         // The strip sits over the top of the keys, so it wins where they overlap.
-        assertTrue(PresetStripRules.zone(inStrip = true, inClose = false, inKeys = true, inOpenSlot = false) == PresetTouch.Strip)
-        assertTrue(PresetStripRules.zone(inStrip = true, inClose = true, inKeys = true, inOpenSlot = false) == PresetTouch.Close)
-        assertTrue(PresetStripRules.zone(inStrip = false, inClose = false, inKeys = true, inOpenSlot = false) == PresetTouch.Keys)
-        assertTrue(PresetStripRules.zone(inStrip = false, inClose = false, inKeys = false, inOpenSlot = true) == PresetTouch.OpenSlot)
-        assertTrue(PresetStripRules.zone(inStrip = false, inClose = false, inKeys = false, inOpenSlot = false) == PresetTouch.Elsewhere)
+        // The strip's × is part of the strip here; it closes from its own tap.
+        assertTrue(PresetStripRules.zone(inStrip = true, inKeys = true, inOpenSlot = false) == PresetTouch.Strip)
+        assertTrue(PresetStripRules.zone(inStrip = false, inKeys = true, inOpenSlot = false) == PresetTouch.Keys)
+        assertTrue(PresetStripRules.zone(inStrip = false, inKeys = false, inOpenSlot = true) == PresetTouch.OpenSlot)
+        assertTrue(PresetStripRules.zone(inStrip = false, inKeys = false, inOpenSlot = false) == PresetTouch.Elsewhere)
     }
 }

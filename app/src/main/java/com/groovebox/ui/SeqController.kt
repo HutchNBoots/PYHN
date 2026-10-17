@@ -77,24 +77,41 @@ class SeqController(private val app: GrooveState) : StripHost {
     /** The Note strip's open drag (build-21). */
     private val noteDrag = NoteDrag()
 
-    /** The Note strip's value: the open drag's move, 0 between drags. Observable, so the strip follows it. */
+    /**
+     * The Note strip's value: the move the open drag applied (clamped by the range, so dragging
+     * on past the clamp shows the same value), 0 between drags. Observable, so the strip follows.
+     */
     private var noteMove by mutableIntStateOf(0)
 
+    /** A finger is on the Note strip; its drag may have been ended under it ([endNoteDrag]). */
+    private var noteGesture = false
+
     private fun startNoteDrag() {
-        noteDrag.start(app.selectedSteps.associateWith { app.step(it) })
+        noteDrag.start(app.selectedSlot, app.editPattern, app.selectedSteps.associateWith { app.step(it) })
         noteMove = 0
     }
 
-    private fun endNoteDrag() {
+    /**
+     * Ends the open Note drag, keeping what it wrote. The app calls it when the drag's steps
+     * change under it (keys or live recording into them, undo / redo, deselection), so the
+     * drag never writes back notes captured before; the rest of that strip gesture does nothing.
+     */
+    fun endNoteDrag() {
         noteDrag.end()
         noteMove = 0
     }
 
-    /** Writes the open Note drag moved by [move] (one undo step with the rest of the drag). */
+    /** The open Note drag holds [step] of [slot]'s [pattern]. */
+    fun noteDragHolds(slot: Int, pattern: Int, step: Int): Boolean = noteDrag.holds(slot, pattern, step)
+
+    /**
+     * Writes the open Note drag moved by [move] (one undo step with the rest of the drag), into
+     * the slot and pattern it started on only: shown another one, it ends instead.
+     */
     private fun applyNoteDrag(move: Int) {
         val slot = app.selectedSlot
         val pattern = app.editPattern
-        val moved = noteDrag.moveTo(move, app.keyScale)
+        val moved = noteDrag.moveTo(move, app.keyScale, slot, pattern)
         noteMove = noteDrag.offset
         for ((step, s) in moved) app.history.edit(slot, pattern) { app.store.updateStep(slot, pattern, step) { s } }
     }
@@ -105,12 +122,18 @@ class SeqController(private val app: GrooveState) : StripHost {
     override fun gestureStart(spec: ParamSpec) {
         drags.remove(spec.key)?.let(app.history::end)
         drags[spec.key] = app.history.begin()
-        if (spec.key == SeqStrips.Note.key) startNoteDrag()
+        if (spec.key == SeqStrips.Note.key) {
+            noteGesture = true
+            startNoteDrag()
+        }
     }
 
     override fun gestureEnd(spec: ParamSpec) {
         drags.remove(spec.key)?.let(app.history::end)
-        if (spec.key == SeqStrips.Note.key) endNoteDrag()
+        if (spec.key == SeqStrips.Note.key) {
+            noteGesture = false
+            endNoteDrag()
+        }
     }
 
     override fun value(spec: ParamSpec): Double {
@@ -161,13 +184,17 @@ class SeqController(private val app: GrooveState) : StripHost {
             SeqStrips.Key.key -> app.setKey(v.roundToInt())
             SeqStrips.ScaleStrip.key -> app.setScale(Scale.entries[v.roundToInt().coerceIn(0, Scale.entries.lastIndex)])
             // Build-21: relative to where the drag started, in scale degrees with a scale on.
-            SeqStrips.Note.key -> if (noteDrag.active) {
-                applyNoteDrag(v.roundToInt())
-            } else {
-                // Not from a strip gesture: a one-off move from the steps as they are.
-                startNoteDrag()
-                applyNoteDrag(v.roundToInt())
-                endNoteDrag()
+            SeqStrips.Note.key -> when {
+                noteDrag.active -> applyNoteDrag(v.roundToInt())
+                noteGesture -> Unit // the drag was ended under the finger: the rest of the gesture does nothing
+                else -> {
+                    // Not from a strip gesture (accessibility): a one-off move, one undo step.
+                    val token = history.begin()
+                    startNoteDrag()
+                    applyNoteDrag(v.roundToInt())
+                    endNoteDrag()
+                    history.end(token)
+                }
             }
             SeqStrips.HitVelocity.key -> app.editSelectedHits { it.copy(velocity = v.toFloat()) }
             SeqStrips.HitLength.key -> app.editSelectedHits { it.copy(length = SeqStrips.lengthAt(v)) }
@@ -201,6 +228,10 @@ class SeqController(private val app: GrooveState) : StripHost {
 
     override fun setLocked(spec: ParamSpec, locked: Boolean) = locks.set(spec.key, locked)
 
-    override fun format(spec: ParamSpec, value: Double): String =
-        if (SeqStrips.motionTarget(spec) != null) ParamMapping.format(spec, value) else SeqStrips.format(spec, value)
+    override fun format(spec: ParamSpec, value: Double): String = when {
+        SeqStrips.motionTarget(spec) != null -> ParamMapping.format(spec, value)
+        // With a scale on the move is in scale degrees: "+2°".
+        spec.key == SeqStrips.Note.key -> SeqStrips.formatMove(value.roundToInt(), degrees = app.keyScale.isOn)
+        else -> SeqStrips.format(spec, value)
+    }
 }

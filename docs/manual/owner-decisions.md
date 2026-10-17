@@ -8,3 +8,4 @@ Captured as they come in; they override the suggestions in the manual, the consi
 | 17 Oct 2026 | Keep the capsule keys (the M-VAVE FM-1 look, easier to read); don't flatten them to boxes. | Consistency review R3, all proposed mockups with keys |
 | 17 Oct 2026 | The pitch roll for synth parts on Seq looks good. | Manual 3.2 "Proposed views" #2, SeqSynthProposed |
 | 17 Oct 2026 | Approved 1-1A: keep the display swipe and flash the slot number and preset name large while swiping. | Manual 1.1 task 1-1A |
+| 17 Oct 2026 | Approved 1-1B for the next build: keys keep the preset strip open (in build-21) and the presets get group labels (Bass, Lead, Pad, Pluck, FX). | Manual 1.1 task 1-1B |

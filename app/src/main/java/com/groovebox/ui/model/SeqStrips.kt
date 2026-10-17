@@ -128,11 +128,14 @@ object SeqStrips {
         }
     }
 
-    /** The Note strip's move: "+2", "−5", "0". */
-    fun formatMove(move: Int): String = when {
-        move > 0 -> "+$move"
-        move < 0 -> "\u2212${-move}"
-        else -> "0"
+    /** The Note strip's move: "+2", "−5", "0"; in scale [degrees] "+2°". */
+    fun formatMove(move: Int, degrees: Boolean = false): String {
+        val unit = if (degrees) "°" else ""
+        return when {
+            move > 0 -> "+$move$unit"
+            move < 0 -> "\u2212${-move}$unit"
+            else -> "0"
+        }
     }
 
     fun percent(v: Double): String = "${(v * 100).roundToInt()}%"

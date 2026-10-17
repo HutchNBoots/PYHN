@@ -272,7 +272,7 @@ private fun Overview(state: GrooveState, modifier: Modifier) {
 /**
  * Clears the selected slot's current pattern (steps, motion, settings), or with Shift on the
  * drum slot only the lane's sound. No dialog, so it takes two taps: the first arms it (coral,
- * "Clear?" / "Clear Snar1?"), a second within 2 s clears. Undo brings it back.
+ * "Clear?" / "Clear Snare?"), a second within 2 s clears. Undo brings it back.
  */
 @Composable
 private fun ClearButton(state: GrooveState, modifier: Modifier) {
@@ -304,7 +304,7 @@ private fun ClearButton(state: GrooveState, modifier: Modifier) {
         val colour = if (armed) GrooveColors.Ground else if (laneMode) GrooveColors.Shift else GrooveColors.TextDim
         val weight = if (armed) FontWeight.Bold else FontWeight.Medium
         if (laneMode) {
-            // Two lines: "Clear" over the sound's short name ("Snar1?" when armed).
+            // Two lines: "Clear" over the sound's short name ("Snare?" when armed).
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 BasicText("Clear", style = d.label(11f, colour, weight), maxLines = 1)
                 BasicText(if (armed) "$laneName?" else laneName, style = d.label(11f, colour, weight), maxLines = 1, overflow = TextOverflow.Clip)
@@ -418,7 +418,17 @@ private fun UndoChip(state: GrooveState) {
                     } != null
                     when {
                         cancelled -> hold.cancel()
-                        released -> if (hold.up(upAt) == UndoHold.Action.Undo) state.seqUndoPress(redo = false)
+                        // A release right at the long-press time can still be the redo.
+                        released -> when (hold.up(upAt)) {
+                            UndoHold.Action.Undo -> state.seqUndoPress(redo = false)
+                            UndoHold.Action.Redo -> {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                state.seqUndoPress(redo = true)
+                                readsRedo = true
+                                flash++
+                            }
+                            null -> Unit
+                        }
                         else -> {
                             // Held to the long-press time: redo once, now.
                             if (hold.poll(down.uptimeMillis + hold.longPressMs) == UndoHold.Action.Redo) {

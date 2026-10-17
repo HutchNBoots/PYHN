@@ -107,7 +107,6 @@ private fun ThisBeat(state: GrooveState, modifier: Modifier) {
         state.store.step(slot, pattern, first + c).hits.firstOrNull { it.note == note }?.velocity ?: 0f
     }
     val label = d.value(10f, GrooveColors.TextDim)
-    val playhead = state.stepOf(slot) - first
     Row(
         modifier.semantics {
             contentDescription = "This beat: ${velocities.count { it > 0f }} hits of ${DrumLayout.shortName(state.laneKey)} on page ${state.page + 1}"
@@ -117,6 +116,7 @@ private fun ThisBeat(state: GrooveState, modifier: Modifier) {
     ) {
         BasicText("this beat", Modifier.width(d.dp(64)), style = label, maxLines = 1)
         Canvas(Modifier.weight(1f).height(d.dp(14))) {
+            val playhead = state.stepOf(slot) - first // read here: it changes every step while playing
             val gap = d.px(6f)
             val w = (size.width - gap * 15) / 16
             val r = CornerRadius(d.px(3f))

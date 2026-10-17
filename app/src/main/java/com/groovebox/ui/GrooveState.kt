@@ -404,6 +404,7 @@ class GrooveState : KeyListener {
 
     /** Deselects every step (a tap on the display, a slot or pattern change). */
     fun deselectSteps() {
+        seq.endNoteDrag()
         pads.clearSelection()
         selectedSteps = emptyList()
     }
@@ -421,6 +422,7 @@ class GrooveState : KeyListener {
         // one undo step for the chord).
         val steps = editingSteps
         if (steps.isNotEmpty()) {
+            seq.endNoteDrag() // build-21: a Note drag would write its captured notes back over these
             if (keyToken == null) keyToken = history.begin()
             val pattern = editPattern
             for (step in steps) history.edit(slot, pattern) { store.setStepNotes(slot, pattern, step, chord, velocity) }
@@ -499,11 +501,16 @@ class GrooveState : KeyListener {
      */
     fun seqUndoPress(redo: Boolean) {
         applyRecorded(NativeEngine.pollRecorded())
+        seq.endNoteDrag() // build-21: a Note drag must not write back over the restored notes
         if (redo) history.redo() else history.undo()
     }
 
     private fun applyRecorded(recorded: List<RecordedEvent>) {
-        for (e in recorded) history.edit(e.slot, e.pattern) { store.applyRecorded(e) }
+        for (e in recorded) {
+            // Build-21: a note recorded into a step a Note drag holds ends the drag (it would write over it).
+            if (seq.noteDragHolds(e.slot, e.pattern, e.step)) seq.endNoteDrag()
+            history.edit(e.slot, e.pattern) { store.applyRecorded(e) }
+        }
     }
 
     // --- step pads ---
@@ -719,11 +726,12 @@ class GrooveState : KeyListener {
 
     /** Double-tap a tape lane (ADR 0003): arm it, or stop its take; see [TapeView.laneDoubleTap]. */
     fun tapeLaneDoubleTap(lane: Int) {
-        // While a lane asks "Clear T3?", a double-tap is a tap: it confirms there, cancels elsewhere.
-        if (tapeClearLane >= 0) {
-            tapeLaneTap(lane)
-            return
-        }
+        // Build-21: a double-tap on a lane asking "Clear T3?" only cancels the ask (no clear, no
+        // record); only a single tap confirms. A double-tap on another lane was already a cancel
+        // (its touch-down) and then records as usual.
+        val swallowed = tapeClear.doubleTap(lane)
+        syncTapeClear()
+        if (swallowed) return
         val status = tapeStatus
         val busy = if (status == TapeRecordStatus.Recording) tapeRecordingTrack else tapeArmedTrack
         when (val action = TapeView.laneDoubleTap(lane, status, busy, tapeCanRecord)) {
@@ -777,9 +785,12 @@ class GrooveState : KeyListener {
         return asked
     }
 
-    /** A tap on a lane: clears it when it is the one asking (within 3 s); any other tap cancels. */
+    /**
+     * A single tap on a lane: clears it when it was asking at the tap's touch-down (within 3 s of
+     * the hold; the tap itself arrives after the double-tap wait). Any other tap cancels.
+     */
     fun tapeLaneTap(lane: Int) {
-        val confirmed = tapeClear.tap(lane, nowMs)
+        val confirmed = tapeClear.tap(lane)
         syncTapeClear()
         if (confirmed) clearTrack(lane)
     }

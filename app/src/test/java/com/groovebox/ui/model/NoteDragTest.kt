@@ -7,6 +7,11 @@ import org.junit.Test
 
 /** Build-21 item 1: the Shift-layer Note strip moves the selected steps by an interval. */
 class NoteDragTest {
+    private companion object {
+        const val SLOT = 2
+        const val PATTERN = 3
+    }
+
     private val cMajor = KeyScale(0, Scale.Major)
     private val aMinor = KeyScale(9, Scale.Minor)
 
@@ -19,27 +24,27 @@ class NoteDragTest {
     fun aMultiStepMoveKeepsTheLine() {
         // A bassline A2 C3 E3 A2: +2 moves every step by 2 (the old strip flattened them all to one pitch).
         val drag = NoteDrag()
-        drag.start(steps(listOf(45), listOf(48), listOf(52), listOf(45)))
-        assertEquals(listOf(listOf(47), listOf(50), listOf(54), listOf(47)), notes(drag.moveTo(2, KeyScale.OFF)))
+        drag.start(SLOT, PATTERN, steps(listOf(45), listOf(48), listOf(52), listOf(45)))
+        assertEquals(listOf(listOf(47), listOf(50), listOf(54), listOf(47)), notes(drag.moveTo(2, KeyScale.OFF, SLOT, PATTERN)))
         assertEquals(2, drag.offset)
-        assertEquals(listOf(listOf(40), listOf(43), listOf(47), listOf(40)), notes(drag.moveTo(-5, KeyScale.OFF)))
+        assertEquals(listOf(listOf(40), listOf(43), listOf(47), listOf(40)), notes(drag.moveTo(-5, KeyScale.OFF, SLOT, PATTERN)))
         assertEquals(-5, drag.offset)
     }
 
     @Test
     fun theMoveIsRelativeToWhereTheDragStartedNotCumulative() {
         val drag = NoteDrag()
-        drag.start(steps(listOf(60)))
-        drag.moveTo(3, KeyScale.OFF)
-        assertEquals(listOf(listOf(62)), notes(drag.moveTo(2, KeyScale.OFF)))
+        drag.start(SLOT, PATTERN, steps(listOf(60)))
+        drag.moveTo(3, KeyScale.OFF, SLOT, PATTERN)
+        assertEquals(listOf(listOf(62)), notes(drag.moveTo(2, KeyScale.OFF, SLOT, PATTERN)))
     }
 
     @Test
     fun chordsKeepTheirShapeAndHitsKeepTheirValues() {
         val drag = NoteDrag()
         val before = steps(listOf(60, 64, 67), listOf(57, 60, 64))
-        drag.start(before)
-        val moved = drag.moveTo(-5, KeyScale.OFF)
+        drag.start(SLOT, PATTERN, before)
+        val moved = drag.moveTo(-5, KeyScale.OFF, SLOT, PATTERN)
         assertEquals(listOf(listOf(55, 59, 62), listOf(52, 55, 59)), notes(moved))
         for ((i, s) in moved) {
             assertEquals(before.getValue(i).hits.map { it.copy(note = 0) }, s.hits.map { it.copy(note = 0) })
@@ -49,14 +54,14 @@ class NoteDragTest {
     @Test
     fun withAScaleOnTheMoveIsInScaleDegrees() {
         val drag = NoteDrag()
-        drag.start(steps(listOf(57), listOf(60), listOf(64), listOf(57, 60, 64)))
+        drag.start(SLOT, PATTERN, steps(listOf(57), listOf(60), listOf(64), listOf(57, 60, 64)))
         // A minor, +2 degrees: A→C, C→E, E→G; the chord A C E → C E G.
         assertEquals(
             listOf(listOf(60), listOf(64), listOf(67), listOf(60, 64, 67)),
-            notes(drag.moveTo(2, aMinor)),
+            notes(drag.moveTo(2, aMinor, SLOT, PATTERN)),
         )
         // −1 degree: A C E → G B D.
-        assertEquals(listOf(55, 59, 62), notes(drag.moveTo(-1, aMinor))[3])
+        assertEquals(listOf(55, 59, 62), notes(drag.moveTo(-1, aMinor, SLOT, PATTERN))[3])
     }
 
     @Test
@@ -64,16 +69,16 @@ class NoteDragTest {
         // D D♯ E in C major (D♯ entered before the scale was on), up a degree: D→E and E→F; D♯ would land
         // on F too, so it keeps a pitch of its own. Three notes in, three distinct notes out.
         val drag = NoteDrag()
-        drag.start(steps(listOf(62, 63, 64)))
+        drag.start(SLOT, PATTERN, steps(listOf(62, 63, 64)))
         for (offset in -8..8) {
-            val out = notes(drag.moveTo(offset, cMajor))[0]
+            val out = notes(drag.moveTo(offset, cMajor, SLOT, PATTERN))[0]
             assertEquals("offset $offset: $out", 3, out.size)
             assertEquals("offset $offset: $out", 3, out.toSet().size)
             assertEquals(cMajor.moveByDegrees(62, offset), out[0])
             assertEquals(cMajor.moveByDegrees(64, offset), out[2])
         }
         // Out-of-key notes keep their distance above the in-key note below them.
-        assertEquals(listOf(64, 66, 65), notes(drag.moveTo(1, cMajor))[0])
+        assertEquals(listOf(64, 66, 65), notes(drag.moveTo(1, cMajor, SLOT, PATTERN))[0])
     }
 
     @Test
@@ -91,16 +96,16 @@ class NoteDragTest {
     @Test
     fun theRangeClampStopsEveryNote() {
         val drag = NoteDrag()
-        drag.start(steps(listOf(90), listOf(60, 64)))
+        drag.start(SLOT, PATTERN, steps(listOf(90), listOf(60, 64)))
         // +10 would take 90 past C7 (96): the whole move stops at +6.
-        assertEquals(listOf(listOf(96), listOf(66, 70)), notes(drag.moveTo(10, KeyScale.OFF)))
+        assertEquals(listOf(listOf(96), listOf(66, 70)), notes(drag.moveTo(10, KeyScale.OFF, SLOT, PATTERN)))
         assertEquals(6, drag.offset)
-        drag.start(steps(listOf(30, 34), listOf(60)))
-        assertEquals(listOf(listOf(24, 28), listOf(54)), notes(drag.moveTo(-10, KeyScale.OFF)))
+        drag.start(SLOT, PATTERN, steps(listOf(30, 34), listOf(60)))
+        assertEquals(listOf(listOf(24, 28), listOf(54)), notes(drag.moveTo(-10, KeyScale.OFF, SLOT, PATTERN)))
         assertEquals(-6, drag.offset)
         // In degrees too: B6 (95) can go up one degree (C7), not two.
-        drag.start(steps(listOf(95), listOf(60)))
-        assertEquals(listOf(listOf(96), listOf(62)), notes(drag.moveTo(2, cMajor)))
+        drag.start(SLOT, PATTERN, steps(listOf(95), listOf(60)))
+        assertEquals(listOf(listOf(96), listOf(62)), notes(drag.moveTo(2, cMajor, SLOT, PATTERN)))
         assertEquals(1, drag.offset)
     }
 
@@ -108,38 +113,68 @@ class NoteDragTest {
     fun aDoubleTapIsNoChange() {
         val drag = NoteDrag()
         val before = steps(listOf(45), listOf(52, 55))
-        drag.start(before)
+        drag.start(SLOT, PATTERN, before)
         assertEquals(before, drag.reset(KeyScale.OFF))
         assertEquals(0, drag.offset)
         // Also after a move in the same gesture: back to where it started.
-        drag.moveTo(4, KeyScale.OFF)
+        drag.moveTo(4, KeyScale.OFF, SLOT, PATTERN)
         assertEquals(before, drag.reset(KeyScale.OFF))
         // Offset 0 is the identity, out-of-key notes included.
-        drag.start(steps(listOf(61, 63, 66)))
-        assertEquals(listOf(listOf(61, 63, 66)), notes(drag.moveTo(0, cMajor)))
+        drag.start(SLOT, PATTERN, steps(listOf(61, 63, 66)))
+        assertEquals(listOf(listOf(61, 63, 66)), notes(drag.moveTo(0, cMajor, SLOT, PATTERN)))
     }
 
     @Test
     fun emptyStepsAreLeftOutAndAnEmptySelectionDoesNothing() {
         val drag = NoteDrag()
-        drag.start(mapOf(0 to Step(), 1 to Step.of(listOf(48))))
+        drag.start(SLOT, PATTERN, mapOf(0 to Step(), 1 to Step.of(listOf(48))))
         assertTrue(drag.canMove)
-        assertEquals(setOf(1), drag.moveTo(3, KeyScale.OFF).keys)
-        drag.start(mapOf(0 to Step(), 5 to Step()))
+        assertEquals(setOf(1), drag.moveTo(3, KeyScale.OFF, SLOT, PATTERN).keys)
+        drag.start(SLOT, PATTERN, mapOf(0 to Step(), 5 to Step()))
         assertFalse(drag.canMove)
-        assertTrue(drag.moveTo(3, KeyScale.OFF).isEmpty())
+        assertTrue(drag.moveTo(3, KeyScale.OFF, SLOT, PATTERN).isEmpty())
         assertEquals(0, drag.offset)
     }
 
     @Test
     fun endForgetsTheGesture() {
         val drag = NoteDrag()
-        drag.start(steps(listOf(48)))
-        drag.moveTo(2, KeyScale.OFF)
+        drag.start(SLOT, PATTERN, steps(listOf(48)))
+        drag.moveTo(2, KeyScale.OFF, SLOT, PATTERN)
         assertTrue(drag.active)
         drag.end()
         assertFalse(drag.active)
         assertEquals(0, drag.offset)
-        assertTrue(drag.moveTo(2, KeyScale.OFF).isEmpty())
+        assertTrue(drag.moveTo(2, KeyScale.OFF, SLOT, PATTERN).isEmpty())
+    }
+
+    // --- review fixes: the drag belongs to the slot and pattern it started on ---
+
+    @Test
+    fun aMoveForAnotherSlotOrPatternWritesNothingAndEndsTheDrag() {
+        val drag = NoteDrag()
+        drag.start(SLOT, PATTERN, steps(listOf(48)))
+        assertTrue(drag.moveTo(2, KeyScale.OFF, SLOT + 1, PATTERN).isEmpty())
+        assertFalse(drag.active)
+        assertEquals(0, drag.offset)
+        drag.start(SLOT, PATTERN, steps(listOf(48)))
+        assertTrue(drag.moveTo(2, KeyScale.OFF, SLOT, PATTERN + 1).isEmpty())
+        assertFalse(drag.active)
+        // A reset after that is no change either.
+        assertTrue(drag.reset(KeyScale.OFF).isEmpty())
+    }
+
+    @Test
+    fun theDragKnowsWhichStepsItHolds() {
+        val drag = NoteDrag()
+        drag.start(SLOT, PATTERN, mapOf(4 to Step.of(listOf(48)), 6 to Step(), 9 to Step.of(listOf(50))))
+        assertTrue(drag.holds(SLOT, PATTERN, 4))
+        assertTrue(drag.holds(SLOT, PATTERN, 9))
+        assertFalse("an empty step takes no part", drag.holds(SLOT, PATTERN, 6))
+        assertFalse(drag.holds(SLOT, PATTERN, 5))
+        assertFalse(drag.holds(SLOT + 1, PATTERN, 4))
+        assertFalse(drag.holds(SLOT, PATTERN + 1, 4))
+        drag.end()
+        assertFalse(drag.holds(SLOT, PATTERN, 4))
     }
 }

@@ -17,6 +17,10 @@ is moved *to* the dragged pitch, flattening a bassline (`SeqController.kt:126-13
   drag started); the footer shows the focused step's notes.
 - Notes clamp to C1..C7 per note; a drag that would push any note past the range stops for all.
 - Double-tap Note resets the drag to 0 (no change), not "everything to C4".
+- Past the clamp the strip keeps showing the move actually applied; dragging back has a dead zone until the
+  finger returns to that value (accepted). With a scale on the strip reads degrees (`+2°`).
+- A drag belongs to the slot and pattern it started on, and ends (keeping what it wrote) when its steps change
+  under it: keys or live recording into them, Undo / Redo, deselection, or another slot or pattern shown.
 - One drag = one undo step. On an empty step the strip is dimmed and does nothing.
 - Tests first (JUnit): multi-step relative move keeps the intervals; chords keep their shape; scale-on
   moves by degrees without dropping notes; range clamp; double-tap.

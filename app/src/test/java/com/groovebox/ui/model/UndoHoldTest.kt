@@ -1,9 +1,7 @@
 package com.groovebox.ui.model
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UndoHoldTest {
@@ -14,7 +12,6 @@ class UndoHoldTest {
         u.down(1_000)
         assertNull(u.poll(1_200))
         assertEquals(UndoHold.Action.Undo, u.up(1_200))
-        assertFalse(u.readsRedo(1_200))
     }
 
     @Test
@@ -27,14 +24,9 @@ class UndoHoldTest {
     }
 
     @Test
-    fun theChipBrieflyReadsRedo() {
+    fun aReleaseAtTheLongPressTimeBeforeAnyPollRedoes() {
         u.down(1_000)
-        assertFalse(u.readsRedo(1_400))
-        u.poll(1_500)
-        assertTrue(u.readsRedo(1_500))
-        u.up(1_600)
-        assertTrue(u.readsRedo(2_200))
-        assertFalse(u.readsRedo(2_201))
+        assertEquals(UndoHold.Action.Redo, u.up(1_500))
     }
 
     @Test

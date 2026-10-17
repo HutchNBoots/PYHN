@@ -142,8 +142,8 @@ private fun TapeDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugS
  * The four lanes, drawn from the peak overviews, with the loop bracket above them and the
  * moving head. Everything that changes while playing is read in the draw phase, so the head
  * moving only redraws this canvas. Tap a lane to select its track, double-tap it to record
- * onto it (or stop its take). Build-21: hold it and it asks "Clear T3?" (coral); a tap on that
- * lane within 3 s clears it, anything else cancels.
+ * onto it (or stop its take). Build-21: hold it and it asks "Clear T3?" (coral); a single tap
+ * on that lane within 3 s clears it; anything else, a double-tap there included, cancels.
  */
 @Composable
 private fun TapeLanes(state: GrooveState, modifier: Modifier) {
@@ -161,7 +161,7 @@ private fun TapeLanes(state: GrooveState, modifier: Modifier) {
     val clearLane = state.tapeClearLane
     val description = "Tape tracks, ${TapeView.trackName(state.tapeTrack)} selected. " +
         (if (clearLane >= 0) "Tap ${TapeView.trackName(clearLane)} again to clear it. " else "") +
-        "Tap a lane to select it, double-tap to record onto it, hold to clear it"
+        "Tap a lane to select it, double-tap to record onto it, hold, then tap to clear it"
 
     Canvas(
         modifier

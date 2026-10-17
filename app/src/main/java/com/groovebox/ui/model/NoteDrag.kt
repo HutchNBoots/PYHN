@@ -14,11 +14,17 @@ package com.groovebox.ui.model
  * - With a scale on, an out-of-key note that would land on a pitch another note of its step
  *   takes is moved to the nearest free pitch (above on a tie), so a step never loses a note.
  * - Each hit keeps its velocity, length, chance and nudge.
+ * - The drag belongs to the slot and pattern it started on: a move asked for while another one
+ *   is shown (a slot swiped mid-drag) writes nothing and ends the drag. The screen also ends it
+ *   when its steps change under it ([holds]: keys, live recording, undo, deselection), so a
+ *   drag never writes back notes it captured before.
  *
  * Pure Kotlin, main thread only.
  */
 class NoteDrag(private val low: Int = SeqStrips.NOTE_LOW, private val high: Int = SeqStrips.NOTE_HIGH) {
     private var steps: Map<Int, Step>? = null
+    private var slot = -1
+    private var pattern = -1
 
     /** The offset the last [moveTo] applied; 0 between drags and where a drag started. */
     var offset: Int = 0
@@ -32,18 +38,29 @@ class NoteDrag(private val low: Int = SeqStrips.NOTE_LOW, private val high: Int 
     val canMove: Boolean
         get() = !steps.isNullOrEmpty()
 
-    /** Opens a drag over [selected] (step index → step as it is now). */
-    fun start(selected: Map<Int, Step>) {
+    /** Opens a drag over [selected] (step index → step as it is now) of [slot]'s [pattern]. */
+    fun start(slot: Int, pattern: Int, selected: Map<Int, Step>) {
         steps = selected.filterValues { it.on }
+        this.slot = slot
+        this.pattern = pattern
         offset = 0
     }
 
+    /** The open drag moves [step] of [slot]'s [pattern]. */
+    fun holds(slot: Int, pattern: Int, step: Int): Boolean =
+        slot == this.slot && pattern == this.pattern && steps?.containsKey(step) == true
+
     /**
      * The steps of the open drag moved by [requested] from where it started, as far as the
-     * range lets them; empty when no drag is open or there is nothing to move.
+     * range lets them, to write into [slot]'s [pattern]; empty when no drag is open or there is
+     * nothing to move. Another slot or pattern than the drag's ends the drag.
      */
-    fun moveTo(requested: Int, key: KeyScale): Map<Int, Step> {
+    fun moveTo(requested: Int, key: KeyScale, slot: Int, pattern: Int): Map<Int, Step> {
         val from = steps ?: return emptyMap()
+        if (slot != this.slot || pattern != this.pattern) {
+            end()
+            return emptyMap()
+        }
         if (from.isEmpty()) return emptyMap()
         var o = requested
         while (true) {
@@ -57,10 +74,12 @@ class NoteDrag(private val low: Int = SeqStrips.NOTE_LOW, private val high: Int 
     }
 
     /** Double-tap on the strip: back to where the drag started (no change). */
-    fun reset(key: KeyScale): Map<Int, Step> = moveTo(0, key)
+    fun reset(key: KeyScale): Map<Int, Step> = moveTo(0, key, slot, pattern)
 
     fun end() {
         steps = null
+        slot = -1
+        pattern = -1
         offset = 0
     }
 

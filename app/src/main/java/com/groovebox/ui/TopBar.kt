@@ -244,6 +244,7 @@ private fun TapeButtons(state: GrooveState, height: Dp) {
         delay(hold.flashMs)
         readsRedo = false
     }
+    // Live while either is possible; a tap only undoes when there is something to undo.
     val enabled = state.canUndo || state.canRedo
     Row(horizontalArrangement = Arrangement.spacedBy(d.dp(10))) {
         BarButton(
@@ -253,7 +254,7 @@ private fun TapeButtons(state: GrooveState, height: Dp) {
             modifier = Modifier
                 .alpha(if (enabled) 1f else GrooveColors.INERT_ALPHA)
                 .semantics {
-                    contentDescription = "Undo tape. Hold to redo"
+                    contentDescription = if (state.canUndo) "Undo tape. Hold to redo" else "Nothing to undo. Hold to redo tape"
                     if (!enabled) disabled()
                     onLongClick("Redo tape") { state.tapeRedo(); true }
                 }
@@ -270,7 +271,17 @@ private fun TapeButtons(state: GrooveState, height: Dp) {
                         } != null
                         when {
                             cancelled -> hold.cancel()
-                            released -> if (hold.up(upAt) == UndoHold.Action.Undo) state.tapeUndo()
+                            // A release right at the long-press time can still come back as Redo.
+                            released -> when (hold.up(upAt)) {
+                                UndoHold.Action.Undo -> if (state.canUndo) state.tapeUndo()
+                                UndoHold.Action.Redo -> {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    state.tapeRedo()
+                                    readsRedo = true
+                                    flash++
+                                }
+                                null -> Unit
+                            }
                             else -> {
                                 // Held to the long-press time: redo once, now.
                                 if (hold.poll(down.uptimeMillis + hold.longPressMs) == UndoHold.Action.Redo) {

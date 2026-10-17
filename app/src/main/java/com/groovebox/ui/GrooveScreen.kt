@@ -56,8 +56,7 @@ private class OverlayBounds {
 
     /** Build-21: where a touch lands while [slot]'s strip is open ([keysShown]: the keys are on screen). */
     fun zone(p: Offset, slot: Int, keysShown: Boolean): PresetTouch = PresetStripRules.zone(
-        inStrip = presets.contains(p),
-        inClose = false, // the strip's × closes it from its own tap
+        inStrip = presets.contains(p), // the strip's × closes it from its own tap
         inKeys = keysShown && keys.contains(p),
         inOpenSlot = slots.getOrNull(slot)?.contains(p) == true,
     )

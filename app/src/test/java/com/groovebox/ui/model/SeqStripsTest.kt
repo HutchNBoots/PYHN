@@ -140,6 +140,11 @@ class SeqStripsTest {
         assertEquals("+2", SeqStrips.format(SeqStrips.Note, 2.0))
         assertEquals("\u22125", SeqStrips.format(SeqStrips.Note, -5.0))
         assertEquals("0", SeqStrips.format(SeqStrips.Note, 0.0))
+        // With a scale on the move is in scale degrees.
+        assertEquals("+2°", SeqStrips.formatMove(2, degrees = true))
+        assertEquals("\u22121°", SeqStrips.formatMove(-1, degrees = true))
+        assertEquals("0", SeqStrips.formatMove(0, degrees = true))
+        assertEquals("+2", SeqStrips.formatMove(2, degrees = false))
         assertEquals("C", SeqStrips.format(SeqStrips.Key, 0.0))
         assertEquals("C♯", SeqStrips.format(SeqStrips.Key, 1.0))
         assertEquals("A", SeqStrips.format(SeqStrips.Key, 9.0))
