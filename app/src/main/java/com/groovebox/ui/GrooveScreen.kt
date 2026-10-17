@@ -222,7 +222,8 @@ fun GrooveScreen(state: GrooveState, audioStarted: Boolean) {
                     TopBar(
                         state = state,
                         onSlotTap = { slot -> if (presetSlot == slot) presetSlot = -1 },
-                        onSlotLongPress = { slot -> if (!state.isDrum(slot)) presetSlot = slot },
+                        // Build-22: a slot held to copy its sound does not also open its presets.
+                        onSlotLongPress = { slot -> if (!state.isDrum(slot) && !slotCopy.copiedFrom(slot)) presetSlot = slot },
                         onSlotPositioned = { slot, bounds -> overlay.slots[slot] = bounds },
                     )
                     val middle = Modifier.fillMaxWidth().height(middleRowHeight())

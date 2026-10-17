@@ -15,6 +15,14 @@ class LfoTraceTest {
     }
 
     @Test
+    fun aSlowRateStillShowsOneWholeCycleOverALongerWindow() {
+        assertEquals(1.0, LfoTrace.cycles(0.25, synced = false, bpm = 120.0), 1e-9)
+        assertEquals(4.0, LfoTrace.windowS(0.25, synced = false, bpm = 120.0), 1e-9)
+        assertEquals(1.0, LfoTrace.windowS(5.0, synced = false, bpm = 120.0), 1e-9)
+        assertEquals(2.0, LfoTrace.windowS(4.0, synced = true, bpm = 120.0), 1e-9)
+    }
+
+    @Test
     fun depthScalesAndFadeRampsIn() {
         val deep = LfoTrace.points(2, 2.0, 1.0, 0.0, 1.0)
         val shallow = LfoTrace.points(2, 2.0, 0.0, 0.0, 1.0)

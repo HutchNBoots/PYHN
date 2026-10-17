@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import com.groovebox.engine.ParamSpec
 import com.groovebox.ui.model.DrumTapCells
 import com.groovebox.ui.theme.GrooveRadius
+import com.groovebox.ui.theme.GrooveSpace
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.roundToInt
 import com.groovebox.engine.NativeEngine
@@ -146,7 +147,7 @@ fun DrumDisplay(state: GrooveState, audioStarted: Boolean, debug: DebugSlot, mod
         modifier
             .clip(RoundedCornerShape(d.dp(16)))
             .background(GrooveColors.Panel)
-            .padding(horizontal = d.dp(16), vertical = d.dp(12))
+            .padding(horizontal = d.dp(GrooveSpace.DISPLAY_H), vertical = d.dp(GrooveSpace.DISPLAY_V))
             .semantics { contentDescription = "Drum display, $name" },
         verticalArrangement = Arrangement.spacedBy(d.dp(8)),
     ) {

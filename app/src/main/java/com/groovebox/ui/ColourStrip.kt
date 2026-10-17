@@ -12,6 +12,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.withFrameMillis
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,6 +102,19 @@ fun ColourStrip(
     }
     val currentNormalized by rememberUpdatedState(normalized)
     val currentLocked by rememberUpdatedState(locked)
+    // Build-22 (agent 2): the lock hold's ring (draw phase only, driven by the frame clock while
+    // a still hold is pending) and the haptic at the lock.
+    val ring = remember { mutableFloatStateOf(-1f) }
+    val holding = remember { mutableStateOf(false) }
+    val gestureRef = remember { arrayOfNulls<StripGesture>(1) }
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(holding.value) {
+        if (!holding.value) {
+            ring.floatValue = -1f
+            return@LaunchedEffect
+        }
+        while (true) withFrameMillis { ring.floatValue = gestureRef[0]?.lockProgress(SystemClock.uptimeMillis()) ?: -1f }
+    }
     val edge = d.px(3f)
     val header = d.px(StripFill.HEADER_UNITS)
 
@@ -111,11 +131,15 @@ fun ColourStrip(
             // or drives another host (e.g. another slot).
             .pointerInput(spec, host) {
                 val gesture = StripGesture(touchSlop = viewConfiguration.touchSlop)
+                gestureRef[0] = gesture
                 fun handle(action: StripAction?) {
                     when (action) {
                         is StripAction.Set -> host.setValue(spec, ParamMapping.fromNormalized(spec, action.normalized))
                         StripAction.Reset -> host.reset(spec)
-                        is StripAction.Lock -> host.setLocked(spec, action.locked)
+                        is StripAction.Lock -> {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            host.setLocked(spec, action.locked)
+                        }
                         null -> Unit
                     }
                 }
@@ -125,6 +149,7 @@ fun ColourStrip(
                     awaitPointerEventScope {
                         while (true) {
                             val deadline = gesture.longPressDeadline
+                            holding.value = deadline != null
                             val event = if (deadline == null) {
                                 awaitPointerEvent()
                             } else {
@@ -135,6 +160,7 @@ fun ColourStrip(
                             if (event == null) {
                                 // The long-press deadline passed with the finger still down.
                                 if (deadline != null) handle(gesture.timeout(deadline))
+                                holding.value = gesture.longPressDeadline != null
                                 continue
                             }
                             for (change in event.changes) {
@@ -162,6 +188,7 @@ fun ColourStrip(
                         }
                     }
                 } finally {
+                    holding.value = false
                     // Restarted or left the screen mid-gesture: close it.
                     if (down.isNotEmpty()) host.gestureEnd(spec)
                 }
@@ -182,7 +209,8 @@ fun ColourStrip(
                         style = Stroke(edge * 0.67f),
                     )
                 }
-            },
+            }
+            .lockRing({ ring.floatValue }, colour, d),
     ) {
         Column(
             Modifier

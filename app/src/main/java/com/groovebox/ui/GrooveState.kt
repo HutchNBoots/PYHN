@@ -354,10 +354,6 @@ class GrooveState : KeyListener {
     var clearArmed by mutableStateOf(false)
         private set
 
-    /** The armed clear is Shift + Clear's: only the drum lane's sound. */
-    var clearArmedLane by mutableStateOf(false)
-        private set
-
     // Open undo groups: the token of each begin(), for the matching end().
     private val take = RecordTake()
     private var takeToken = 0
@@ -416,6 +412,9 @@ class GrooveState : KeyListener {
     private val chains = List(SeqLimits.SLOTS) { mutableStateOf<PatternChain?>(null) }
 
     fun chainOf(slot: Int): PatternChain? = chains.getOrNull(slot)?.value
+
+    /** Per slot: the chain's last queued switch (playing × 16 + queued), so it is sent once. */
+    private val chainSent = IntArray(SeqLimits.SLOTS) { -1 }
 
     /** The pattern the Sequencer screen edits on [slot]: the one picked on the pattern row, or the playing one. */
     fun editPatternOf(slot: Int): Int = editPin.getOrNull(slot)?.intValue?.takeIf { it >= 0 } ?: patternOf(slot)
@@ -1033,6 +1032,7 @@ class GrooveState : KeyListener {
             is PatternRowAction.Chain -> {
                 val chain = PatternChain(action.first, action.then)
                 chains[slot].value = chain
+                chainSent[slot] = -1
                 setEditPin(slot, -1)
                 if (!playing) NativeEngine.selectPattern(slot, action.first)
                 else chain.queueFor(patternOf(slot), queuedOf(slot))?.let { NativeEngine.selectPattern(slot, it) }
@@ -1159,7 +1159,6 @@ class GrooveState : KeyListener {
         if (!clearConfirm.tap(clearTarget(mode), nowMs)) {
             clearArmed = true
             clearArmedMode = mode
-            clearArmedLane = mode == ClearMode.Lane
             return
         }
         clearArmed = false
@@ -1214,8 +1213,14 @@ class GrooveState : KeyListener {
             // (one picked on the row and now playing keeps it).
             if (s == selectedSlot && editPatternOf(s) != editedBefore) deselectSteps()
             // A chain keeps its other pattern queued (the engine switches at the pattern's end).
+            // (Sent once per playing pattern, so the command queue is not refilled every frame
+            // before the engine reports the switch as queued.)
             if (transport.playing) {
-                chains[s].value?.queueFor(pattern, queued)?.let { NativeEngine.selectPattern(s, it) }
+                val want = chains[s].value?.queueFor(pattern, queued)
+                if (want != null && chainSent[s] != pattern * SeqLimits.PATTERNS + want) {
+                    chainSent[s] = pattern * SeqLimits.PATTERNS + want
+                    NativeEngine.selectPattern(s, want)
+                }
             }
         }
         if (patternsMoved) sessionChanged()

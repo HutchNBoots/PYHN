@@ -8,7 +8,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,7 +47,9 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import com.groovebox.ui.model.Accent
 import com.groovebox.ui.model.ChordName
@@ -306,7 +307,7 @@ private fun PatternRow(state: GrooveState, modifier: Modifier) {
     val content = List(SeqLimits.PATTERNS) { state.patternHasContent(slot, it) }
     val gesture = remember { PatternRowGesture() }
     val current by rememberUpdatedState(state)
-    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val measurer = rememberTextMeasurer()
     val style = d.value(9f, GrooveColors.Text)
     Canvas(
         modifier
@@ -856,7 +857,7 @@ private fun StepPad(state: GrooveState, pad: Int, tail: Boolean, modifier: Modif
     // Build-21: a lit synth pad names its note, chord or lowest note and count.
     val noteLabel = if (lane == null && step.on) NoteNames.padLabel(step.notes) else null
     val others = if (lane != null) step.hits.count { it.note != lane } else 0
-    val numberOnFill = velocity >= 0.82f
+    val numberOnFill = velocity >= 0.95f
     val labelOnFill = velocity >= 0.3f
 
     Box(
@@ -885,11 +886,16 @@ private fun StepPad(state: GrooveState, pad: Int, tail: Boolean, modifier: Modif
             },
     ) {
         // Velocity as fill height.
+        // Below 95% the fill stays under the number band, so the number is never half covered.
         if (lit) {
-            Box(
-                Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(velocity.coerceIn(0.06f, 1f))
-                    .background(if (isPlay) SeqColors.Playhead else GrooveColors.Text),
-            )
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+                val band = d.dp(PAD_NUMBER_BAND)
+                val h = if (numberOnFill) maxHeight else (maxHeight - band) * velocity.coerceIn(0.06f, 1f)
+                Box(
+                    Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(h)
+                        .background(if (isPlay) SeqColors.Playhead else GrooveColors.Text),
+                )
+            }
         }
         if (tail) {
             Box(
@@ -956,12 +962,16 @@ private fun StepPad(state: GrooveState, pad: Int, tail: Boolean, modifier: Modif
             }
         }
         val edge = d.dp(edgeWidth)
-        Box(Modifier.matchParentSizeCompat().border(edge, edgeColour, shape))
+        Box(Modifier.fillMaxSize().border(edge, edgeColour, shape))
+        // A cream outline on a cream fill: a dark line inside it keeps the selection readable.
+        if (lit && (isSelected || fillArmed)) {
+            Box(Modifier.fillMaxSize().padding(edge).border(d.dp(1.5f), GrooveColors.Ground, d.shape(GrooveRadius.PAD - edgeWidth)))
+        }
     }
 }
 
-/** The pad's outline over its fill. */
-private fun Modifier.matchParentSizeCompat(): Modifier = this.fillMaxSize()
+/** Design units at the top of a pad kept for its number (a fill below 95% stays under it). */
+private const val PAD_NUMBER_BAND = 24f
 
 /** Notes of the two-octave keyboard above the kit's 16 keys: they play nothing on the drum slot. */
 val DRUMLESS_NOTES: Set<Int> = (64..71).toSet()

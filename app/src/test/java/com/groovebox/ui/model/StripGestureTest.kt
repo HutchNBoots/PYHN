@@ -255,18 +255,6 @@ class StripGestureTest {
     }
 
     @Test
-    fun theUiWakesForTheRingFramesAndTheDeadline() {
-        assertNull(g.nextWake(0))
-        g.down(0, 0, 100f, height, 0.3)
-        // Before the ring shows, sleep until it does; then a frame at a time, never past the deadline.
-        assertEquals(StripGesture.RING_DELAY_MS, g.nextWake(10))
-        assertEquals(400L + StripGesture.FRAME_MS, g.nextWake(400))
-        assertEquals(1000L, g.nextWake(995))
-        g.timeout(1000)
-        assertNull(g.nextWake(1000))
-    }
-
-    @Test
     fun aDoubleTapStillResets() {
         g.down(0, 0, 100f, height, 0.3); assertNull(g.up(0, 80))
         g.down(0, 200, 100f, height, 0.3)

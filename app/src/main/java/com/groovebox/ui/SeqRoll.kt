@@ -184,7 +184,7 @@ private fun PageStrip(state: GrooveState, pages: List<Boolean>, length: Int, mod
             val played = p * PitchRoll.COLUMNS < length
             drawRoundRect(colour.copy(alpha = if (played) 1f else 0.35f), Offset(gutter + p * (w + gap), 0f), Size(w, size.height), radius)
         }
-        val play = state.stepOf(slot)
+        val play = if (state.editingOther) -1 else state.stepOf(slot)
         if (play >= 0) {
             val p = play / PitchRoll.COLUMNS
             val x = gutter + p * (w + gap) + (play % PitchRoll.COLUMNS + 0.5f) * w / PitchRoll.COLUMNS

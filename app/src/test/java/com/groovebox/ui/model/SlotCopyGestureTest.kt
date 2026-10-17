@@ -1,7 +1,9 @@
 package com.groovebox.ui.model
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SlotCopyGestureTest {
@@ -35,5 +37,16 @@ class SlotCopyGestureTest {
         g.down(1L, 4)
         g.cancel()
         assertNull(g.down(2L, 5))
+    }
+
+    @Test
+    fun aSlotThatGaveACopyDoesNotAlsoOpenItsPresetsWhileHeld() {
+        g.down(1L, 3)
+        assertFalse(g.copiedFrom(3))
+        g.down(2L, 6)
+        assertTrue("its long-press must not open the preset strip", g.copiedFrom(3))
+        assertFalse(g.copiedFrom(6))
+        g.up(2L); g.up(1L)
+        assertFalse(g.copiedFrom(3))
     }
 }

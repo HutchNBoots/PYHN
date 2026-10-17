@@ -49,16 +49,26 @@ class SlotCopyGesture(private val isSynth: (Int) -> Boolean) {
     data class Copy(val from: Int, val to: Int)
 
     private val held = LinkedHashMap<Long, Int>()
+    private val sources = HashSet<Int>()
 
     fun down(pointer: Long, slot: Int): Copy? {
         val from = held.values.firstOrNull { it != slot && isSynth(it) }
         held[pointer] = slot
-        return if (from != null && isSynth(slot)) Copy(from, slot) else null
+        if (from == null || !isSynth(slot)) return null
+        sources += from
+        return Copy(from, slot)
     }
 
     fun up(pointer: Long) {
         held.remove(pointer)
+        sources.retainAll(held.values.toSet())
     }
 
-    fun cancel() = held.clear()
+    /** [slot] is held and has given a copy: its long-press (the preset strip) should stand down. */
+    fun copiedFrom(slot: Int): Boolean = slot in sources
+
+    fun cancel() {
+        held.clear()
+        sources.clear()
+    }
 }

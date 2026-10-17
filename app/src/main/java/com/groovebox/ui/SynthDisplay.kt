@@ -49,7 +49,7 @@ private val WaveColour = Color(0xFFFF6B57)
 private val FilterColour = Color(0xFFFFC23D)
 private val EnvColour = Color(0xFF3DD68C)
 private val CutoffDot = Color(0xFF3DD68C)
-private val LfoColour = Color(0xFF4F8BFF)
+private val LfoColour = Color(0xFFECE9E2) // cream: strip colours stay for strip-bound things (review R6)
 
 /** Drawn frequency axis of the filter picture, and its dB window. */
 private const val F_LO = 20.0
@@ -159,7 +159,7 @@ private fun LfoRow(controller: SynthController, modifier: Modifier) {
     val dest = controller.spec("lfo.dest")?.let { ParamMapping.format(it, controller.value(it)).lowercase() } ?: ""
     val rateText = controller.spec("lfo.rate")?.let { controller.format(it, rate) } ?: ""
     val points = remember(rate, synced, shape, depth, fade, bpm) {
-        LfoTrace.points(shape, LfoTrace.cycles(rate, synced, bpm), depth, fade, LfoTrace.windowS(synced, bpm))
+        LfoTrace.points(shape, LfoTrace.cycles(rate, synced, bpm), depth, fade, LfoTrace.windowS(rate, synced, bpm))
     }
     val stroke = d.px(2f)
     Row(

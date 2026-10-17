@@ -9,7 +9,7 @@ import kotlin.math.sin
  * The small LFO picture on the Synth display while Mod is the section (build-22, owner decision
  * 1-2b; the three main pictures stay). x 0..1 is one second free, or one bar synced; y −1..1.
  * Shapes as lfo.wave (sine, tri, square, S&H); [depth] scales it (a faint floor keeps the shape
- * readable at 0); [fadeS] (lfo.delay) ramps it in. Only needs to move the right way. Pure Kotlin.
+ * readable at 0); [fadeS] (lfo.delay) ramps it in. A rate under 1 Hz stretches the window to one cycle. Only needs to move the right way. Pure Kotlin.
  */
 object LfoTrace {
     /** More cycles than this would read as noise. */
@@ -24,11 +24,12 @@ object LfoTrace {
         } else {
             rateHz
         }
-        return c.coerceIn(0.25, MAX_CYCLES)
+        return c.coerceIn(1.0, MAX_CYCLES)
     }
 
-    /** The window's length in seconds (for the fade). */
-    fun windowS(synced: Boolean, bpm: Double): Double = if (synced) 4 * 60.0 / bpm.coerceIn(1.0, 1000.0) else 1.0
+    /** The window's length in seconds (for the fade): a bar synced, else 1 s, or one cycle when slower. */
+    fun windowS(rateHz: Double, synced: Boolean, bpm: Double): Double =
+        if (synced) 4 * 60.0 / bpm.coerceIn(1.0, 1000.0) else maxOf(1.0, 1.0 / rateHz.coerceAtLeast(1e-3))
 
     fun points(shape: Int, cycles: Double, depth: Double, fadeS: Double, windowS: Double, n: Int = 160): List<DisplayShapes.Point> {
         val amp = MIN_AMP + (1 - MIN_AMP) * depth.coerceIn(0.0, 1.0)
