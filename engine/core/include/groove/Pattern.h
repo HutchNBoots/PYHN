@@ -52,7 +52,7 @@ struct Hit {
     int32_t note = 60;                  // MIDI 0..127
     float velocity = kDefaultVelocity;  // 0.01..1
     float length = kPatternGate;        // kPatternGate, or kMinLength..kMaxLength steps
-    float probability = 1.0f;           // 0..1, rolled per hit (F3.4)
+    float probability = 1.0f;           // 0..1 (F3.4): per hit on drums; a synth chord uses its first hit
     float nudge = 0.0f;                 // -0.5..0.5 of a step: early (negative) or late
 };
 

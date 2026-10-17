@@ -136,6 +136,8 @@ struct Sequencer::SlotState {
     int32_t lookPattern = -1;
     int32_t lookCount = 0;
     std::array<int32_t, kMaxHitsPerStep> lookNotes{};
+    // Synth slots: that step's one chance roll, shared by its whole chord.
+    bool lookPass = true;
 
     // Motion overrides currently applied to the instrument by this slot's patterns.
     std::array<Override, kMaxOverrides> overrides{};
@@ -167,6 +169,7 @@ struct Sequencer::SlotState {
         lookStep = -1;
         lookPattern = -1;
         lookCount = 0;
+        lookPass = true;
         overrideCount = 0;
         touchedCount = 0;
         suppressStep = -1;
@@ -659,6 +662,9 @@ void Sequencer::fireStep(int slot, int64_t frame) {
     const Step& st = p.steps[static_cast<std::size_t>(step)];
     const bool suppress = s.suppressStep == step && s.suppressPattern == s.current;
     const bool looked = s.lookStep == step && s.lookPattern == s.current;
+    // Synth slots roll once per step (the look-ahead already did, for this step); drums per hit.
+    const bool chord = slot != kDrumSlot;
+    const bool chordPass = !chord || (looked ? s.lookPass : stepRoll(slot, st));
     for (int32_t i = 0; i < st.hitCount; ++i) {
         const Hit& hit = st.hits[static_cast<std::size_t>(i)];
         bool skip = false;
@@ -668,7 +674,7 @@ void Sequencer::fireStep(int slot, int64_t frame) {
         if (suppress) {
             for (int32_t k = 0; k < s.suppressCount; ++k) skip = skip || s.suppressNotes[static_cast<std::size_t>(k)] == hit.note;
         }
-        if (skip || !roll(slot, hit)) continue;
+        if (skip || !(chord ? chordPass : roll(slot, hit))) continue;
         // An early hit the look-ahead didn't schedule sounds on its step.
         const int64_t position = eventPosition + (hit.nudge > 0.0f ? nudgeUnits(hit.nudge, units) : 0);
         queueHit(slot, hit, p, s.current, step, position, frame, eventPosition);
@@ -705,14 +711,20 @@ void Sequencer::lookAhead(int slot, int64_t frame, int64_t stepPosition) {
     s.lookStep = step;
     s.lookPattern = pattern;
     s.lookCount = 0;
+    const bool chord = slot != kDrumSlot;
+    s.lookPass = !chord || stepRoll(slot, st);
     for (int32_t i = 0; i < st.hitCount; ++i) {
         const Hit& hit = st.hits[static_cast<std::size_t>(i)];
         if (hit.nudge >= 0.0f) continue;
         s.lookNotes[static_cast<std::size_t>(s.lookCount++)] = hit.note;  // at most kMaxHitsPerStep
-        if (!roll(slot, hit)) continue;
+        if (!(chord ? s.lookPass : roll(slot, hit))) continue;
         queueHit(slot, hit, p, pattern, step, s.nextEventPosition + nudgeUnits(hit.nudge, units), frame, stepPosition);
     }
 }
+
+// A synth step's chord shares one roll, with the first hit's chance (the UI keeps a chord's
+// chance shared). An empty step doesn't roll.
+bool Sequencer::stepRoll(int slot, const Step& st) { return st.hitCount == 0 || roll(slot, st.hits[0]); }
 
 bool Sequencer::roll(int slot, const Hit& hit) {
     if (hit.probability >= 1.0f) return true;

@@ -351,3 +351,39 @@ TEST(SequencerHits, LiveNoteTakesOverItsWaitingHit) {
     EXPECT_EQ(framesOf(h.slot(1).noteOns(67)), (std::vector<int64_t>{13500, 16 * kStep + 13500}));
     EXPECT_EQ(h.seq->pattern(1, 0).steps[2].hitCount, 2);  // already there: not added
 }
+
+// Synth slots: one chance roll per step, shared by the chord (the first hit's chance), early
+// and late notes alike; the drum slot rolls per hit (above). Renders still repeat.
+TEST(SequencerHits, SynthChordChanceIsOneRollPerStep) {
+    SeqHarness h;
+    h.seq->setTempo(240.0f);
+    h.seq->setPatternSettings(1, 0, 16, 2, 0.0f, 0.5f);  // 1/32: 1500 frames per step
+    for (int s = 0; s < 16; ++s) {
+        h.seq->setStep(1, 0, s,
+                       {Hit{60, 0.8f, 0.25f, 0.5f, -0.25f}, Hit{64, 0.8f, 0.25f, 0.5f, 0.0f},
+                        Hit{67, 0.8f, 0.25f, 0.5f, 0.25f}});
+    }
+    h.seq->play();
+    const int64_t steps = 4000;
+    h.run(steps * 1500 - 1000, 1024);
+    const auto a = framesOf(h.slot(1).noteOns(60));
+    const auto b = framesOf(h.slot(1).noteOns(64));
+    const auto c = framesOf(h.slot(1).noteOns(67));
+    ASSERT_EQ(a.size(), b.size());
+    ASSERT_EQ(b.size(), c.size());
+    for (std::size_t i = 0; i < b.size(); ++i) {
+        ASSERT_EQ(a[i], b[i] - 375) << "all of the chord or none";
+        ASSERT_EQ(c[i], b[i] + 375);
+    }
+    EXPECT_NEAR(static_cast<double>(b.size()) / steps, 0.5, 0.03);
+
+    h.seq->stop();
+    h.apply();
+    h.slot(1).clear();
+    const int64_t restart = h.frame;
+    h.seq->play();
+    h.run(steps * 1500 - 1000, 1024);
+    auto again = framesOf(h.slot(1).noteOns(64));
+    for (int64_t& f : again) f -= restart;
+    EXPECT_EQ(again, b);
+}

@@ -75,8 +75,10 @@ struct TransportState {
 // at the tempo it sounded at (kept even if the tempo changes), and never sooner than
 // kMinNoteSeconds. A hit of a note this slot's sequencer still holds sends that note's
 // off first, so each note has at most one pending off (kMaxPendingOffs = 128 covers every
-// MIDI note). Chance is rolled per hit, when it is scheduled, from each slot's generator,
-// which is reseeded on Play (F3.4: renders repeat exactly). Stop releases every sounding
+// MIDI note). Chance comes from each slot's generator, reseeded on Play (F3.4: renders
+// repeat exactly): the drum slot rolls per hit, so its sounds are independent; a synth
+// slot rolls once per step with the first hit's chance (at the look-ahead), so a chord
+// plays whole or not at all. Stop releases every sounding
 // note and drops every scheduled hit.
 //
 // Threading:
@@ -220,6 +222,7 @@ private:
     void scheduleOff(int slot, int note, int64_t frame);
     bool cancelOff(int slot, int note);
     bool roll(int slot, const Hit& hit);
+    bool stepRoll(int slot, const Step& st);
     void queueHit(int slot, const Hit& hit, const Pattern& p, int pattern, int step, int64_t position,
                   int64_t frame, int64_t stepPosition);
     void sound(int slot, int note, float velocity, int64_t position, int64_t lengthUnits, int64_t frame);
